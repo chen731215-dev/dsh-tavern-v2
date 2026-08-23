@@ -7,8 +7,8 @@
 
 dsh-tavern 是 DeepSeek Harness（DSH）的酒馆管理插件，提供角色扮演、角色卡/世界书/预设管理、多会话隔离、记忆总结、关系网、剧情选项等功能。
 
-- **包名**：`@local/dsh-tavern`
-- **版本**：1.7.1
+- **包名**：`dsh-tavern`
+- **版本**：1.9.2
 - **模块系统**：ES Modules（`import`/`export`，不用 `require`）
 - **入口文件**：`lib/index.js`
 - **客户端入口**：`lib/client.manager.bundle.js`
