@@ -1,3 +1,5 @@
+# Changelog
+
 ## v1.9.2 (2026-08-23)
 
 ### ✨ 新功能
@@ -11,8 +13,6 @@
 - **发布版崩溃**：修复 cordis.patch.yml / client.manager.bundle.js 中硬编码 @local/dsh-tavern 本地别名导致用户安装后 Cannot find package 崩溃的问题，统一为正规包名 dsh-tavern
 
 ---
-# Changelog
-
 ## v1.9.0 (2026-08-23)
 
 ### ✨ 新功能
