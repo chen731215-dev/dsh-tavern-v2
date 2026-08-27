@@ -1,3 +1,5 @@
+> ⚠️ **v2.0.0 破坏性更新**：协议变更为 PolyForm-Noncommercial-Copyleft-1.0.0（禁止商用）。旧版 1.0.0~1.9.2 已全部废弃，不再维护。升级命令见下方。
+
 > ⚠️ **AI 助手注意**：修改本项目代码前，请务必先阅读 [AGENTS.md](./AGENTS.md)（或 `.cursorrules` / `CLAUDE.md`），了解代码规范、测试方法、提交规范和常见坑。未通过语法检查和重启验证的代码不要提交。
 
 > ⚠️ **旧仓库已归档**：本仓库的旧版本（MIT 协议）已归档在 [dsh-tavern](https://github.com/chen731215-dev/dsh-tavern)，只读。本仓库使用 **PolyForm-Noncommercial-Copyleft-1.0.0** 协议。
