@@ -1,7 +1,7 @@
 ﻿{
     "name":  "dsh-tavern",
     "version":  "1.9.2",
-    "description": "DeepSeek 酒馆 —— DSH 角色扮演插件：角色卡/世界书/预设管理、多会话隔离、记忆总结、关系网、剧情选项",
+    "description":  "DeepSeek 酒馆 —— DSH 角色扮演插件：角色卡/世界书/预设管理、多会话隔离、记忆总结、关系网、剧情选项",
     "type":  "module",
     "main":  "lib/index.js",
     "exports":  {
@@ -11,7 +11,7 @@
                 },
     "repository":  {
                        "type":  "git",
-                       "url":  "https://github.com/chen731215-dev/dsh-tavern.git"
+                       "url":  "https://github.com/chen731215-dev/dsh-tavern-v2.git"
                    },
     "keywords":  [
                      "dsh",
@@ -44,7 +44,9 @@
                            }
             },
     "peerDependencies":  {
-                             "@deepseek-ai/dsh-client-runtime":  "^0.1.0-rc.6"
+                             "@deepseek-ai/dsh-client-runtime":  "^0.1.0-rc.6",
+                             "dsh-muv-table":  "^0.1.0",
+                             "dsh-muv-engine":  "^0.1.0"
                          },
     "files":  [
                   "lib",
@@ -55,5 +57,13 @@
                   "AGENTS.md",
                   "TUTORIAL.md",
                   "CONTRIBUTING.md"
-              ]
+              ],
+    "peerDependenciesMeta":  {
+                                 "dsh-muv-engine":  {
+                                                        "optional":  true
+                                                    },
+                                 "dsh-muv-table":  {
+                                                       "optional":  true
+                                                   }
+                             }
 }
