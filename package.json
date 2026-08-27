@@ -1,7 +1,7 @@
 {
     "name":  "dsh-tavern",
-    "version":  "2.0.0",
-    "description":  "DeepSeek 閰掗 鈥斺€?DSH 瑙掕壊鎵紨鎻掍欢锛氳鑹插崱/涓栫晫涔?棰勮绠＄悊銆佸浼氳瘽闅旂銆佽蹇嗘€荤粨銆佸叧绯荤綉銆佸墽鎯呴€夐」",
+    "version":  "2.0.1",
+    "description":  "DeepSeek Tavern - DSH roleplay plugin: character cards, worldbooks, presets, memory, relations, plot options. PolyForm-Noncommercial-Copyleft-1.0.0",
     "type":  "module",
     "main":  "lib/index.js",
     "exports":  {
