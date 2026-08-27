@@ -1,6 +1,6 @@
-﻿{
+{
     "name":  "dsh-tavern",
-    "version":  "2.1.0",
+    "version":  "2.1.1",
     "description":  "DeepSeek Tavern - DSH roleplay plugin: character cards, worldbooks, presets, memory, relations, plot options. PolyForm-Noncommercial-Copyleft-1.0.0",
     "type":  "module",
     "main":  "lib/index.js",
@@ -57,11 +57,7 @@
                   "AGENTS.md",
                   "TUTORIAL.md",
                   "CONTRIBUTING.md"
-              ],
-                                 "dsh-muv-table":  {
-                                                       "optional":  true
-                                                   }
-                             }
+              ]
 }
 
 
