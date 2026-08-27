@@ -1,6 +1,59 @@
 # Changelog
 
-## v1.9.2 (2026-08-23)
+## v2.0.0 (2026-08-27) — ⚠️ 重大更新
+
+### 💥 破坏性变更
+
+- **协议变更**：MIT/CC-BY-NC-SA-4.0 → **PolyForm-Noncommercial-Copyleft-1.0.0**
+  - 禁止商业用途，修改后必须使用相同协议开源
+  - 旧版本 1.0.0~1.9.2 已全部标记为废弃（deprecated），不再维护
+  - 商业授权请联系作者
+- **仓库迁移**：旧仓库 [dsh-tavern](https://github.com/chen731215-dev/dsh-tavern) 已归档（只读），新仓库 [dsh-tavern-v2](https://github.com/chen731215-dev/dsh-tavern-v2)
+- **npm 包名不变**：`dsh-tavern` 保持原名，2.0.0 起使用新协议
+
+### 🆕 新增伴生插件
+
+| 插件 | 作用 |
+|------|------|
+| [dsh-muv-table](https://github.com/chen731215-dev/dsh-muv-table) | MUV 变量表格编辑器，酒馆侧边栏入口 |
+| [dsh-muv-engine](https://github.com/chen731215-dev/dsh-muv-engine) | 正则引擎 + 变量追踪 + 状态栏渲染 |
+
+### ✨ 新功能
+
+- **瑟瑟提瓦特格式状态栏美化**：支持 `用户: 名字 行动: "..." 内心: "..."` 内联格式
+- **UpdateVariable 折叠面板**：LLM 输出的变量更新块自动折叠为 `👾 变量更新`
+- **StatusPlaceHolderImpl iframe 渲染**：通过 muv-engine 异步加载状态栏 HTML
+- **MUV 侧边栏入口**：左侧边栏新增「MUV 表格」按钮，打开变量编辑弹窗
+- **酒馆预设同步**：MUV 面板自动读取酒馆当前角色卡，切换预设秒级同步
+
+### 📦 依赖变更
+
+- 新增可选 peerDependencies：`dsh-muv-table@^0.1.0`、`dsh-muv-engine@^0.1.0`
+
+### 🔄 从 1.x 迁移
+
+```bash
+# 1. 卸载旧版（MIT 协议）
+dsh plugin --profile web remove dsh-tavern
+
+# 2. 安装新版（PolyForm 协议）
+dsh plugin --profile web add dsh-tavern@^2.0.0
+
+# 3. 安装伴生插件（可选）
+dsh plugin --profile web add dsh-muv-table
+dsh plugin --profile web add dsh-muv-engine
+```
+
+### ⚠️ 兼容性说明
+
+- **数据兼容**：角色卡、世界书、预设、记忆、关系网数据格式不变，迁移无数据丢失
+- **API 兼容**：所有 `/api/tavern/*` 端点向后兼容
+- **Node.js**：要求 `>=22.5`
+- **旧版不再维护**：1.9.2 及之前版本标记为 deprecated，不再修复 bug 或添加新功能
+
+---
+
+## v1.9.2 (2026-08-23) — ⛔ 已废弃
 
 ### ✨ 新功能
 - **可配置玩家名**：酒馆设置 → 记忆与总结面板新增「玩家名」输入框，填入后自动替换角色卡/世界书中的 {{user}} 占位符（如：栎木），并统一关系网中玩家节点，不再出现「你」与「玩家名」两个实体
