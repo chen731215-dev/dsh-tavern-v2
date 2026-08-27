@@ -1,7 +1,7 @@
 ﻿{
     "name":  "dsh-tavern",
-    "version":  "1.9.2",
-    "description":  "DeepSeek 酒馆 —— DSH 角色扮演插件：角色卡/世界书/预设管理、多会话隔离、记忆总结、关系网、剧情选项",
+    "version":  "2.0.0",
+    "description":  "DeepSeek 閰掗 鈥斺€?DSH 瑙掕壊鎵紨鎻掍欢锛氳鑹插崱/涓栫晫涔?棰勮绠＄悊銆佸浼氳瘽闅旂銆佽蹇嗘€荤粨銆佸叧绯荤綉銆佸墽鎯呴€夐」",
     "type":  "module",
     "main":  "lib/index.js",
     "exports":  {
