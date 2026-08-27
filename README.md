@@ -1,8 +1,28 @@
 > ⚠️ **AI 助手注意**：修改本项目代码前，请务必先阅读 [AGENTS.md](./AGENTS.md)（或 `.cursorrules` / `CLAUDE.md`），了解代码规范、测试方法、提交规范和常见坑。未通过语法检查和重启验证的代码不要提交。
 
-# dsh-tavern
+> ⚠️ **旧仓库已归档**：本仓库的旧版本（MIT 协议）已归档在 [dsh-tavern](https://github.com/chen731215-dev/dsh-tavern)，只读。本仓库使用 **PolyForm-Noncommercial-Copyleft-1.0.0** 协议。
+
+# dsh-tavern-v2
 
 🎴 **为 DeepSeek Harness 打造的角色卡 / 世界书管理插件，导入角色卡就能开始角色扮演。**
+
+## 📜 许可证
+
+Copyright (c) 2026 chen731215-dev
+
+本项目采用 **PolyForm Noncommercial Copyleft 1.0.0** 协议。
+- ✅ 免费用于非商业用途
+- ✅ 修改后必须使用相同协议开源
+- ❌ 商业用途需要单独授权
+
+完整协议文本见 [LICENSE](./LICENSE)。
+
+## 🔗 伴生插件
+
+| 插件 | 说明 |
+|------|------|
+| [dsh-muv-table](https://github.com/chen731215-dev/dsh-muv-table) | MUV 变量表格编辑器 |
+| [dsh-muv-engine](https://github.com/chen731215-dev/dsh-muv-engine) | MUV 正则引擎 + 变量追踪 |
 
 ---
 
