@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.2.0 (2026-08-27)
+
+### ✨ 新功能
+- **MUV 标签渲染钩子**：`beautifyContentEl` 自动调用 `_tavernRenderTags` 和 `_tavernRenderLatex`，<speech>/<action>/<thought>/<char>/<pose>/<location>/游戏卡片等 XML 标签实时转换为带 CSS 样式的 HTML
+- **宏展开支持**：输入框拦截器自动展开 `{[random::]}` `{[pick::]}` `{[roll::]}` 宏后再发送给 AI
+
+### 🎨 美化
+- 游戏卡片独立配色：赏令金色、盲盒紫色、拍卖青色、道友蓝色、飞剑青绿、自由橙色
+- speech/action/thought/char/pose/feeling 等表演标签独立颜色
+- dialogue 蓝色左边框、location 深紫背景卡片
+
+### 📦 依赖
+- muv-engine: `^0.1.0` → `^0.2.0`
+- muv-table: `^0.1.0` → `^0.2.0`
+
+---
+
 ## v3.0.0 (2026-08-27) — ⚠️ 不兼容 1.9.1
 
 ### 💥 破坏性变更
