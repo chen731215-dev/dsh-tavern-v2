@@ -1,4 +1,4 @@
-﻿# PolyForm Noncommercial Copyleft 1.0.0
+# PolyForm Noncommercial Copyleft 1.0.0
 
 This software is licensed under the PolyForm Noncommercial Copyleft 1.0.0 license.
 
