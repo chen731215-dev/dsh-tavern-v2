@@ -1,5 +1,72 @@
 # Changelog
 
+## v2.3.5 (2026-09-13)
+
+### 🐛 修复
+
+- **DSH 装到非默认位置时预设无法生效 / 无法注入**：路径此前写死为 `~/.dsh`。
+  而 DSH 本体是用 `@deepseek-ai/dsh-home-paths` 的 `resolveDshHome()` 定位用户数据根的：
+
+  ```
+  优先级 = 显式配置 → $DSH_HOME（非空）→ ~/.dsh
+  用户预设目录 = <dshHome>/.agent-presets
+  ```
+
+  一旦 `DSH_HOME` 指向非默认位置，酒馆就会把预设写到 DSH **根本不会扫描**的
+  `~/.dsh/.agent-presets`：面板里配好的预设在 DSH 侧不存在，无法在聊天顶部
+  预设选择器里选中，也就无法注入。
+
+  现在 `apply()` 开始时优先取 DSH 提供的 `dshHomePath` 服务（与本体同源），
+  拿不到再按 `$DSH_HOME` → `~/.dsh` 自行解析，并同步绑定预设目录、会话目录、
+  `settings.yaml` / `.credentials.yaml`。相关缓存同时失效。
+
+- **会话日志永远找不到**：`findSessionFile()` 只认 `session.jsonl.zstd`，
+  而 DSH 的会话日志文件名带物理格式代次（见 `dsh-session-format/src/filename.ts`）：
+
+  ```
+  generation 0 -> session.jsonl / session.jsonl.zstd
+  generation N -> session.vN.jsonl / session.vN.jsonl.zstd
+  ```
+
+  0.1.5-rc.1 当前写的是 **`session.v3.jsonl.zstd`**，所以现行会话一个都匹配不到。
+  连带失效的有：
+
+  - `resolveAuthoritativePresetId()` 读不到会话事件流里的 `agent-preset/selected`，
+    无法采用「聊天顶部预设选择器」这个权威来源，只能退回旧的 `session-bindings`
+    兼容数据，最后落在默认预设
+  - 会话内容预览、会话标题、编辑过的消息历史
+
+  现在按正则匹配该目录下代次最高的 `session[.vN].jsonl[.zstd]`。
+
+- **切换预设时报 `$.prefix missing required value`，预设无法挂载**：
+  面板生成 `agent.cordis.yml` 时把 persona 正文写在 `text:` 字段，而
+  `@deepseek-ai/dsh-persona` 的 Config 以 `prefix` 为必填。v2.3.2 只修了服务端
+  「空白预设骨架」那条路径，**漏了客户端里带实际内容的那条生成路径**
+  （角色卡 + 世界书全量写进 persona），所以带内容的预设依然挂载失败：
+
+  ```
+  无法切换到「深渊」：failed to apply loader entry persona (@deepseek-ai/dsh-persona):
+  invalid config: - $.prefix missing required value
+  (…\.agent-presets\preset-xxxx\agent.cordis.yml)
+  ```
+
+  三处一起修：
+
+  1. `lib/client.manager.bundle.js` 生成器：`config.text:` → `config.prefix:`
+  2. 服务端 `extractCardText()`（`lib/index.js` 与 `lib/utils.js`）同时接受
+     `text:` 与 `prefix:` —— 否则改完之后读不回角色卡，注入内容会变空
+  3. 新增启动期迁移 `migratePersonaTextField()`：扫描预设目录，把 persona 行里
+     legacy 的 `text: |-` 就地改成 `prefix: |-`（改前留 `.bak`），
+     已经坏掉的老预设无需重建即可恢复
+
+### 🔧 改进
+
+- 启动时打印 `DSH_HOME`、预设目录、会话目录，路径类问题可一眼看出。
+
+> 未改动任何许可证内容。
+
+---
+
 ## v2.3.4 (2026-09-13)
 
 ### 📝 文档
