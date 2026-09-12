@@ -32,6 +32,46 @@
   3. 新增启动期迁移 `migratePersonaCompleteFlag()`：自动把历史预设改成同样的结构
      （改前留 `.bak`；仅当预设目录里有非空 `characters.json` 时才摘角色卡那段）
 
+### 🐛 修复：面板保存会顶掉别处改的注入模式
+
+这一条是新功能上线后紧接着发现的连带 bug，属于「你的修改会被悄悄改回去」那一类：
+
+`saveWb()` 每次保存条目/分组时都会带上 `injectMode: wbMode`，而 `wbMode` 只在
+`loadWb()` 时刷新。于是**只要在别处改过模式**（独立设置页、另一个标签页、
+直接改 `worldbooks.json`），再回到面板点一下「＋ 新增条目」或删一条条目，
+那个陈旧的 `wbMode` 就把刚改好的模式**覆盖回旧值**，且没有任何提示。
+
+修复分两处，缺一不可：
+
+1. **服务端**：`POST /api/tavern/worldbook` 在请求体**不含** `injectMode` 时，
+   保留该预设磁盘上已有的模式，不再默认成 `full`；显式传入时照旧生效，
+   非法值仍回落 `full`。响应体回显最终模式，便于前端确认。
+2. **面板**：`saveWb()` 不再发送 `injectMode`（现在整个函数体内不出现这个词）；
+   模式改动单独走只动模式的 `POST /api/tavern/worldbook/mode`。
+
+顺带修掉同一片区域的另外几处：
+
+- **`loadWb()` 的同名组合并会洗掉字段**：以前**无条件**把每个分组重建成
+  `{name, enabled, entries}`，分组上其它字段（如扫描深度）会被静默丢弃；
+  现在只有**真的出现同名分组**时才重建，且用 `Object.assign` 保留原字段。
+- **按内容去重会吃掉真条目**：原来判重只看 `content`，两条内容相同但
+  关键词/注释不同的条目会被当成同一条，**下一次保存就从磁盘上永久消失**。
+  改为 `content || text` 加 `comment` 一起比（`__sameEntry`）。
+- **`renderWbList()`/`loadWb()`/`saveWb()` 缺守卫**：面板卸载后
+  `querySelector` 返回 null 会抛错；现在 `renderWbList` 对空列表直接返回，
+  `loadWb` 用 `container.isConnected === false` 跳过，并按项目规范补上 `.catch()`。
+
+### ✨ 面板与外部修改的实时同步
+
+- **保存后回读磁盘**：`saveWb()` 成功后调用 `loadWb()`，界面以磁盘为准，
+  消除「本地视图与服务端归一化结果漂移 → 下一次保存把漂移写回磁盘」的隐患。
+- **回到窗口自动对齐**：新增模块级重同步钩子（`__tavernWbRefresh` +
+  `installWbFocusHook`），监听 `window.focus` 与 `visibilitychange`；
+  从独立设置页或别的标签页切回来时自动重拉，**3 秒节流**避免反复请求，
+  面板已卸载时因 `isConnected` 守卫而完全不打扰后端。
+- 预设新建 / 复制 / 删除、会话切换等既有刷新路径保持不变
+  （经解析器核对，这些 `loadWb()` 调用点都在作用域内，并非缺陷）。
+
 ### ✨ 新功能：设置面板里的「世界书注入」开关
 
 不用再手改 `worldbooks.json`。打开 `/api/tavern/settings`，多了一张
