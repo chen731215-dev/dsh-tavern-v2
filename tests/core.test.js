@@ -125,6 +125,43 @@ test('extractCardText: 非字符串返回空', () => {
   assert.equal(extractCardText(123), '')
 })
 
+// ★ 回归：块结束要按「键名缩进」判断，不能只认顶格行。
+//   config: 下的 complete: / includeRuntimeContext: 与 prefix: 同级缩进但都不是第 0 列，
+//   旧实现（if (/^\S/.test(line)) break）会把它们当成角色卡正文一起吞进去，
+//   于是注入的卡片末尾多出「complete: false」「includeRuntimeContext: true」这种垃圾。
+test('extractCardText: 同级键不会被吞进卡片', () => {
+  const yml = [
+    '- id: persona',
+    "  name: '@deepseek-ai/dsh-persona'",
+    '  config:',
+    '    prefix: |-',
+    '      这是角色卡内容',
+    '      第二行',
+    '    complete: false',
+    '    includeRuntimeContext: true',
+    '',
+  ].join('\n')
+  const text = extractCardText(yml)
+  assert.ok(text.includes('这是角色卡内容'))
+  assert.ok(text.includes('第二行'))
+  assert.ok(!text.includes('complete:'), 'complete: 被吞进卡片了')
+  assert.ok(!text.includes('includeRuntimeContext'), 'includeRuntimeContext 被吞进卡片了')
+})
+
+test('extractCardText: prefix 顶格时也能正确截断', () => {
+  const yml = [
+    '- id: persona',
+    '  config:',
+    '    prefix: |-',
+    '      卡片正文',
+    '  complete: false',
+    '',
+  ].join('\n')
+  const text = extractCardText(yml)
+  assert.ok(text.includes('卡片正文'))
+  assert.ok(!text.includes('complete:'))
+})
+
 test('extractCardText: 无 text 字段返回空', () => {
   const yml = `- id: persona\n  name: test\n`
   assert.equal(extractCardText(yml), '')
