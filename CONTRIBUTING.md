@@ -26,7 +26,7 @@
 
 ### 1. 开 Issue
 
-在开始写代码之前，请先在 [GitHub Issues](https://github.com/chen731215-dev/dsh-tavern/issues) 中开一个 issue，说明：
+在开始写代码之前，请先在 [GitHub Issues](https://github.com/chen731215-dev/dsh-tavern-v2/issues) 中开一个 issue，说明：
 
 - **Bug 报告**：问题是什么、怎么复现、期望结果是什么
 - **功能需求**：要做什么、为什么需要、大概怎么实现
@@ -167,7 +167,7 @@ feat: 新增会话级预设隔离
 
 ## 报告 Bug
 
-请使用 [Bug 报告模板](https://github.com/chen731215-dev/dsh-tavern/issues/new?template=bug_report.md)，包含：
+请使用 [Bug 报告模板](https://github.com/chen731215-dev/dsh-tavern-v2/issues/new?template=bug_report.md)，包含：
 
 - **DSH 版本**：设置 → 关于
 - **插件版本**：package.json 中的 version
@@ -179,7 +179,7 @@ feat: 新增会话级预设隔离
 
 ## 功能需求
 
-请使用 [功能需求模板](https://github.com/chen731215-dev/dsh-tavern/issues/new?template=feature_request.md)，包含：
+请使用 [功能需求模板](https://github.com/chen731215-dev/dsh-tavern-v2/issues/new?template=feature_request.md)，包含：
 
 - **功能描述**：你想要什么功能
 - **为什么需要**：解决什么问题
@@ -210,4 +210,4 @@ A: `lib/client.manager.bundle.js` 是打包后的文件，修改源码后需要�
 
 ---
 
-如有其他问题，欢迎在 [Discussions](https://github.com/chen731215-dev/dsh-tavern/discussions) 中提问。
+如有其他问题，欢迎在 [Discussions](https://github.com/chen731215-dev/dsh-tavern-v2/discussions) 中提问。
