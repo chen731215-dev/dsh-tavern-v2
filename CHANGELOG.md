@@ -32,9 +32,39 @@
   3. 新增启动期迁移 `migratePersonaCompleteFlag()`：自动把历史预设改成同样的结构
      （改前留 `.bak`；仅当预设目录里有非空 `characters.json` 时才摘角色卡那段）
 
+### 🌍 世界书（对齐 SillyTavern 语义）
+
+原实现有几个与 ST 不一致的地方，直接导致「该触发的没触发 / 不该注入的全量注入」：
+
+- **EJS 模板被当正文注入**：ST 的 `分阶段人设` 条目是 `<%_ if (好感度>90) { _%> … getwi(...) %>`
+  EJS 脚本，酒馆不执行 EJS，却把这些脚本**原样拼进提示词**（9 条 4.7k 字符纯垃圾）。
+- **`getwi()` 引用的条目被当成「未启用」丢掉**：分阶段人设的 36 条阶段条目都是
+  `enabled:false`，由 EJS 按好感度挑选。酒馆按 `enabled` 过滤后一条都拿不到 ——
+  结果是「EJS 垃圾进了、真正的阶段人设一条没进」。
+- **`keys || keywords` 的兜底是错的**：`[]` 在 JS 里是 truthy，
+  `keys` 为空数组时永远拿不到 `keywords`。
+- 关键词扫描深度写死 20 条，不看分组/条目配置。
+
+现已按 ST 语义重写（`selectWorldbookEntries`）：
+
+1. **常驻**：`constant:true` 或没有关键词；其余按关键词触发
+2. **副关键词**：`secondary_keys` / `keysecondary` 需同时命中（AND）
+3. **扫描深度**：`wb.scanDepth` 可配，默认 **4**（原为 20）
+4. **分阶段人设互斥**：解析 EJS 里的 `if (好感度 > N) { getwi(...) }` 阈值与
+   `getvar('stat_data.<角色>.好感度[0]')`，从近期消息取最新好感度，
+   每个角色**只注入当前档位那一条**（实测 0/45/75/95 → 阶段01/02/03/04）
+5. **EJS 模板不再注入**，只用来提供阈值
+6. 新增支持 `caseSensitive` / `matchWholeWords` / `probability` / `order` / `disable`
+
+> 体积实测（同一份世界书）：常驻 + 当前阶段 = 每轮约 1.2 万字符的基线；
+> 关键词条目按命中追加。原先的最坏情况（近期消息提到多个角色名）会一次灌入
+> 14.5 万字符。
+
 ### 🔧 改进
 
 - 迁移函数加入 `_test` 导出，便于单测与离线修复。
+- 世界书选择器（`selectWorldbookEntries` / `parseStagePlans` / `latestAffection`）
+  一并加入 `_test` 导出。
 
 > 未改动任何许可证内容。
 
