@@ -160,4 +160,4 @@ dsh plugin add dsh-tavern
 
 > 因含非商业条款，不符合 OSI 对"开源软件"的严格定义，准确表述为"源码公开 / 非商业共享"。
 
-作者：chen731215 | 仓库：https://github.com/chen731215-dev/dsh-tavern
+作者：chen731215 | 仓库：https://github.com/chen731215-dev/dsh-tavern-v2
