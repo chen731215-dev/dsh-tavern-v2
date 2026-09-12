@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.3.4 (2026-09-13)
+
+### 📝 文档
+
+- **统一许可协议表述**：README 底部的「📄 许可协议」段落此前写的是 **CC BY-NC-SA 4.0**，
+  与 `LICENSE` / `LICENSE.md` / `package.json` 的 `license` 字段
+  （PolyForm-Noncommercial-Copyleft-1.0.0）不一致。现统一为
+  **PolyForm-Noncommercial-Copyleft-1.0.0**，并按其实际条款重写要点
+  （非商业用途、Copyleft 开源、商业需单独授权、须随附协议全文）。
+- README 中所有协议名称统一为 `PolyForm-Noncommercial-Copyleft-1.0.0` 这一种写法。
+
+> 仅改动 README 的文字表述。`LICENSE` / `LICENSE.md` 正文与 `package.json` 的
+> `license` 字段均未改动。
+> `RELEASE_NOTES_v1.9.2.md` 中标注的 `CC-BY-NC-SA 4.0` 是 v1.9.2 当时的历史事实，
+> 属于版本发布记录，按原样保留。
+
+---
+
 ## v2.3.3 (2026-09-13)
 
 ### 📝 文档
