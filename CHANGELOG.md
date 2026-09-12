@@ -1,5 +1,45 @@
 # Changelog
 
+## v2.3.6 (2026-09-13)
+
+### 🐛 修复
+
+- **反八股 / 世界书 / 记忆 / 关系网全都不生效**：`tavern:card` 段落里的白名单闸门是
+  「名单为空 → 谁都不放行」，而默认状态恰好是 `mode: allowlist` 且 `allowSessions`
+  与 `allowCwds` 都是空数组 —— 于是该段落**恒返回空字符串**，
+  上面这些内容一个都进不了提示词。日志里连 `textLen` 那行都不会出现
+  （`allowedBySession` / `allowedByCwd` 统计恒为 0），很容易误判成「功能没做」。
+
+  现改为 **白名单为空 = 不限制**：空名单时放行，一旦填了条目就按名单生效。
+  `tavern:nsfw` 段落里的同类闸门一并修正。
+
+- **`complete: true` 把其他所有段落整段压掉**：
+  面板生成的 `agent.cordis.yml` 给 persona 设了 `complete: true`，而 `complete` 的语义是
+  「本段恢复为**唯一**的系统提示段落」（`dsh-system-prompt` 的 assemble：
+  `sections: [completeSection]`）。被压掉的包括：
+
+  - 酒馆自己的 `tavern:card`（反八股 / 世界书 / 记忆 / 关系网 / 工具开关）
+  - 酒馆自己的 `tavern:nsfw`、`tavern:edits`
+  - DSH 原生的身份段、工具指引、运行时上下文
+
+  症状就是「反八股不生效」「原生工具指引消失」。同时 persona 里塞的
+  角色卡 + 全部世界书还与运行时段落重复注入两份。
+
+  修复：
+  1. 生成器不再写 `complete: true`
+  2. persona 不再包含 `# 角色卡` / `# 世界书`（交给服务端按会话注入；
+     世界书是关键词触发，省上下文；角色卡服务端会从 `characters.json` 读回）
+  3. 新增启动期迁移 `migratePersonaCompleteFlag()`：自动把历史预设改成同样的结构
+     （改前留 `.bak`；仅当预设目录里有非空 `characters.json` 时才摘角色卡那段）
+
+### 🔧 改进
+
+- 迁移函数加入 `_test` 导出，便于单测与离线修复。
+
+> 未改动任何许可证内容。
+
+---
+
 ## v2.3.5 (2026-09-13)
 
 ### 🐛 修复
