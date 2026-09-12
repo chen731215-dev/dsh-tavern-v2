@@ -1,5 +1,78 @@
 # Changelog
 
+## v2.3.4 (2026-09-13)
+
+### 📝 文档
+
+- **统一许可协议表述**：README 底部的「📄 许可协议」段落此前写的是 **CC BY-NC-SA 4.0**，
+  与 `LICENSE` / `LICENSE.md` / `package.json` 的 `license` 字段
+  （PolyForm-Noncommercial-Copyleft-1.0.0）不一致。现统一为
+  **PolyForm-Noncommercial-Copyleft-1.0.0**，并按其实际条款重写要点
+  （非商业用途、Copyleft 开源、商业需单独授权、须随附协议全文）。
+- README 中所有协议名称统一为 `PolyForm-Noncommercial-Copyleft-1.0.0` 这一种写法。
+
+> 仅改动 README 的文字表述。`LICENSE` / `LICENSE.md` 正文与 `package.json` 的
+> `license` 字段均未改动。
+> `RELEASE_NOTES_v1.9.2.md` 中标注的 `CC-BY-NC-SA 4.0` 是 v1.9.2 当时的历史事实，
+> 属于版本发布记录，按原样保留。
+
+---
+
+## v2.3.3 (2026-09-13)
+
+### 📝 文档
+
+- **修正指向已归档仓库的链接**：`README.md` 页脚的「仓库」链接与 `CONTRIBUTING.md` 的 4 处
+  贡献入口（Issues / Bug 模板 / 功能需求模板 / Discussions）此前都指向旧仓库
+  `chen731215-dev/dsh-tavern`。该仓库已归档，**归档仓库无法新建 issue**，
+  等于贡献入口全部失效。现已全部改为 `dsh-tavern-v2`。
+- `README.md` 顶部「旧仓库已归档」的说明链接按原样保留（它就是用来标注归档的）。
+
+> 未改动任何许可证内容。
+
+---
+
+## v2.3.2 (2026-09-13)
+
+> 适配 DSH 0.1.5-rc.1。服务端与客户端的对接面已逐项核对：`ctx.systemPrompt.section`、
+> `ctx.webServer.register({kind,path,handler})`、`context.agent.session.header.*`、
+> `~/.dsh/.agent-presets` + `agent.cordis.yml`/`preset.yml` 约定、客户端
+> `slots.inject('settings.section', () => slots.register({...}))` 写法均与当前版本一致。
+
+### 🐛 修复
+
+- **子 Agent 组装提示词直接崩溃**：`tavern:card` 的 `sid` 声明为 `const`，但下方的「子 Agent 继承」分支会执行 `sid = parentSid`，导致该分支一触发就抛
+  `TypeError: Assignment to constant variable`。
+  **主会话一旦绑定酒馆预设，任何 subagent 组装提示词都会失败** —— 也就是说这段为多 Agent 场景写的继承逻辑此前从未生效过。声明改为 `let`。
+
+- **自动总结会去总结 agent 之间的会话**：`lastSessionId` 原先由「任意 agent 组装提示词」覆写，
+  子 Agent / 队友 Agent 会把当前会话改成自己的子会话，自动总结于是读错会话、`mem.lastSeq` 也被子会话的条数冲掉，导致「每 N 条总结一次」的节奏紊乱。
+  现在只有**会话本人**才更新 `lastSessionId` 并触发自动总结，子 Agent 继承分支不再写 `lastSessionId`
+  （孙 Agent 的 `parentSid` 本身仍是子会话，同样不能写）。
+  判别使用 `header.origin === 'subagent'` / `delegationDepth > 0`，**而不是 `parentSession`** ——
+  用户自己 fork 出来的会话同样带 `parentSession`，不该被排除。
+
+- **摘要输入混入工具标记**：会话日志里 `assistant/message` 会携带 `tool-call` 内容块，
+  `contentToText` 把它们拼成 `[工具subagent]` 这类标记混进总结输入。
+  新增 `contentTextOnly`，记忆总结与会话内容预览只取 `text` 块，丢掉工具标记与推理块。
+  实测同一条真实会话：工具标记 **287 → 2**，字符 47047 → 44455。
+
+- **「＋ 新建」空白预设无法挂载**：生成的骨架把 persona 配置写成 `config: text:`，
+  而 `@deepseek-ai/dsh-persona` 以 `prefix` 为必填字段，schema 校验报
+  `$.prefix missing required value`。而一行配置校验失败会**拒绝整个 preset 挂载**
+  （`agent-preset/invalid: preset "x" failed to mount`），导致新建的预选选中后 Agent 起不来。
+  改为 `prefix:`。
+
+### 📦 依赖
+
+- muv-table: `^0.2.1` → `^0.2.2`（exports 修复）
+- muv-engine: `^0.3.1` → `^0.3.2`（导入路径修复）
+
+> v2.3.1 发布期间这两个依赖曾因上游包存在缺陷而暂时移除；上游修复并发布后已恢复声明，
+> 安装本包即会一并带上 MUV 伴生插件。
+
+---
+
 ## v2.3.0 (2026-08-31)
 
 ### ✨ 新功能
