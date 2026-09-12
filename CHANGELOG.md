@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.3.2 (2026-09-12)
+
+### 🐛 修复
+- **persona 配置键名适配（`text:` → `prefix:`）**：`@deepseek-ai/dsh-persona` 自 `0.1.3-alpha.2`（2026-09-07）起把该字段改名为 `prefix:`（并新增 `suffix`、`complete`、`includeRuntimeContext`），旧的 `text:` 被 schema 静默忽略，导致组装 agent 时 `prefix` 缺失、**预设完全无法使用**。修复范围：
+  - `lib/client.manager.bundle.js` `buildAgentYml()`：保存预设时写 `prefix:`
+  - `lib/index.js` `createPreset()`：新建空白预设骨架写 `prefix:`
+  - `lib/index.js` / `lib/utils.js` `extractCardText()`：两种键名都接受，旧预设（`text:`）仍可读
+- **成人模式 / 剧情选项此前完全不生效（根因）**：本插件生成的预设带 `complete: true`，`@deepseek-ai/dsh-system-prompt` 的 `assemble()` 会把最终 system prompt 压缩为「仅 complete 段」，因此 `tavern:nsfw` / `tavern:plotOptions` / `tavern:card` 等运行时 section **全部被丢弃**。现在成人模式与剧情选项的文案会在保存预设时写进 persona prefix，确保真正到达模型
+- **`tavern:nsfw` 白名单门禁移除**：该段原先在 `mode === 'allowlist'` 时要求 sessionId/cwd 命中白名单，但维护白名单的 UI 开关早已被移除，导致成人模式**静默失效**。开关本身（`nsfwEnabled`）已足够表达用户意图
+- **剧情选项渲染器**：
+  - `if (false && optionList.length > 0)` 长期禁用 → 恢复启用
+  - 按钮 `data-opt` 写的是**下标**（点击会发送 `"0"`/`"1"`/`"2"`）→ 改为携带选项正文
+  - 收集逻辑改为**仅在出现「选项引导语」时**启用，且只取引导语之后的编号/项目符号行；不再用 `接下来` / `请选择` / `你决定` 这类会出现在正文里的宽松词截断消息
+  - 补齐同行写法（`接下来你想怎么做？1. 甲 2. 乙`）、`、` 顿号编号、`- * · •` 项目符号
+- **`lib/utils.js` `extractCardText()` 块结束判断**：旧实现只认顶格行（`/^\S/`），会把同缩进的 `complete:` / `includeRuntimeContext:` 当成角色卡正文吞进来；改为按「键名缩进」比较，与 `lib/index.js` 的实现一致
+
+### ✨ 新增
+- **剧情选项开关补全**：面板「高级功能 → NSFW」区新增 `#tavern-plot-options` 复选框 + 状态提示（此前客户端只有 `querySelector` 查询、从未渲染该元素，所以开关永远找不到）
+- **开关状态同步**：`nsfwEnabled` / `plotOptions` 在面板加载时同步进客户端 `state`，保存预设时才会写进 persona prefix；`plotOptions` 客户端默认值与服务端 `readState()` 保持一致（默认开启）
+
+### 🎨 变更
+- 「💾 保存预设」按钮更名为「💾 保存并注入」，与 README/教程措辞一致
+
+### 🧪 测试
+- 新增 `extractCardText` 的 `prefix:` 用例（新旧键名、块边界、超长截断）
+
 ## v2.3.0 (2026-08-31)
 
 ### ✨ 新功能
