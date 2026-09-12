@@ -32,6 +32,29 @@
   3. 新增启动期迁移 `migratePersonaCompleteFlag()`：自动把历史预设改成同样的结构
      （改前留 `.bak`；仅当预设目录里有非空 `characters.json` 时才摘角色卡那段）
 
+### ✨ 新功能：设置面板里的「世界书注入」开关
+
+不用再手改 `worldbooks.json`。打开 `/api/tavern/settings`，多了一张
+「📚 世界书注入」卡片，两个单选按钮，旁边直接写着代价：
+
+| 选项 | 每轮带入 | 说明 |
+| --- | --- | --- |
+| **全量注入** | 约 11.5 万字符 | 世界书所有条目都写进提示词。人设记得最牢、不会漏，就是费钱。 |
+| **关键词触发** | 约 1.2 万字符 | 常驻条目每轮必带；其余条目只在最近 4 条消息里提到关键词时才注入；分阶段人设只带当前好感度那一档。省约 90%。 |
+
+配套新增端点 `POST /api/tavern/worldbook/mode`，**只改 `injectMode`，一个字都不动条目**：
+
+```bash
+curl -X POST http://127.0.0.1:3080/api/tavern/worldbook/mode \
+  -H 'content-type: application/json' \
+  -d '{"injectMode":"keyword"}'
+# → {"ok":true,"presetId":"…","injectMode":"keyword","groups":1,"entries":154}
+```
+
+> 为什么不复用 `POST /api/tavern/worldbook`？那个端点要求请求体带齐
+> `entries` / `groups`，只发一个 `injectMode` 会把整个世界书**清空**。
+> 所以这里另开一个只改模式的端点，非法值一律回落 `full`。
+
 ### 🌍 世界书（对齐 SillyTavern 语义）
 
 原实现有几个与 ST 不一致的地方，直接导致「该触发的没触发 / 不该注入的全量注入」：
