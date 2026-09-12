@@ -107,6 +107,34 @@ ${state.plotOptions !== false ? '12.' : '11.'} 严格遵守角色卡定义的输
   并在加载服务端状态时把 `nsfwEnabled` / `plotOptions` 同步回 `state`，
   避免内存值与实况漂移（这类漂移正是本 issue 的成因，同一类问题还有 `plotOptions`）。
 
+### 🐛 修复：重开面板后再保存，「自定义设定」和「故事背景」会被清空
+
+与 issue #2 是同一类问题（内存状态与服务端不一致），但后果更严重 —— **静默数据丢失**。
+
+`buildAgentYml()` 会把 `state.extraPrompt` 写进 persona 的 `# 自定义设定`、
+把 `state.storyBackground` 写进 `# 故事背景`，但这两个字段**只有「从输入框赋值」这一条路径，
+没有任何回填**（服务端也只是原样存 yml，不会把它们解析回来）：
+
+```
+state.extraPrompt      = e.target.value     ← 仅此一处
+state.storyBackground  = text / e.target.value / ''
+```
+
+于是这个流程会吃掉用户的内容：
+
+1. 在「自定义设定」里写一段文风要求（或导入一段故事背景），点「💾 保存并注入」→ 写入 yml、服务端已存
+2. 刷新页面 / 重开面板 → 内存里是空字符串，两个输入框也是空的
+3. 此时只要再点一次「保存并注入」（哪怕只是想改别的设置）→ 新生成的 yml 里这两段是空的
+   → **已存内容被覆盖，且没有任何提示**
+
+修法是补上回填：`loadCurrent()` 本来就拿到了 `agentYml`，新增 `restorePromptSections()`
+按 `# 标题` 把 `# 自定义设定` 与 `# 故事背景` 两段读回 `state` 与对应输入框。
+取 persona 前缀时的块结束判断与 `lib/utils.js` 的 `extractCardText` 同口径（按键名缩进比较），
+所以 `config:` 下的 `complete:` / `includeRuntimeContext:` 不会被吞进段落正文。
+
+验证 15 项，覆盖：两段回填、不混入同级 YAML 键、不把下一段吞进来、
+缺段与空值、**往返幂等**（读回→生成→再读回内容不变）、无 persona 段时不抛错。
+
 ### 📝 关于 PR #6（`@0x18d`）
 
 同时给出评审结论，避免重复劳动：
