@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.3.3 (2026-09-13)
+
+### 📝 文档
+
+- **修正指向已归档仓库的链接**：`README.md` 页脚的「仓库」链接与 `CONTRIBUTING.md` 的 4 处
+  贡献入口（Issues / Bug 模板 / 功能需求模板 / Discussions）此前都指向旧仓库
+  `chen731215-dev/dsh-tavern`。该仓库已归档，**归档仓库无法新建 issue**，
+  等于贡献入口全部失效。现已全部改为 `dsh-tavern-v2`。
+- `README.md` 顶部「旧仓库已归档」的说明链接按原样保留（它就是用来标注归档的）。
+
+> 未改动任何许可证内容。
+
+---
+
 ## v2.3.2 (2026-09-13)
 
 > 适配 DSH 0.1.5-rc.1。服务端与客户端的对接面已逐项核对：`ctx.systemPrompt.section`、
