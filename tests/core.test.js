@@ -106,7 +106,9 @@ test('buildWorldbookText: 多个条目都包含', () => {
 })
 
 // ── extractCardText ────────────────────────────────────
-test('extractCardText: 从 yml 提取 text 字段', () => {
+// ⚠️ @deepseek-ai/dsh-persona 0.1.3-alpha.2 起把 persona 文本字段由 text: 改名为 prefix:，
+//    两种键名都必须能提取，否则新预设的角色卡会被判为空。
+test('extractCardText: 从 yml 提取 text 字段（旧键名，向后兼容）', () => {
   const yml = `
 - id: persona
   name: '@deepseek-ai/dsh-persona'
@@ -118,6 +120,36 @@ test('extractCardText: 从 yml 提取 text 字段', () => {
   const text = extractCardText(yml)
   assert.ok(text.includes('这是角色卡内容'))
   assert.ok(text.includes('第二行'))
+})
+
+test('extractCardText: 从 yml 提取 prefix 字段（新键名）', () => {
+  const yml = `
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    prefix: |-
+      这是角色卡内容
+      第二行
+    complete: true
+    includeRuntimeContext: false
+`
+  const text = extractCardText(yml)
+  assert.ok(text.includes('这是角色卡内容'))
+  assert.ok(text.includes('第二行'))
+  // 不能把 complete / includeRuntimeContext 当成角色卡正文吞进来
+  assert.ok(!text.includes('complete: true'))
+})
+
+test('extractCardText: prefix 块在下一个同级键处正确结束', () => {
+  const yml = `
+- id: persona
+  config:
+    prefix: |-
+      角色卡正文
+    complete: true
+`
+  const text = extractCardText(yml)
+  assert.equal(text, '角色卡正文')
 })
 
 test('extractCardText: 非字符串返回空', () => {
@@ -132,7 +164,7 @@ test('extractCardText: 无 text 字段返回空', () => {
 
 test('extractCardText: 超长内容截断', () => {
   const longContent = 'a'.repeat(50000)
-  const yml = `- id: persona\n  config:\n    text: |-\n      ${longContent}\n`
+  const yml = `- id: persona\n  config:\n    prefix: |-\n      ${longContent}\n`
   const text = extractCardText(yml)
   assert.ok(text.length <= 40000 + 50) // CARD_MAX + 提示文字
   assert.ok(text.includes('已截断'))
