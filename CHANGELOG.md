@@ -4,6 +4,44 @@
 
 ### 🐛 修复
 
+- **新建对话里看不到自己的角色卡**（在顶部预设选择器里选了也没用）：
+
+  这是**两道闸门里第二道写错了**造成的。会话预设的解析本身没问题 ——
+  `resolveAuthoritativePresetId()` 会去读 DSH 的会话事件流，把用户在聊天顶部
+  选中的预设解析出来。问题在紧跟着的判断：
+
+  ```js
+  let presetId = getSessionPresetId(sid)          // 这里已经正确解析出「深渊」
+  const bindings = readBindings()
+  if (!sid || !bindings[sid]) { … return '' }     // ← 却拿酒馆自己的记账当闸门
+  ```
+
+  `session-bindings.json` 只是**酒馆自己的记账**，新建的会话里当然还没有条目。
+  于是「新建对话 → 在顶部选预设」这条正常路径永远走不到注入：预设明明解析出来了，
+  还是被 `return ''` 拦掉，一个字都不注入。
+
+  实测证据（把 `session.v3.jsonl.zstd` 的多帧 zstd 正确解开后读事件流）：
+
+  ```
+  type=session                 agentPreset=standard               ← DSH 建会话时的内置预设
+  type=agent-preset/selected   agentPreset=preset-mtyx98fa-pdsrh1 ← 用户确实在顶部选了
+  ```
+
+  > 附带说明：DSH 的会话文件是**追加写的多帧 zstd**，
+  > `zlib.zstdDecompressSync()` 只解第一帧（4MB 的文件只会解出 200 字符的 header 行）。
+  > 排查会话问题必须按帧头扫描后逐帧解压，否则会得出「会话里没有任何预设记录」这种错误结论。
+
+  现在闸门改成「**是否解析出了酒馆预设**」：
+
+  - `bindings[sid]` 有记录 → 用它（老会话路径不变）
+  - 否则看 DSH 侧是否确实挂着酒馆可管理的预设（排除内置 `standard` 与空预设 `default`）
+  - 命中就注入，并顺手补一条绑定，让面板显示与按会话隔离的数据都对得上
+  - 两者都没有 → 仍然不注入（官方标准模式等未绑定会话行为不变）
+  - 之后在顶部换成别的预设，权威解析读到的是更靠后的 `selected` 事件，优先于绑定
+
+  也就是说：**每个新对话各选各的预设、会话之间聊天隔离**这个用法现在是对的，
+  不需要给新会话套任何全局默认预设。`tavern:nsfw` 段落没有这道闸门（只查白名单），无需改动。
+
 - **反八股 / 世界书 / 记忆 / 关系网全都不生效**：`tavern:card` 段落里的白名单闸门是
   「名单为空 → 谁都不放行」，而默认状态恰好是 `mode: allowlist` 且 `allowSessions`
   与 `allowCwds` 都是空数组 —— 于是该段落**恒返回空字符串**，
