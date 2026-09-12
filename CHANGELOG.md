@@ -2,6 +2,64 @@
 
 ## v2.3.7 (2026-09-13)
 
+### ✨ NSFW / 剧情选项做成显式入口，并实时同步
+
+**这两个开关原先根本不在界面上。** 它们被放在「⚙️ 高级功能」卡片里，
+而那张卡片是 `style="display:none"` 默认折叠的：
+
+```js
+'  <div class="t-card" ...>',
+'    <span class="t-card-title" id="tavern-advanced-toggle" ...>⚙️ 高级功能 ...</span>',
+'    <div id="tavern-advanced-body" style="display:none;margin-top:10px">',   // ← 默认隐藏
+'      ... <input type="checkbox" id="tavern-nsfw-enabled" ...>',             // ← 就藏在这里
+```
+
+后果很具体：面板里有绑定、有事件、有状态提示，**但用户看不到那个复选框**，
+于是 `nsfwEnabled` 永远是默认的 `false`，成人模式看起来「怎么都不生效」。
+（顺带说明：这也正是 `tavern:nsfw` 段落被判定为「注入失败」的真实原因 ——
+不是键名、不是白名单，而是开关压根没能被打开。）
+
+现在把两个开关移到 **「📚 世界书」卡片下方的常驻可见区域**，与注入模式开关放在一起：
+
+- 🔞 **NSFW 成人模式**：开启后每轮强注入破限词
+- 🎭 **剧情选项**：要求模型在回复结尾给出可点行动
+
+「实时更新」体现在三处：
+
+1. **切换即写入服务端**（`POST /api/tavern/state`），**下一轮对话生效**，界面文案直接写明生效时机；
+2. **显式校验服务端返回**：旧实现只判断「请求没抛错」，服务端返回 `ok:false` 时
+   界面照样显示「已开启」，与实际注入状态不符；现在 `ok:false` 会报错并回滚勾选框；
+3. **新增 `refreshToggleStates()`**，并在**面板挂载时**与**窗口重新获得焦点 / 标签页切回来时**
+   各对齐一次 —— 在别处（另一个标签页、独立设置页、直接改 `tavern-state.json`）
+   改过开关，回到面板也会显示最新状态。它每次重新查 DOM，所以面板已卸载时调用也不会出错。
+
+另外在**独立设置页 `/api/tavern/settings`** 里也加了一张「🔞 注入开关」卡片，
+同样的两个开关、同一个端点 —— 面板不好找时还有第二个入口。
+
+> 回归测试专门覆盖了「开关必须在折叠容器之外」「复选框标记不能重复」等结构性断言
+> （重复 id 会让 `querySelector` 命中隐藏的那个），共 30 项。
+
+### 📝 issue #1 复核：桌面版 DSH_HOME 重定向的路径问题已修（v2.3.5）
+
+社区报告（`@jianaihongmutou-alt`）列的 4 处写死路径（`lib/index.js` 第 20 / 1056 / 1268 / 1666 行
+的 `path.join(os.homedir(), '.dsh', ...)`）**在 v2.3.5 已全部改为从 DSH_HOME 派生**，
+即报告里建议的「方案 A」，并且额外优先取 DSH 本体提供的 `dshHomePath` 服务（更贴近「方案 B」）：
+
+```js
+function resolveDshHome() {
+  const env = process.env.DSH_HOME
+  if (typeof env === 'string' && env.trim().length > 0) return path.resolve(expandHomePrefix(env.trim()))
+  return path.join(os.homedir(), '.dsh')       // ← 仅作兜底，不再是写死值
+}
+```
+
+现在 `DSH_HOME / ROOT / SESSIONS_ROOT / DSH_SETTINGS_FILE / DSH_CREDENTIALS_FILE`
+全部由它派生，`apply()` 开始时还会用 `bindDshPaths()` 按 DSH 实际 home 重新绑定一次
+（并让相关缓存失效）。`lib/utils.js` 与 `dsh-muv-table` 里的同类写法一并改掉。
+
+> 复核方式：扫描三个包的源码，确认除「`~` 展开」与上述兜底分支外，
+> 不存在任何写死的 `~/.dsh` 预设/会话路径。
+
 ### ✨ 新功能：一键切换注入模式
 
 面板「📚 世界书」卡里，注入模式下拉框旁边多了一个按钮：
