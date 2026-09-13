@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { matchWorldbookEntries, buildWorldbookText, extractCardText, contentToText } from '../lib/utils.js'
 
 // ── matchWorldbookEntries ──────────────────────────────
@@ -201,7 +204,7 @@ console.log('\n✅ 所有测试通过！')
 // ── 清理逻辑（兼容性测试：DSH 不支持 SillyTavern 变量系统）──
 import { _test } from '../lib/index.js'
 
-const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName } = _test
+const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal } = _test
 
 test('cleanSillyTavernVars: 移除双冒号变量 {{xxx::yyy}}', () => {
   assert.equal(cleanSillyTavernVars('a{{setvar::key::value}}b'), 'ab')
@@ -330,4 +333,145 @@ test('sanitizePromptText: 剥离"先打草稿"规划输出指令', () => {
   const t3 = sanitizePromptText('<cot>\n思考步骤\n</cot>\n正文')
   assert.ok(!t3.includes('<cot>'))
   assert.ok(t3.includes('正文'))
+})
+
+// ── 提示词体积估算（面板「提示词体积」卡片）──
+test('estimatePromptBudget: 小提示词不打告警', () => {
+  const b = estimatePromptBudget(10000, 65536)
+  assert.equal(b.chars, 10000)
+  assert.equal(b.tokens, 3125)            // 10000 / 3.2
+  assert.equal(b.level, 'ok')
+})
+
+test('estimatePromptBudget: 超过 60% 报偏大，超过 90% 报危险', () => {
+  // 138408 字符 ≈ 43253 tokens，占 65536 窗口的 66%
+  const warn = estimatePromptBudget(138408, 65536)
+  assert.equal(warn.tokens, 43253)
+  assert.equal(warn.pct, 66)              // 保留一位小数后仍是 66.0
+  assert.equal(warn.level, 'warn')
+  // 窗口砍到 40000 时应判危险
+  assert.equal(estimatePromptBudget(138408, 40000).level, 'danger')
+})
+
+test('estimatePromptBudget: 非法入参不会算出 NaN', () => {
+  for (const v of [0, -1, NaN, null, undefined, 'abc']) {
+    const b = estimatePromptBudget(v, 65536)
+    assert.equal(b.chars, 0)
+    assert.equal(b.tokens, 0)
+    assert.equal(b.level, 'ok')
+  }
+})
+
+test('estimatePromptBudget: 窗口非法时回落到默认 65536', () => {
+  const def = estimatePromptBudget(32000, 65536)
+  for (const w of [0, -5, NaN, null, 'x']) {
+    assert.deepEqual(estimatePromptBudget(32000, w), def)
+  }
+})
+
+// ── 会话存储迁出预设根目录 ──
+// 背景：.agent-presets 下每个名字合法的目录都会被 DSH 当成一行预设，
+// 缺 agent.cordis.yml 就标「加载失败」。插件的 sessions/ 曾建在这里。
+function tmpRoots() {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'tavern-mig-'))
+  return { base, oldRoot: path.join(base, 'presets', 'sessions'), newRoot: path.join(base, 'tavern-data', 'sessions') }
+}
+
+test('migrateSessionStorage: 空壳目录被丢弃，旧目录被删除', () => {
+  const { oldRoot, newRoot } = tmpRoots()
+  fs.mkdirSync(path.join(oldRoot, 'session-aaa'), { recursive: true })   // 空目录
+  const r = migrateSessionStorageOutOfPresetRoot(oldRoot, newRoot)
+  assert.equal(r.dropped, 1)
+  assert.equal(r.moved, 0)
+  assert.equal(r.removed, true)
+  assert.equal(fs.existsSync(oldRoot), false)                            // 关键：不留空目录占 id
+})
+
+test('migrateSessionStorage: 有数据的会话被搬走且内容不丢', () => {
+  const { oldRoot, newRoot } = tmpRoots()
+  fs.mkdirSync(path.join(oldRoot, 'session-bbb'), { recursive: true })
+  fs.writeFileSync(path.join(oldRoot, 'session-bbb', 'memory.md'), '记忆正文', 'utf8')
+  const r = migrateSessionStorageOutOfPresetRoot(oldRoot, newRoot)
+  assert.equal(r.moved, 1)
+  assert.equal(r.removed, true)
+  assert.equal(fs.readFileSync(path.join(newRoot, 'session-bbb', 'memory.md'), 'utf8'), '记忆正文')
+})
+
+test('migrateSessionStorage: 目标已存在时不覆盖，丢弃旧副本', () => {
+  const { oldRoot, newRoot } = tmpRoots()
+  fs.mkdirSync(path.join(oldRoot, 's1'), { recursive: true })
+  fs.writeFileSync(path.join(oldRoot, 's1', 'relations.json'), '旧', 'utf8')
+  fs.mkdirSync(path.join(newRoot, 's1'), { recursive: true })
+  fs.writeFileSync(path.join(newRoot, 's1', 'relations.json'), '新', 'utf8')
+  const r = migrateSessionStorageOutOfPresetRoot(oldRoot, newRoot)
+  assert.equal(r.dropped, 1)
+  assert.equal(r.moved, 0)
+  assert.equal(fs.readFileSync(path.join(newRoot, 's1', 'relations.json'), 'utf8'), '新')
+})
+
+test('migrateSessionStorage: 旧目录不存在时是幂等空操作', () => {
+  const { oldRoot, newRoot } = tmpRoots()
+  const r = migrateSessionStorageOutOfPresetRoot(oldRoot, newRoot)
+  assert.deepEqual(r, { moved: 0, dropped: 0, removed: false })
+  assert.equal(fs.existsSync(newRoot), false)
+})
+
+test('默认预设组合文件用 prefix 而不是 text（否则挂载直接失败）', () => {
+  assert.ok(DEFAULT_PRESET_YML.includes('prefix: |-'))
+  assert.ok(!DEFAULT_PRESET_YML.includes('text: |-'))
+  assert.ok(DEFAULT_PRESET_YML.includes("'@deepseek-ai/dsh-persona'"))
+  assert.ok(DEFAULT_PRESET_META.includes('name:'))
+})
+
+// ── 回复体检：区分「模型拒绝」和「角色在台词里拒绝」──
+test('detectRefusal: 中文拒绝（作为AI + 内容政策）判为 refusal', () => {
+  const d = detectRefusal('抱歉，我不能写这段内容。作为AI助手，我需要遵守内容政策。')
+  assert.equal(d.verdict, 'refusal')
+  assert.ok(d.hits.length >= 2)
+  assert.ok(d.score >= 90)
+})
+
+test('detectRefusal: 英文拒绝判为 refusal', () => {
+  const d = detectRefusal("I'm sorry, but I can't assist with that request.")
+  assert.equal(d.verdict, 'refusal')
+  assert.ok(d.hits.some((h) => h.includes('assist')))
+})
+
+test('detectRefusal: 长正文里角色说「我不能」不算拒绝（关键反例）', () => {
+  const rp = '「我不能让你这么做。」少年把剑横在身前，挡住了去路。'.repeat(40)
+  const d = detectRefusal(rp)
+  assert.equal(d.verdict, 'ok')
+  assert.equal(d.score, 0)
+})
+
+test('detectRefusal: 短而正常的回复不误判', () => {
+  assert.equal(detectRefusal('好的，我们继续。').verdict, 'ok')
+  assert.equal(detectRefusal('').verdict, 'ok')
+  assert.equal(detectRefusal(null).verdict, 'ok')
+})
+
+test('detectRefusal: 长正文后面附一段拒绝 → 判为拒绝', () => {
+  // 命中 强「无法提供」(45) + 中「你希望我…否定」(25) = 70，过 60 的门限
+  const d = detectRefusal('这段我接着写。'.repeat(200) + '不过，如果你希望我描写更极端的暴力内容，我无法提供。')
+  assert.equal(d.verdict, 'refusal')
+  assert.equal(d.score, 70)
+  assert.ok(d.hits.some((h) => h.includes('无法提供')))
+})
+
+test('detectRefusal: 光有「你想让我」这种句式、后面没否定 → 不报', () => {
+  const d = detectRefusal('你想让我怎么做？'.repeat(100))
+  assert.equal(d.verdict, 'ok')
+  assert.equal(d.score, 0)
+})
+
+test('detectRefusal: 道歉开头的否定也抓得住', () => {
+  const d = detectRefusal('很抱歉，这个我无法描写。')
+  assert.ok(d.verdict !== 'ok')
+})
+
+test('detectRefusal: 命中时会给出可读的证据片段', () => {
+  const d = detectRefusal('作为AI，我不能协助这个请求。')
+  assert.ok(d.excerpt.length > 0)
+  assert.ok(d.excerpt.includes('作为AI') || d.excerpt.includes('协助'))
+  assert.equal(d.length, '作为AI，我不能协助这个请求。'.length)
 })
