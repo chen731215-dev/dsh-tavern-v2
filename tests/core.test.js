@@ -204,7 +204,7 @@ console.log('\n✅ 所有测试通过！')
 // ── 清理逻辑（兼容性测试：DSH 不支持 SillyTavern 变量系统）──
 import { _test } from '../lib/index.js'
 
-const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal } = _test
+const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal, pickAuthoritativePreset, extractAgentPresetFromLine } = _test
 
 test('cleanSillyTavernVars: 移除双冒号变量 {{xxx::yyy}}', () => {
   assert.equal(cleanSillyTavernVars('a{{setvar::key::value}}b'), 'ab')
@@ -474,4 +474,58 @@ test('detectRefusal: 命中时会给出可读的证据片段', () => {
   assert.ok(d.excerpt.length > 0)
   assert.ok(d.excerpt.includes('作为AI') || d.excerpt.includes('协助'))
   assert.equal(d.length, '作为AI，我不能协助这个请求。'.length)
+})
+
+// ── 预设 / 会话隔离的权威解析 ──
+// 回归自真实故障：用户在顶部把会话改成「标准模式」(standard)，
+// 但因为 standard 不是酒馆目录，旧实现会继续往前翻历史选择，翻到深渊并照旧注入。
+const isTavern = (id) => id === 'preset-mtyx98fa-pdsrh1' || id === 'tavern-lite'
+
+test('pickAuthoritativePreset: 最新显式选择是酒馆预设 → 用它', () => {
+  assert.equal(pickAuthoritativePreset('preset-mtyx98fa-pdsrh1', isTavern, 'preset-mtyx98fa-pdsrh1'), 'preset-mtyx98fa-pdsrh1')
+})
+
+test('pickAuthoritativePreset: 最新显式选择是内置预设 → 判定不注入（关键回归）', () => {
+  // 这就是隔离失效的那个洞：选了 standard，就必须返回 default，不能翻历史
+  assert.equal(pickAuthoritativePreset('standard', isTavern, ''), 'default')
+})
+
+test('pickAuthoritativePreset: 显式选了内置预设时，过期的 bindings 不得翻盘（关键回归）', () => {
+  // 用户选了 standard，但 bindings 里还记着深渊 —— 必须听用户的，不是听记账
+  assert.equal(pickAuthoritativePreset('standard', isTavern, 'preset-mtyx98fa-pdsrh1'), 'default')
+})
+
+test('pickAuthoritativePreset: 事件流没有预设记录时，才退回 bindings', () => {
+  assert.equal(pickAuthoritativePreset(null, isTavern, 'preset-mtyx98fa-pdsrh1'), 'preset-mtyx98fa-pdsrh1')
+})
+
+test('pickAuthoritativePreset: 都没有 → default', () => {
+  assert.equal(pickAuthoritativePreset(null, isTavern, ''), 'default')
+  assert.equal(pickAuthoritativePreset(null, isTavern, 'standard'), 'default')  // bindings 里是内置预设也当无绑定
+})
+
+// ── 从日志行里取会话预设（本次故障的真正要害）──
+// DSH 把「会话当前的预设」写在创建记录行（type:"session"），
+// 旧实现要求该行同时含 agent-preset/selected 或 "header" 才认 —— 两个都不含，于是永远取不到值。
+test('extractAgentPresetFromLine: 从会话创建记录里取得到（关键回归）', () => {
+  const line = '{"type":"session","id":"session-x","agentPreset":"standard","cwd":"D:/x"}'
+  assert.equal(extractAgentPresetFromLine(line), 'standard')
+})
+
+test('extractAgentPresetFromLine: agent-preset/selected 事件同样取得到', () => {
+  const line = '{"type":"agent-preset/selected","data":{"agentPreset":"preset-mtyx98fa-pdsrh1"}}'
+  assert.equal(extractAgentPresetFromLine(line), 'preset-mtyx98fa-pdsrh1')
+})
+
+test('extractAgentPresetFromLine: 只出现词、没有键值对的行取不到（防自身输出污染）', () => {
+  // 我们的诊断脚本源码里就有 "agentPreset" 这个词，会被日志原样记下
+  assert.equal(extractAgentPresetFromLine('if (!ln.includes("agentPreset")) continue'), '')
+  assert.equal(extractAgentPresetFromLine('l.includes("agentPreset")'), '')
+})
+
+test('extractAgentPresetFromLine: 无关行返回空串', () => {
+  assert.equal(extractAgentPresetFromLine('{"type":"user/message"}'), '')
+  assert.equal(extractAgentPresetFromLine(''), '')
+  assert.equal(extractAgentPresetFromLine(null), '')
+  assert.equal(extractAgentPresetFromLine(undefined), '')
 })
