@@ -1,0 +1,19 @@
+﻿# 依赖
+node_modules/
+
+# 本地临时探针（用完即删，不应入库）
+tmp-*
+*.tmp
+
+# 日志与打包产物
+*.log
+npm-debug.log*
+*.zip
+*.tar
+*.tar.gz
+*.bundle
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
