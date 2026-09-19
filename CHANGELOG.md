@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.4.1 (2026-09-20)
+
+### 🐛 修复：状态栏被一个死的门控掐死
+
+加载 `<StatusPlaceHolderImpl/>` 的 HTML 时，客户端用 `if (d.ok && d.zodSource)`
+当门控 —— 而**服务端从不看 `zodSource`**（全仓库 grep 零命中；muv-engine 的
+`extractStatusBarHtml` 读的是 `regexScripts` / `data.extensions.regex_scripts`）。
+
+后果：明明能算出来的状态栏被客户端直接跳过，iframe 永远空白。实测同一张卡
+（足控天堂2）服务端返回 **210219 字节** 的状态栏 HTML，客户端 SKIPPED。
+由于真机上极少有卡把 Zod 脚本命名为 `zod`，`zodSource` 基本恒为空 ——
+**等于所有预设都渲染不出状态栏**。
+
+修法：门控改为 `d.regexScripts && d.regexScripts.length`（这正是服务端真正需要的）。
+顺带补上 `presetId`——原先这次请求不带任何参数，服务端按「最近写入的会话」猜预设，
+多会话下会渲染成**别的会话的卡**。
+
 ## v2.4.0 (2026-09-20)
 
 ### ♻️ 渲染职责交割给 dsh-muv-engine
