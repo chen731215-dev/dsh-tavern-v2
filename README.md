@@ -10,6 +10,37 @@
 
 🎴 **为 DeepSeek Harness 打造的角色卡 / 世界书管理插件，导入角色卡就能开始角色扮演。**
 
+## 🆕 v2.4.0 更新内容
+
+### 渲染职责交割给 dsh-muv-engine
+
+本插件原先自带一套剧情/状态美化（`beautifyContentEl`），而 dsh-muv-engine 另有一套
+更完整的状态栏级联。**两套渲染器同时运行会互相覆盖**：酒馆这套把 `『』` 表头与
+`- 😋 名字` 当作对话行平铺，覆盖掉 muv-engine 结构化后的卡片，用户看到的是半成品。
+
+现在渲染归 **dsh-muv-engine**，本插件只负责面板与数据：
+
+- 三处调用点统一走 `delegateBeautify(msgEl)` → `window.MuvEngine`
+- 未安装 muv-engine 时静默跳过，**本插件仍可单独使用**
+- `beautifyContentEl` 定义保留作为回退，但不再被调用
+
+### 消息定位改用结构匹配
+
+DSH 的消息容器类名是 CSS Modules 生成的哈希（历史上是 `Sxvs8a_root`，后来是
+`_markdown_kcgor_5`），**每次 DSH 重建 Web 资源都会变**。写死任何一个哈希，都会在
+某次 DSH 升级后静默失效——选择器匹配不到任何消息，整条美化链路全部不执行，而页面上
+看不出任何报错。
+
+现在按形状匹配（`_markdown_<hash>_<n>`）并用块级子节点把同名的**文件类型图标**排除掉，
+另保留 `[data-role="assistant"]` 等显式标记退路。
+
+### 其他修复
+
+- 新建/复制预设后同步刷新预设绑定与 DOM 标签，修复「新建预设后添加角色卡/世界书
+  写进了另一个预设」
+
+> ⚠️ 配套版本：本版需配合 **dsh-muv-engine 0.3.4** 与 **dsh-muv-table 0.2.6**。
+
 ## 📜 许可证
 
 Copyright (c) 2026 chen731215-dev
