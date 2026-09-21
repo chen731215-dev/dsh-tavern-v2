@@ -204,7 +204,7 @@ console.log('\n✅ 所有测试通过！')
 // ── 清理逻辑（兼容性测试：DSH 不支持 SillyTavern 变量系统）──
 import { _test } from '../lib/index.js'
 
-const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal, pickAuthoritativePreset, extractAgentPresetFromLine } = _test
+const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal, pickAuthoritativePreset, pickAuthoritativePresetFromLog, classifySessionPresetLines, extractAgentPresetFromLine, sessionIdKeys, sessionDirMatches } = _test
 
 test('cleanSillyTavernVars: 移除双冒号变量 {{xxx::yyy}}', () => {
   assert.equal(cleanSillyTavernVars('a{{setvar::key::value}}b'), 'ab')
@@ -528,4 +528,125 @@ test('extractAgentPresetFromLine: 无关行返回空串', () => {
   assert.equal(extractAgentPresetFromLine(''), '')
   assert.equal(extractAgentPresetFromLine(null), '')
   assert.equal(extractAgentPresetFromLine(undefined), '')
+})
+
+// ── 会话日志目录与 id 的前缀归一化 ──────────────────────────────
+//
+// 线上实测的真因：`getCurrentSessionId()`（客户端）与 `session-bindings.json` 用的都是
+// **`session-<uuid>`**，而 DSH 的会话日志目录**大多数是裸 `<uuid>`**
+// （实测：裸 189 个 / 带前缀 71 个）。
+//
+// 旧实现只有 `sd.name === sessionId || sd.name.includes(sessionId)`，存在**方向性**缺陷：
+// 传 `session-<uuid>`、目录名是裸 `<uuid>` 时，`===` 不中，而
+// `'<uuid>'.includes('session-<uuid>')` **方向也是反的** ⇒ 两个判据都不中 ⇒ 查不到日志
+// ⇒ `resolveAuthoritativePresetId()` 静默退回 bindings（多数会话没有记录）⇒ 返回 `default`。
+// 后果：**73%（189/260）的会话权威预设失效**。线上对照读数：
+//   ?sessionId=session-01c8609b-… → default        （错）
+//   ?sessionId=01c8609b-…         → preset-mt1vwaes-ieavdv（对）
+test('sessionIdKeys: 两种形式互为候选（带前缀 / 裸 uuid）', () => {
+  const u = '01c8609b-f904-4fd6-aff1-2fc52af2f0fe'
+  assert.deepEqual(sessionIdKeys('session-' + u), ['session-' + u, u])
+  assert.deepEqual(sessionIdKeys(u), [u, 'session-' + u])
+  assert.deepEqual(sessionIdKeys(''), [])
+  assert.deepEqual(sessionIdKeys(null), [])
+})
+
+test('sessionDirMatches: 目录名与 id 的四种组合都匹配（关键回归）', () => {
+  const u = '01c8609b-f904-4fd6-aff1-2fc52af2f0fe'
+  // ★ 这一格正是线上失效的那一格：传带前缀、目录名是裸 uuid
+  assert.equal(sessionDirMatches(u, 'session-' + u), true)
+  assert.equal(sessionDirMatches('session-' + u, 'session-' + u), true)
+  assert.equal(sessionDirMatches(u, u), true)
+  assert.equal(sessionDirMatches('session-' + u, u), true)
+  // 反例：不能张冠李戴、不能因为空值就匹配
+  assert.equal(sessionDirMatches('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'session-' + u), false)
+  assert.equal(sessionDirMatches(u, ''), false)
+  assert.equal(sessionDirMatches('', u), false)
+})
+
+// ── 出生默认值 vs 显式切换：面板选卡被静默推翻的那个洞 ──
+//
+// 真实故障（线上实测 session-fb2f7f9f-…）：用户在酒馆面板选了「足控天堂」
+// （preset-mt5ip9cc-t6josi，bindings 里有记账），新开对话后：
+//   - 会话日志 1046 行，创建记录 = {"agentPreset":"standard"}，**一条 agent-preset/selected 都没有**
+//   - /api/tavern/current-session 返回 default ⇒ 注入的是 tavern-lite（川上富江）那张卡
+// 根因不是 bindings 写丢了，而是 `standard` 这个**出生默认值**被当成了用户的显式选择。
+//
+// 为什么每个新建会话的创建记录都是 `standard`：
+//   dsh-client-ui-workspace dist/client.js:55  `this.sessions.create({ workspaceId })`
+//   dsh-api-session-controller sessions/manager.js:459  `create(opts)` 只拼 workspaceId/cwd/sessionId
+//   ⇒ 请求里根本没有 agentPreset ⇒ 宿主 composeAgent(undefined) → presets.resolve(undefined) → defaultId
+//   ⇒ 创建记录写的是**部署默认预设**，与面板选的那张卡无关。
+// 用户的选择只落在两处：酒馆 bindings（面板写的）与 agent-preset/selected（顶部选择器写的）。
+test('classifySessionPresetLines: 创建记录与显式切换分别取出（关键回归）', () => {
+  const lines = [
+    '{"type":"session","id":"session-x","agentPreset":"standard","cwd":"D:/x"}',
+    '{"type":"permission/preset","data":{}}',
+    '{"type":"agent-preset/selected","seq":3,"data":{"agentPreset":"preset-mtyx98fa-pdsrh1"}}',
+    '{"type":"user/message","data":{}}',
+  ]
+  assert.deepEqual(classifySessionPresetLines(lines), { explicit: 'preset-mtyx98fa-pdsrh1', creation: 'standard' })
+})
+
+test('classifySessionPresetLines: 只有创建记录时 explicit 为 null（线上 1046 行那例）', () => {
+  const lines = [
+    '{"type":"session","id":"session-fb2f7f9f","agentPreset":"standard","cwd":"C:/deepseek harness"}',
+    '{"type":"user/message","data":{"content":[{"type":"text","text":"开始"}]}}',
+  ]
+  assert.deepEqual(classifySessionPresetLines(lines), { explicit: null, creation: 'standard' })
+})
+
+test('classifySessionPresetLines: 取最新一条显式切换，不受更早的切换影响', () => {
+  const lines = [
+    '{"type":"session","agentPreset":"standard"}',
+    '{"type":"agent-preset/selected","seq":3,"data":{"agentPreset":"preset-mtyx98fa-pdsrh1"}}',
+    '{"type":"agent-preset/selected","seq":9,"data":{"agentPreset":"tavern-lite"}}',
+  ]
+  assert.deepEqual(classifySessionPresetLines(lines), { explicit: 'tavern-lite', creation: 'standard' })
+})
+
+test('classifySessionPresetLines: 非数组 / 脏行不炸', () => {
+  assert.deepEqual(classifySessionPresetLines(null), { explicit: null, creation: null })
+  assert.deepEqual(classifySessionPresetLines(undefined), { explicit: null, creation: null })
+  assert.deepEqual(classifySessionPresetLines([null, 1, '', 'if (!ln.includes("agentPreset")) continue']), { explicit: null, creation: null })
+})
+
+test('pickAuthoritativePresetFromLog: 出生默认值不得推翻面板绑定（本次修复的要害）', () => {
+  // 场景 = 线上 session-fb2f7f9f…：创建记录 standard、无显式切换、面板绑了足控天堂
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, 'standard', isTavern, 'preset-mtyx98fa-pdsrh1'),
+    'preset-mtyx98fa-pdsrh1'
+  )
+})
+
+test('pickAuthoritativePresetFromLog: 显式切回内置预设时，bindings 依旧不得翻盘（旧语义保留）', () => {
+  assert.equal(
+    pickAuthoritativePresetFromLog('standard', 'standard', isTavern, 'preset-mtyx98fa-pdsrh1'),
+    'default'
+  )
+})
+
+test('pickAuthoritativePresetFromLog: 显式切到酒馆预设 → 用它，且忽略 bindings', () => {
+  assert.equal(
+    pickAuthoritativePresetFromLog('tavern-lite', 'standard', isTavern, 'preset-mtyx98fa-pdsrh1'),
+    'tavern-lite'
+  )
+})
+
+test('pickAuthoritativePresetFromLog: 无显式切换、无绑定 → 退回出生默认值', () => {
+  assert.equal(pickAuthoritativePresetFromLog(null, 'preset-mtyx98fa-pdsrh1', isTavern, ''), 'preset-mtyx98fa-pdsrh1')
+})
+
+test('pickAuthoritativePresetFromLog: 无显式切换、无绑定、出生默认是内置预设 → default', () => {
+  assert.equal(pickAuthoritativePresetFromLog(null, 'standard', isTavern, ''), 'default')
+  assert.equal(pickAuthoritativePresetFromLog(null, null, isTavern, ''), 'default')
+  assert.equal(pickAuthoritativePresetFromLog(null, 'standard', isTavern, 'standard'), 'default')
+})
+
+test('pickAuthoritativePresetFromLog: 绑定优先于出生默认值', () => {
+  // 会话出生在某张酒馆卡上，之后用户在面板改选另一张 → 听面板的
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, 'tavern-lite', isTavern, 'preset-mtyx98fa-pdsrh1'),
+    'preset-mtyx98fa-pdsrh1'
+  )
 })
