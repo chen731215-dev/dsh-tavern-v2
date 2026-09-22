@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.4.3 (2026-09-23)
+
+### 🧹 清理：播种不再追加 user 引导消息 + 手动注入防重复
+
+- **A. 播种只留下 assistant 开场白楼**：`seedGreetingMessage` 不再在开场白之后
+  append 一条 `GREETING_PREAMBLE` 的 user/message —— 它必然落在消息面上（dsh-session
+  要求 user/message 带 surfaceOp），界面上多一条引导楼且回合开始后删不掉
+  （toast「删除失败：这条消息可能已经开始发送」）；实测网关接受 assistant 打头，
+  这条引导是白付的代价。
+- **网关拒 assistant 打头的退路保留**：`agent/request-error` 撞 400 时先自动补种
+  一条 user 引导（`appendGreetingPreamble`）再试，并把补种结果写进
+  `greeting-seed.log`；仍不通则日志给出退路
+  `POST /api/tavern/state {"greetingSeedEnabled":false}` 关掉播种。
+- **B. 手动注入防重复**：`POST /api/tavern/greeting/insert` 若会话 log 里已有
+  `source.model === 'character-card'` 的 assistant 楼（播种与手动注入打同一个标记），
+  返回 `200 { ok:false, error:'greeting-already-present' }`，不再叠加第二条开场白
+  （用户截图里足控会话出现多条【主页】开场白就是这么来的）。
+  ★ 判据按 `source.model`，**不比文本** —— 占位符会被卡正则换掉，比文本必然漏判。
+- **C. 面板提示**：「📌 开场白」卡收到 `greeting-already-present` 时显示
+  「ℹ️ 本会话已有开场白，无需重复注入」（蓝色提示，不是报错）。
+
+测试：`tests/greeting-seed.test.js` 22 → 30 例；新增「播种后没有 user 引导」
+「两次注入第二次失败」「占位符变了仍认得出已注入」三组断言，均已验证对照臂能真红
+（把旧行为放回去 ⇒ 7 例变红）。全套 8 文件 181 例全绿。
+
 ## v2.4.2 (2026-09-23)
 
 ### 🐛 修复：开场白播种从未触发（时序自相矛盾）

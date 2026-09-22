@@ -14,6 +14,14 @@
  *         · 判重改「日志里还没有 turn/assistant」，不再是「日志为空」；
  *         · 另加手动兜底 POST /api/tavern/greeting/insert（旧会话注入到末尾）。
  *
+ * 修复三（2026-09-23 清理）：
+ *   · 播种**不再**在开场白之后追加 user 引导消息（GREETING_PREAMBLE）——它会常驻
+ *     消息面（界面上多一条引导楼）且回合开始后删不掉，而实测网关接受 assistant 打头；
+ *     它现在只在「assistant 打头被网关拒（400）」时由 appendGreetingPreamble 补种；
+ *   · 手动注入 API 防重复：会话里已有 source.model==='character-card' 的 assistant 楼
+ *     ⇒ { ok:false, error:'greeting-already-present' }（用户截图里足控会话出现多条
+ *     【主页】开场白，就是这个按钮被点了多次叠加出来的）。
+ *
  * 本文件单独存在，不动 tests/core.test.js。
  * 运行：node --test tests/greeting-seed.test.js
  */
@@ -30,9 +38,12 @@ import { _test } from '../lib/index.js'
 const {
   greetingTextFor,
   hasLiveUserMessage,
+  hasCardGreeting,
   seedGreetingMessage,
   seedGreetingForSession,
   appendGreetingToSessionEnd,
+  appendGreetingPreamble,
+  insertGreetingForSession,
   pickGreetingCard,
   greetingIdsOf,
   GREETING_PREAMBLE,
@@ -205,7 +216,7 @@ test('greetingTextFor: 未知预设返回空串（不抛）', () => {
 // 2. 播种：新会话的首条消息必须是开场白（新时机判重）
 // ══════════════════════════════════════════════════════════
 
-test('seedGreetingMessage: 新会话消息面为 [assistant(开场白), …]，首条即开场白', () => {
+test('seedGreetingMessage: 新会话消息面为 [assistant(开场白), user(开始)]，首条即开场白', () => {
   const greeting = greetingTextFor(REAL_PRESET_ID)
   assert.ok(greeting.length > 0, '前提：真卡有开场白')
 
@@ -224,13 +235,11 @@ test('seedGreetingMessage: 新会话消息面为 [assistant(开场白), …]，�
   }, { surfaceOp: 'append' })
 
   const messages = session.deriveMessages()
-  assert.equal(messages.length, 3, '开场白 + 合成引导 + 用户首条，实际 ' + messages.length)
+  assert.equal(messages.length, 2, '只有开场白 + 用户首条，实际 ' + messages.length)
   assert.equal(messages[0].role, 'assistant', '★ 首条必须是 assistant（开场白），实际：' + messages[0].role)
   assert.equal(textOf(messages[0]), greeting, '★ 首条内容必须与 first_mes 逐字一致')
   assert.equal(messages[1].role, 'user')
-  assert.equal(textOf(messages[1]), GREETING_PREAMBLE, '合成引导必须是短文本，不许重复开场白原文')
-  assert.equal(messages[2].role, 'user')
-  assert.equal(textOf(messages[2]), '开始')
+  assert.equal(textOf(messages[1]), '开始')
 
   // 卡里的 [0] 主页正则按原文匹配，因此播种内容里必须能看见这些锚点
   assert.ok(textOf(messages[0]).includes('<VariableInsert>'), '开场白里的 <VariableInsert> 必须原样保留（[0] 主页正则的锚点）')
@@ -240,14 +249,43 @@ test('seedGreetingMessage: 新会话消息面为 [assistant(开场白), …]，�
   assert.equal(copies, 1, '开场白原文在 transcript 里必须只出现一次，实际 ' + copies + ' 次')
 })
 
-test('seedGreetingMessage: 合成引导与开场白共用同一个 message id（按 id 精确关联）', () => {
+// ★ 本次清理的主断言（对照臂：旧实现必红）
+//   旧实现在开场白之后再 append 一条 `GREETING_PREAMBLE` 的 user/message ——
+//   它必然落在消息面上（dsh-session 要求 user/message 带 surfaceOp），于是界面上
+//   多一条引导楼，且回合开始后删不掉（toast「删除失败：这条消息可能已经开始发送」）。
+//   实测网关接受 assistant 打头 ⇒ 这条引导白付代价，已移除。
+test('seedGreetingMessage: 播种后日志里**没有** user 引导消息（GREETING_PREAMBLE 不再落盘）', () => {
+  const greeting = greetingTextFor(REAL_PRESET_ID)
+  const session = new FakeSession()
+  assert.equal(seedGreetingMessage(session, greeting), 1, '前提：播种成功')
+
+  assert.equal(
+    session.log.filter((e) => e.type === 'user/message').length, 0,
+    '★ 播种不许再追加 user 引导消息（旧实现这里会多一条 GREETING_PREAMBLE）',
+  )
+  const messages = session.deriveMessages()
+  assert.equal(messages.length, 1, '★ 播种后消息面只有开场白一条，实际 ' + messages.length)
+  assert.ok(!messages.some((m) => textOf(m) === GREETING_PREAMBLE), '★ 消息面上不许出现引导文本')
+
+  // assistant 开场白楼本身必须还在（别把孩子和洗澡水一起倒了）
+  const assistant = session.log.find((e) => e.type === 'assistant/message')
+  assert.ok(assistant, '必须有 assistant 开场白楼')
+  assert.equal(assistant.data.message.source.model, 'character-card', '判重标记必须还在')
+  assert.equal(greetingIdsOf(session).has(assistant.data.message.id), true, 'greetingSeeds 仍要记账（拒绝处理器靠它）')
+})
+
+// 引导消息没有消失，只是挪到了「assistant 打头被拒」的兜底路径上。
+test('appendGreetingPreamble: 只有网关拒 assistant 打头时才补种一条 user 引导', () => {
   const greeting = greetingTextFor(REAL_PRESET_ID)
   const session = new FakeSession()
   seedGreetingMessage(session, greeting)
-  const assistant = session.log.find((e) => e.type === 'assistant/message')
-  const synthetic = session.log.find((e) => e.type === 'user/message')
-  assert.equal(assistant.data.message.id, synthetic.data.id)
-  assert.equal(greetingIdsOf(session).has(assistant.data.message.id), true)
+  assert.equal(session.log.filter((e) => e.type === 'user/message').length, 0, '前提：正常播种不带引导')
+
+  assert.equal(appendGreetingPreamble(session), true, '拒绝路径必须能补种')
+  const users = session.log.filter((e) => e.type === 'user/message')
+  assert.equal(users.length, 1, '只补一条')
+  assert.equal(textOf(session.deriveMessages().find((m) => m.role === 'user')), GREETING_PREAMBLE)
+  assert.ok(textOf(session.deriveMessages()[0]).length > 100, '开场白原文没被引导顶掉')
 })
 
 // ★ 本次修复的对照臂（旧实现必红）：
@@ -380,6 +418,24 @@ test('接线护栏：旧的「log.length === 0」判重必须彻底消失（本�
   )
 })
 
+test('接线护栏：seedGreetingMessage 里不再 append user/message（引导消息已移除）', () => {
+  const start = INDEX_SRC.indexOf('function seedGreetingMessage(')
+  const end = INDEX_SRC.indexOf('function appendGreetingPreamble(', start)
+  assert.ok(start >= 0 && end > start, '切片范围异常（函数被改名/删掉了？）')
+  const src = INDEX_SRC.slice(start, end)
+  assert.ok(src.includes("'assistant/message'"), 'assistant 开场白楼必须保留')
+  assert.ok(!src.includes("'user/message'"), '★ 播种里又出现了 user/message —— 删不掉的引导楼回来了')
+})
+
+test('接线护栏：注入 API 必须走统一决策函数并返回 greeting-already-present', () => {
+  const start = INDEX_SRC.indexOf("path: '/api/tavern/greeting/insert'")
+  const end = INDEX_SRC.indexOf("path: '/api/tavern/state'", start)
+  assert.ok(start >= 0 && end > start, '切片范围异常（路由被删了？）')
+  const src = INDEX_SRC.slice(start, end)
+  assert.ok(src.includes('insertGreetingForSession('), '路由必须走统一决策函数（判重才有地方落地）')
+  assert.ok(src.includes("'greeting-already-present'"), '必须返回 greeting-already-present（面板靠它改提示）')
+})
+
 // ══════════════════════════════════════════════════════════
 // 2d. 手动兜底：pickGreetingCard + appendGreetingToSessionEnd
 // ══════════════════════════════════════════════════════════
@@ -434,6 +490,91 @@ test('appendGreetingToSessionEnd: 有未闭合回合（正在生成中）时拒�
   const session = new FakeSession()
   session.append('turn/start', { turn: 1 })
   assert.throws(() => appendGreetingToSessionEnd(session, '开场白'), /未闭合/, '正在生成中必须明确拒绝，不能埋不变量炸弹')
+})
+
+// ══════════════════════════════════════════════════════════
+// 2e. 防重复注入（2026-09-23）：会话已有开场白 ⇒ 不再叠加
+//   判据固定为 source.model === 'character-card'（播种与手动注入打同一个标记），
+//   **不比文本**：开场白里的 ST 占位符会被卡正则按当前变量换掉，同一张卡不同轮、
+//   不同卡之间的落盘文本都不一样，比文本必然漏判。
+// ══════════════════════════════════════════════════════════
+
+/** 数一数会话里「角色卡开场白」楼有几条。 */
+function cardGreetingCount(session) {
+  return session.log.filter((e) => {
+    if (!e || e.type !== 'assistant/message') return false
+    const src = e.data && e.data.message && e.data.message.source
+    return !!(src && src.model === 'character-card')
+  }).length
+}
+
+test('hasCardGreeting: 只认 character-card 楼，模型自己的回复不算开场白', () => {
+  const session = new FakeSession()
+  assert.equal(hasCardGreeting(session), false, '空会话不算有开场白')
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 1 })
+  session.append('assistant/message', {
+    turn: 1, step: 1,
+    message: { id: 'a1', role: 'assistant', source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-chat' }, content: [{ type: 'text', text: '普通回复' }] },
+  }, { surfaceOp: 'append' })
+  assert.equal(hasCardGreeting(session), false, '★ 模型自己的回复不得被当成开场白（否则旧会话永远注不进去）')
+  session.append('step/end', { turn: 1, step: 1 })
+  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  assert.equal(insertGreetingForSession(session, REAL_PRESET_ID).ok, true, '普通旧会话必须还能注入')
+  assert.equal(hasCardGreeting(session), true)
+})
+
+// ★ 对照臂（改成按文本比较就红）：占位符会变，判重不能比文本。
+test('对照臂（按文本比较必红）：占位符换过之后，判重仍要认出这是同一条开场白', () => {
+  const session = new FakeSession()
+  seedGreetingMessage(session, '【主页】占位符=第一版')
+  assert.equal(hasCardGreeting(session), true, '前提：播种后算已有开场白')
+  // 模拟卡正则把占位符替换掉（落盘文本已经不是注入时的原文）
+  const node = session.log.find((e) => e.type === 'assistant/message')
+  node.data.message.content[0].text = '【主页】占位符=第二版'
+  assert.equal(hasCardGreeting(session), true, '★ 文本变了也必须认出已注入过（按文本比较在这里必然漏判）')
+  assert.equal(insertGreetingForSession(session, REAL_PRESET_ID).error, 'greeting-already-present')
+})
+
+test('insertGreetingForSession: 第一次注入成功，第二次返回 greeting-already-present', () => {
+  const session = new FakeSession()
+  // 造一回合普通历史（旧会话场景：注入按钮本来就是给它的）
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 1 })
+  session.append('assistant/message', {
+    turn: 1, step: 1,
+    message: { id: 'a1', role: 'assistant', source: { kind: 'model', provider: 'x', model: 'y' }, content: [{ type: 'text', text: '第1楼' }] },
+  }, { surfaceOp: 'append' })
+  session.append('step/end', { turn: 1, step: 1 })
+  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+
+  const r1 = insertGreetingForSession(session, REAL_PRESET_ID)
+  assert.equal(r1.ok, true, '第一次应当成功：' + JSON.stringify(r1))
+  assert.equal(r1.turn, 2, '回合号必须接在历史之后')
+  assert.ok(r1.greetingLen > 0 && r1.cardName, '成功时要带卡名与长度给面板显示')
+  assert.equal(cardGreetingCount(session), 1)
+
+  const r2 = insertGreetingForSession(session, REAL_PRESET_ID)
+  assert.equal(r2.ok, false, '★ 第二次必须被拒（用户截图里多条【主页】就是这么叠出来的）')
+  assert.equal(r2.error, 'greeting-already-present', '错误码必须是面板认得的那一个')
+  assert.equal(cardGreetingCount(session), 1, '★ 被拒时不得再落第二条开场白')
+})
+
+test('insertGreetingForSession: 自动播种已种过的会话，手动注入同样拒绝', () => {
+  const session = new FakeSession()
+  assert.equal(seedGreetingMessage(session, greetingTextFor(REAL_PRESET_ID)), 1, '前提：自动播种成功')
+  const r = insertGreetingForSession(session, REAL_PRESET_ID)
+  assert.equal(r.ok, false)
+  assert.equal(r.error, 'greeting-already-present', '播种与手动注入打同一个标记，判重必须认得出来')
+  assert.equal(cardGreetingCount(session), 1)
+})
+
+test('insertGreetingForSession: 找不到卡 / 会话不可用时仍返回明确错误（不是 already-present）', () => {
+  const session = new FakeSession()
+  assert.match(insertGreetingForSession(session, 'preset-does-not-exist-0000').error, /preset-not-found/)
+  assert.equal(hasCardGreeting(session), false, '注入失败不得留下「已有开场白」的假象')
+  assert.equal(insertGreetingForSession(session, REAL_PRESET_ID, '不存在的卡名').error.includes('card-not-found'), true)
+  assert.equal(insertGreetingForSession(null, REAL_PRESET_ID).error, 'no-session：会话对象不可用')
 })
 
 // ══════════════════════════════════════════════════════════
