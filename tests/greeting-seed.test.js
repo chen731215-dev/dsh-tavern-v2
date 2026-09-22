@@ -681,6 +681,69 @@ test('因果链（能红）：美化引擎要的输入就是消息面正文 —�
   assert.ok(!withoutGreeting.includes('coverPage'), '★ 没有开场白 ⇒ 没有封面页（修复前就是这个状态，必须为真）')
 })
 
+// ══════════════════════════════════════════════════════════
+// 2e. settlement 字段 —— 2026-09-23 真事故：会话被写坏、整个打不开
+//
+//   DSH 读会话时按 `dsh-session/lib/types/index.js` 的
+//   `assertAssistantSettlementShape` 校验每条 assistant/message：
+//     turn/step 必须是非负安全整数，且 **data.stream 必须是数组**。
+//   我们播种/注入时漏了 stream ⇒ SessionQueryError:
+//     `seed assistant/message at index N has invalid settlement fields`
+//   ⇒ 用户那条会话**直接打不开**（session-38a8e296 实例）。
+// ══════════════════════════════════════════════════════════
+
+/** DSH 校验规则的本地镜像（改动时两处必须同步）。 */
+function assertSettlementShape(ev, label) {
+  const d = ev.data || {}
+  assert.ok(Number.isSafeInteger(d.turn) && d.turn >= 0, label + ': turn 必须是非负安全整数')
+  assert.ok(Number.isSafeInteger(d.step) && d.step >= 0, label + ': step 必须是非负安全整数')
+  assert.ok(Array.isArray(d.stream), label + ': ★ stream 必须是数组（缺它 DSH 判会话 corrupt、整个会话打不开）')
+}
+
+test('settlement：播种的 assistant 楼必须带 stream 数组', () => {
+  const session = new FakeSession()
+  const turn = seedGreetingMessage(session, greetingTextFor(REAL_PRESET_ID))
+  assert.ok(turn > 0, '播种应成功')
+  const am = session.log.filter((e) => e.type === 'assistant/message')
+  assert.equal(am.length, 1, '播种只应产生一条 assistant 楼')
+  assertSettlementShape(am[0], 'seedGreetingMessage')
+})
+
+test('settlement：手动注入到会话末尾的 assistant 楼同样带 stream 数组', () => {
+  const session = new FakeSession()
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 1 })
+  session.append('assistant/message', {
+    turn: 1, step: 1, stream: [],
+    message: { id: 'old', role: 'assistant', source: { kind: 'model', provider: 'x', model: 'y' }, content: [{ type: 'text', text: '旧楼' }] },
+  }, { surfaceOp: 'append' })
+  session.append('step/end', { turn: 1, step: 1 })
+  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+
+  const t = appendGreetingToSessionEnd(session, greetingTextFor(REAL_PRESET_ID))
+  assert.ok(t > 1, '注入应接在历史回合之后')
+  const am = session.log.filter((e) => e.type === 'assistant/message')
+  assertSettlementShape(am[am.length - 1], 'appendGreetingToSessionEnd')
+})
+
+test('对照臂：settlement 判据能对「缺 stream 的旧形态」变红', () => {
+  // ① 旧实现的事件形态（没有 stream）→ 判据必须抛
+  const legacy = { data: { turn: 0, step: 0 } }
+  assert.throws(() => assertSettlementShape(legacy, '旧形态'), /stream 必须是数组/)
+  // ② 源码里两处 append 都必须显式给 stream（防有人删掉）
+  const seedStart = INDEX_SRC.indexOf('function seedGreetingMessage(')
+  const seedEnd = INDEX_SRC.indexOf('function appendGreetingPreamble(', seedStart)
+  const seedSrc = INDEX_SRC.slice(seedStart, seedEnd)
+  assert.ok(/(^|\s)stream:\s*\[\]/.test(seedSrc), 'seedGreetingMessage 里必须有 stream: []')
+  const endStart = INDEX_SRC.indexOf('function appendGreetingToSessionEnd(')
+  const endEnd = INDEX_SRC.indexOf('function insertGreetingForSession(', endStart)
+  const endSrc = INDEX_SRC.slice(endStart, endEnd)
+  assert.ok(/(^|\s)stream:\s*\[\]/.test(endSrc), 'appendGreetingToSessionEnd 里必须有 stream: []')
+  // ③ 把源码里的 stream 字段砍掉后，同样的文本判据必须失败（证明判据不是永真）
+  const mutated = seedSrc.replace(/stream:\s*\[\],?/g, '')
+  assert.ok(!/(^|\s)stream:\s*\[\]/.test(mutated), '砍掉后判据必须不再匹配（否则判据是空的）')
+})
+
 // 清理提示：本文件不写任何临时文件，也不改 tests/core.test.js。
 void os
 void path
