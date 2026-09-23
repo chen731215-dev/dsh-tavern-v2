@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.4.2 (2026-09-23)
+
+### 🐛 修复：开场白播种从未触发（时序自相矛盾）
+
+旧实现在**组装提示词时**才挂 `agent/inbox/inserted` 监听，且要求
+`session.log.length === 0` —— 但那一刻日志里已有前置事件（预设选择等），
+条件永假 ⇒ `greeting-seed.log` 从未出现、播种从未触发、首楼永远没有开场白。
+
+修法（照 DSH 官方事件序列重写时机）：
+- **路径① `agent/created`**：会话发布即评估（早于任何用户消息），能解析出权威预设
+  就直接把 `first_mes` 种成 turn 1；解析不出则留给路径②。
+- **路径② `agent/inbox/inserted`**：首条用户消息入队、驱动器开回合之前兜底评估一次。
+- 判重改为「日志里还没有 turn/assistant」（不再要求日志为空）；安全阀全保留：
+  `greetingSeedEnabled` 开关、子会话不种、同一会话只种一次。
+- **日志不再静默**：每个评估分叉都写 `greeting-seed.log`（带 via 与原因），
+  另保留网关拒 assistant 打头的 400 记录。
+- **手动兜底**：新增 `POST /api/tavern/greeting/insert`（sessionId/presetId/cardName），
+  把启用中第一张卡（或指定卡）的 first 注入当前会话**末尾**——旧会话也能用；
+  面板「🔢 变量面板」旁新增「📌 开场白」卡，一键注入并显示结果/原因。
+
+测试：`tests/greeting-seed.test.js` 重写至 22 例（含对旧实现必红的对照臂：
+非空日志但没开过回合 ⇒ 必须能播种）。
+
 ## v2.4.1 (2026-09-20)
 
 ### 🐛 修复：状态栏被一个死的门控掐死
