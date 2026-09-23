@@ -1,14 +1,18 @@
 /**
- * 开场白播种回归测试（2026-09「DSH 里看不到封面页」故障）
+ * 开场白播种回归测试（2026-09「DSH 里看不到封面页」故障 + 2026-09-23 时机修复）
  *
- * 故障：DSH 会话里永远看不到角色卡开场白，于是卡的 `[0] 主页`（粉蓝封面页：
- *       进入事务所 / NOW ON AIR / coverPage）永远不渲染。ST 里能看到，是因为 ST
- *       把 `first_mes` 当**第一条消息**发下去；而 DSH 这边 `cardTextFor()` 的返回值
- *       只进**系统提示**，美化引擎（muv）只扫 `[class*="_markdown_"]` 的消息容器，
- *       系统提示那一行是折叠的 SystemPromptRow —— 取样口根本碰不到它。
+ * 故障：DSH 会话里永远看不到角色卡开场白，于是卡的 `[0] 主页`（粉蓝封面页）永远不渲染。
+ *       ST 里能看到，是因为 ST 把 `first_mes` 当**第一条消息**发下去；而 DSH 这边
+ *       `cardTextFor()` 的返回值只进**系统提示**，美化引擎（muv）只扫消息容器。
  *
- * 修法：新会话第一条用户消息入队时，把 `first_mes` 原文作为**首条 assistant 消息**
- *       种进会话日志，让消息面变成 `[system, assistant(开场白), user, assistant…]`。
+ * 修复一（原版）：把 `first_mes` 原文作为**首条 assistant 消息**种进会话日志。
+ * 修复二（本次）：旧实现在「组装提示词时」才挂监听且要求 `log.length === 0` ——
+ *       那一刻日志里已有前置事件，条件永假，播种从未触发（greeting-seed.log 从未出现）。
+ *       新时机照 DSH 官方事件序列改为：
+ *         · 路径① agent/created（会话发布即评估，可解析预设就直接种）；
+ *         · 路径② agent/inbox/inserted（首条用户消息入队时兜底评估一次）；
+ *         · 判重改「日志里还没有 turn/assistant」，不再是「日志为空」；
+ *         · 另加手动兜底 POST /api/tavern/greeting/insert（旧会话注入到末尾）。
  *
  * 本文件单独存在，不动 tests/core.test.js。
  * 运行：node --test tests/greeting-seed.test.js
@@ -27,6 +31,9 @@ const {
   greetingTextFor,
   hasLiveUserMessage,
   seedGreetingMessage,
+  seedGreetingForSession,
+  appendGreetingToSessionEnd,
+  pickGreetingCard,
   greetingIdsOf,
   GREETING_PREAMBLE,
 } = _test
@@ -37,9 +44,6 @@ const {
 const REAL_PRESET_ID = 'preset-mt5ip9cc-t6josi'
 
 // ── 真 Session 的包内不变量（能拿到就用真的，拿不到用等价本地实现）────
-// 值不值这么多事：`seedGreetingMessage` 种的事件序列必须过 dsh-session 的
-// turn/step 关系不变量，`downgradeGreetingSeed` 的 surface replace 必须过
-// sourceEventSeqs 的稠密性校验。用真校验器断言，才不是「自证」。
 const require_ = createRequire(import.meta.url)
 let surfaceValidators = null
 let surfaceValidatorsFrom = '本地等价实现'
@@ -177,6 +181,11 @@ function textOf(message) {
   return message.content.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('')
 }
 
+/** 造一个最小 Agent 替身（seedGreetingForSession 的入参形态）。 */
+function fakeAgent(session, phase = { kind: 'idle', lastTurn: 0 }) {
+  return { session, phase }
+}
+
 // ══════════════════════════════════════════════════════════
 // 1. 开场白提取
 // ══════════════════════════════════════════════════════════
@@ -193,7 +202,7 @@ test('greetingTextFor: 未知预设返回空串（不抛）', () => {
 })
 
 // ══════════════════════════════════════════════════════════
-// 2. 播种：新会话的首条消息必须是开场白
+// 2. 播种：新会话的首条消息必须是开场白（新时机判重）
 // ══════════════════════════════════════════════════════════
 
 test('seedGreetingMessage: 新会话消息面为 [assistant(开场白), …]，首条即开场白', () => {
@@ -241,7 +250,26 @@ test('seedGreetingMessage: 合成引导与开场白共用同一个 message id（
   assert.equal(greetingIdsOf(session).has(assistant.data.message.id), true)
 })
 
-test('seedGreetingMessage: 不是空会话就拒绝播种（第二轮、切预设都不会重复种）', () => {
+// ★ 本次修复的对照臂（旧实现必红）：
+//   新会话的日志里允许有 agent-preset/selected 等前置事件 —— 旧判重
+//   `log.length === 0` 在这种会话上永远为假，播种从未触发。
+//   新判重是「日志里还没有 turn/assistant」，所以这里必须能种进去。
+test('对照臂（旧实现必红）：非空日志但没开过回合 ⇒ 照样播种成功', () => {
+  const greeting = greetingTextFor(REAL_PRESET_ID)
+  const session = new FakeSession()
+  // 模拟新会话创建后的前置事件（不是回合、不是消息）
+  session.log.push({ type: 'session/created', seq: session.log.length, time: Date.now(), data: {} })
+  session.log.push({ type: 'agent-preset/selected', seq: session.log.length, time: Date.now(), data: { presetId: REAL_PRESET_ID } })
+  assert.equal(session.log.length > 0, true, '前提：日志非空（旧实现在这里就会拒绝）')
+
+  const lastTurn = seedGreetingMessage(session, greeting)
+  assert.equal(lastTurn, 1, '★ 非空日志的新会话必须照样能种（旧实现返回 -1）')
+  const messages = session.deriveMessages()
+  assert.equal(messages[0].role, 'assistant')
+  assert.equal(textOf(messages[0]), greeting)
+})
+
+test('seedGreetingMessage: 开过回合的会话拒绝播种（第二轮、切预设都不会重复种）', () => {
   const greeting = greetingTextFor(REAL_PRESET_ID)
   const session = new FakeSession()
   session.append('turn/start', { turn: 1 })
@@ -253,8 +281,17 @@ test('seedGreetingMessage: 不是空会话就拒绝播种（第二轮、切预�
   }, { surfaceOp: 'append' })
 
   assert.equal(hasLiveUserMessage(session), true)
-  assert.equal(seedGreetingMessage(session, greeting), -1, '已有用户消息的会话不得再种')
+  assert.equal(seedGreetingMessage(session, greeting), -1, '已有回合的会话不得再种')
   assert.equal(session.log.filter((e) => e.type === 'assistant/message').length, 0)
+})
+
+test('seedGreetingMessage: 同一会话只种一次（种过第二次返回 -1）', () => {
+  const greeting = greetingTextFor(REAL_PRESET_ID)
+  const session = new FakeSession()
+  assert.equal(seedGreetingMessage(session, greeting), 1)
+  // 即使把日志清空（模拟 spill/compaction 把早期事件挪走），greetingSeeds 也挡住重播
+  session.log.length = 0
+  assert.equal(seedGreetingMessage(session, greeting), -1, '同一会话不得重复种')
 })
 
 test('hasLiveUserMessage: 空日志为 false', () => {
@@ -262,42 +299,141 @@ test('hasLiveUserMessage: 空日志为 false', () => {
 })
 
 // ══════════════════════════════════════════════════════════
-// 2b. 接线护栏：播种必须真的挂在 tavern:card 的组装路径上
-//     （上面那些用例是直接调 seedGreetingMessage 的，证明不了「有没有人调它」；
-//       这一条才是能红的：把调用点删掉/挪走，它立刻失败。）
+// 2b. seedGreetingForSession：安全阀（开关 / 子会话 / 重复种）+ 回合号对账
+// ══════════════════════════════════════════════════════════
+
+test('安全阀：greetingSeedEnabled=false 时不种', () => {
+  const session = new FakeSession()
+  const r = seedGreetingForSession(fakeAgent(session), REAL_PRESET_ID, { greetingSeedEnabled: false }, 'test')
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'disabled')
+  assert.equal(session.log.filter((e) => e.type === 'assistant/message').length, 0, '开关关闭时不得有任何 assistant 消息')
+})
+
+test('安全阀：子会话不种', () => {
+  const session = new FakeSession()
+  session.header.origin = 'subagent'
+  const r = seedGreetingForSession(fakeAgent(session), REAL_PRESET_ID, { greetingSeedEnabled: true }, 'test')
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'subagent')
+})
+
+test('安全阀：预设没有开场白时不种', () => {
+  const session = new FakeSession()
+  const r = seedGreetingForSession(fakeAgent(session), 'preset-does-not-exist-0000', { greetingSeedEnabled: true }, 'test')
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'no-greeting')
+})
+
+test('成功路径：种进 turn 1 并把 phase.lastTurn 推到 1；同一会话第二次评估跳过', () => {
+  const session = new FakeSession()
+  const agent = fakeAgent(session)
+  const r1 = seedGreetingForSession(agent, REAL_PRESET_ID, { greetingSeedEnabled: true }, 'test')
+  assert.equal(r1.ok, true, '第一次评估应当成功：' + JSON.stringify(r1))
+  assert.equal(r1.lastTurn, 1)
+  assert.equal(agent.phase.lastTurn, 1, 'phase.lastTurn 必须被推进，否则驱动器开回合会撞不变量')
+  const r2 = seedGreetingForSession(agent, REAL_PRESET_ID, { greetingSeedEnabled: true }, 'test')
+  assert.equal(r2.ok, false)
+  assert.equal(r2.reason, 'not-fresh', '同一会话第二次评估必须跳过')
+})
+
+// ══════════════════════════════════════════════════════════
+// 2c. 接线护栏：apply() 必须安装全局播种监听（把调用点删掉就变红）
 // ══════════════════════════════════════════════════════════
 
 const INDEX_PATH = path.join(import.meta.dirname, '..', 'lib', 'index.js')
 const INDEX_SRC = fs.readFileSync(INDEX_PATH, 'utf8')
 
-/** 「组装提示词 → 挂播种」的那一段（从标记注释到它的 try/catch 收尾）。 */
-function greetingWiringBlock() {
-  const startMarker = '// ★ 开场白播种：新会话的第一条消息必须是角色卡开场白 ★'
-  const start = INDEX_SRC.indexOf(startMarker)
-  assert.ok(start >= 0, '找不到开场白播种的接线块（标记注释被删了？）')
-  const end = INDEX_SRC.indexOf('\n        } catch {}', start)
-  assert.ok(end > start, '接线块没有正常收尾')
+/** 播种机制的源码切片（seedGreetingForSession + armGreetingSeed，到 pickGreetingCard 为止）。 */
+function armGreetingSeedSrc() {
+  const start = INDEX_SRC.indexOf('function seedGreetingForSession(')
+  const end = INDEX_SRC.indexOf('function pickGreetingCard(', start)
+  assert.ok(start >= 0, '找不到 armGreetingSeed（被删了？）')
+  assert.ok(end > start, 'armGreetingSeed 切片范围异常')
   return INDEX_SRC.slice(start, end)
 }
 
-test('接线护栏：tavern:card 组装时必须调用 armGreetingSeed（把调用点删掉就变红）', () => {
-  const block = greetingWiringBlock()
+test('接线护栏：apply() 必须调用 armGreetingSeed(ctx)（把调用点删掉就变红）', () => {
   assert.ok(
-    block.includes('armGreetingSeed(ctx, greetingSession, presetId, state)'),
-    '★ 播种调用点不见了 —— 开场白不会被种进消息面，封面页又会消失',
+    INDEX_SRC.includes('try { armGreetingSeed(ctx) } catch (e) {'),
+    '★ apply() 里没有安装播种监听 —— 开场白不会被种进消息面，封面页又会消失',
   )
 })
 
-test('接线护栏：播种只会发生在「日志还是空的」新会话上，且受开关约束', () => {
-  const block = greetingWiringBlock()
-  assert.ok(/Array\.isArray\(greetingSession\.log\) && greetingSession\.log\.length === 0/.test(block),
-    '必须只在空日志的新会话上播种（否则第二轮会重复种、切预设会串台）')
-  assert.ok(/state\.greetingSeedEnabled !== false/.test(block),
-    '必须保留 greetingSeedEnabled 开关（网关拒 assistant 打头时用户的退路）')
-  assert.ok(/!isSubagentSession/.test(block),
-    '子 Agent 会话不许播种')
-  assert.ok(/context\s*&&\s*context\.agent\s*&&\s*context\.agent\.session/.test(block),
-    '必须从 context.agent.session 拿真会话对象（播种的落点）')
+test('接线护栏：播种监听必须是 agent/created + agent/inbox/inserted 双路径，且受开关约束', () => {
+  const src = armGreetingSeedSrc()
+  assert.ok(src.includes("ctx.on('agent/created'"), '必须有会话创建事件路径（官方时机）')
+  assert.ok(src.includes("ctx.on('agent/inbox/inserted'"), '必须有首条用户消息入队的兜底路径')
+  assert.ok(src.includes("ctx.on('agent/request-error'"), '必须保留网关拒 assistant 打头的日志兜底')
+  assert.ok(/greetingSeedEnabled === false/.test(src), '必须保留 greetingSeedEnabled 开关')
+  assert.ok(src.includes("origin === 'subagent'"), '子 Agent 会话不许播种')
+})
+
+test('接线护栏：旧的「log.length === 0」判重必须彻底消失（本次故障的根因）', () => {
+  assert.ok(
+    !INDEX_SRC.includes('greetingSession.log.length === 0'),
+    '★ 组装路径里还留着 log.length === 0 判重 —— 时序自相矛盾的旧 bug 回来了',
+  )
+  assert.ok(
+    !INDEX_SRC.includes('session.log.length !== 0'),
+    'seedGreetingMessage 里也不许再用「日志非空」当拒绝理由',
+  )
+})
+
+// ══════════════════════════════════════════════════════════
+// 2d. 手动兜底：pickGreetingCard + appendGreetingToSessionEnd
+// ══════════════════════════════════════════════════════════
+
+test('pickGreetingCard: 真预设取到启用中第一张卡的开场白', () => {
+  const r = pickGreetingCard(REAL_PRESET_ID)
+  assert.equal(r.ok, true, '应当取到卡：' + JSON.stringify(r).slice(0, 120))
+  assert.ok(r.greeting.startsWith('【主页】'))
+  assert.ok(r.name, '必须有卡名')
+})
+
+test('pickGreetingCard: 找不到卡返回明确错误（不含「失败」这种废话）', () => {
+  assert.match(pickGreetingCard('preset-does-not-exist-0000').error, /preset-not-found/)
+  const bad = pickGreetingCard(REAL_PRESET_ID, '不存在的卡名')
+  assert.equal(bad.ok, false)
+  assert.match(bad.error, /card-not-found/, '指定卡名找不到时必须说清楚：' + bad.error)
+})
+
+test('appendGreetingToSessionEnd: 旧会话（已有两回合）注入到末尾，回合号接续', () => {
+  const greeting = greetingTextFor(REAL_PRESET_ID)
+  const session = new FakeSession()
+  // 先造两回合真实历史
+  for (let i = 1; i <= 2; i++) {
+    session.append('turn/start', { turn: i })
+    session.append('step/start', { turn: i, step: 1 })
+    session.append('assistant/message', {
+      turn: i, step: 1,
+      message: { id: 'a' + i, role: 'assistant', source: { kind: 'model', provider: 'x', model: 'y' }, content: [{ type: 'text', text: '第' + i + '楼' }] },
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn: i, step: 1 })
+    session.append('turn/end', { turn: i, reason: { kind: 'completed' } })
+    session.append('user/message', {
+      id: 'u' + i, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '第' + i + '问' }],
+    }, { surfaceOp: 'append' })
+  }
+  const before = session.deriveMessages().length
+  const turn = appendGreetingToSessionEnd(session, greeting)
+  assert.equal(turn, 3, '回合号必须接在历史最大回合之后')
+  const messages = session.deriveMessages()
+  assert.equal(messages.length, before + 1)
+  const last = messages[messages.length - 1]
+  assert.equal(last.role, 'assistant', '★ 注入的开场白必须在会话末尾')
+  assert.equal(textOf(last), greeting)
+  assert.equal(last.source && last.source.provider, 'tavern', 'source 必须与播种同款（tavern/character-card）')
+  assert.equal(last.source && last.source.model, 'character-card')
+  // 注入之后再开回合也必须不撞不变量（FakeSession 自己会校验）
+  session.append('turn/start', { turn: 4 })
+  session.append('user/message', { id: 'u4', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '继续' }] }, { surfaceOp: 'append' })
+})
+
+test('appendGreetingToSessionEnd: 有未闭合回合（正在生成中）时拒绝注入', () => {
+  const session = new FakeSession()
+  session.append('turn/start', { turn: 1 })
+  assert.throws(() => appendGreetingToSessionEnd(session, '开场白'), /未闭合/, '正在生成中必须明确拒绝，不能埋不变量炸弹')
 })
 
 // ══════════════════════════════════════════════════════════
