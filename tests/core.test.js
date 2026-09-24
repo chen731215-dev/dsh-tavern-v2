@@ -222,7 +222,9 @@ test('cleanSillyTavernVars: 保留 DSH 合法变量 provider/model/cwd', () => {
 })
 
 test('cleanSillyTavernVars: 友好替换常见 ST 变量', () => {
-  assert.equal(cleanSillyTavernVars('{{user}}和{{char}}'), '和')
+  // 2026-09-24 语义修正：{{char}} 是角色名，不再错换玩家名（旧断言=清空是 bug 行为），
+  // 求值为中性词「角色」；{{user}} 保持旧语义（playerName 为空则空）
+  assert.equal(cleanSillyTavernVars('{{user}}和{{char}}'), '和角色')
   assert.equal(cleanSillyTavernVars('{{name}}'), '')
 })
 
