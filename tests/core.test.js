@@ -613,11 +613,21 @@ test('classifySessionPresetLines: 非数组 / 脏行不炸', () => {
   assert.deepEqual(classifySessionPresetLines([null, 1, '', 'if (!ln.includes("agentPreset")) continue']), { explicit: null, creation: null })
 })
 
+// ⚠ P0-1 起绑定升级为三态判别联合：**旧字符串 = legacy**（无法证明是用户显式绑定），
+//   解析时视为未绑定、不注入；「面板绑定」必须用新格式对象表达。
+//   下面两条因此改成新格式 —— 守的还是同一件事：用户显式选的卡不得被出生默认值推翻。
 test('pickAuthoritativePresetFromLog: 出生默认值不得推翻面板绑定（本次修复的要害）', () => {
-  // 场景 = 线上 session-fb2f7f9f…：创建记录 standard、无显式切换、面板绑了足控天堂
+  // 场景 = 线上 session-fb2f7f9f…：创建记录 standard、无显式切换、面板绑了某张卡
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, 'standard', isTavern,
+      { mode: 'preset', presetId: 'preset-mtyx98fa-pdsrh1', source: 'panel' }),
+    'preset-mtyx98fa-pdsrh1'
+  )
+  // 对照臂（P0-4）：同一条绑定若是**旧字符串格式**（legacy），不得静默注入 ——
+  // 这正是「足控天堂」被永久注入的那条路径。
   assert.equal(
     pickAuthoritativePresetFromLog(null, 'standard', isTavern, 'preset-mtyx98fa-pdsrh1'),
-    'preset-mtyx98fa-pdsrh1'
+    'default'
   )
 })
 
@@ -648,7 +658,32 @@ test('pickAuthoritativePresetFromLog: 无显式切换、无绑定、出生默认
 test('pickAuthoritativePresetFromLog: 绑定优先于出生默认值', () => {
   // 会话出生在某张酒馆卡上，之后用户在面板改选另一张 → 听面板的
   assert.equal(
-    pickAuthoritativePresetFromLog(null, 'tavern-lite', isTavern, 'preset-mtyx98fa-pdsrh1'),
+    pickAuthoritativePresetFromLog(null, 'tavern-lite', isTavern,
+      { mode: 'preset', presetId: 'preset-mtyx98fa-pdsrh1', source: 'panel' }),
     'preset-mtyx98fa-pdsrh1'
+  )
+  // 对照臂：顶部选择器选的（top-select）同样优先于出生默认值
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, 'tavern-lite', isTavern,
+      { mode: 'preset', presetId: 'preset-mtyx98fa-pdsrh1', source: 'top-select' }),
+    'preset-mtyx98fa-pdsrh1'
+  )
+})
+
+test('pickAuthoritativePresetFromLog: mode:none（显式解绑）→ 硬空，不看出生默认值也不看兜底', () => {
+  const none = { mode: 'none' }
+  assert.equal(pickAuthoritativePresetFromLog(null, 'tavern-lite', isTavern, none), 'default')
+  assert.equal(pickAuthoritativePresetFromLog(null, 'standard', isTavern, none), 'default')
+  assert.equal(pickAuthoritativePresetFromLog(null, null, isTavern, none), 'default')
+  // 但顶部**随后**显式选的预设要压过解绑（explicit 排第一，见函数头注释）
+  assert.equal(pickAuthoritativePresetFromLog('tavern-lite', 'standard', isTavern, none), 'tavern-lite')
+})
+
+test('pickAuthoritativePresetFromLog: 绑定指向已删除的预设 → fail closed，绝不换绑到别的卡', () => {
+  // creation 是另一张酒馆卡；若这里退回 creation 就等于「悄悄换了一张卡」。
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, 'tavern-lite', isTavern,
+      { mode: 'preset', presetId: 'preset-已被删除', source: 'panel' }),
+    'default'
   )
 })

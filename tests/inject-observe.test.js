@@ -123,15 +123,17 @@ test('[1] bindingSource=explicit：顶部显式切换压过陈旧 binding 与出
   const rec = JSON.parse(captureObserveLine({ sid: 'sid-explicit', presetId: PRESET_ID, cardText: 'x', wbText: '', textLen: 1 }))
   assert.equal(rec.bindingSource, 'explicit')
   assert.equal(rec.resolvedFrom, 'explicit', 'resolvedFrom 与 bindingSource 同义，不另造一套')
-  assert.equal(rec.bindingMode, 'legacy-string', 'bindings 里确实有旧格式记账，要如实记出来')
+  assert.equal(rec.bindingMode, 'legacy', 'bindings 里是旧字符串记账（legacy），要如实记出来')
   assert.equal(rec.presetId, PRESET_ID)
 })
 
-test('[2] bindingSource=binding：没有显式切换、没有出生默认，只有绑定记账', () => {
+// ⚠ P0-1 起 bindings 升级为三态：旧字符串一律读成 source:'legacy'，解析时视为未绑定。
+//   下面这条断言的就是新语义 —— 「有旧记账」不再等于「用户绑过这张卡」。
+test('[2] bindingSource=legacy：只有旧字符串记账 ⇒ 视为未绑定（不静默注入）', () => {
   const rec = JSON.parse(captureObserveLine({ sid: 'sid-binding', presetId: PRESET_ID, cardText: 'x', wbText: '', textLen: 1 }))
-  assert.equal(rec.bindingSource, 'binding')
-  assert.equal(rec.resolvedFrom, 'binding')
-  assert.equal(rec.bindingMode, 'legacy-string')
+  assert.equal(rec.bindingSource, 'legacy')
+  assert.equal(rec.resolvedFrom, 'legacy')
+  assert.equal(rec.bindingMode, 'legacy')
 })
 
 test('[3] bindingSource=creation：出生默认就是酒馆预设，且没有绑定记账', () => {
@@ -153,8 +155,13 @@ test('[5] 观测标签与真正的决议函数 pickAuthoritativePresetFromLog �
   const cases = [
     { name: 'explicit 压过一切', args: [PRESET_ID, 'standard', isTavern, PRESET_ID], source: 'explicit', expect: PRESET_ID },
     { name: 'explicit 是内置预设时也不改来源', args: ['standard', PRESET_ID, isTavern, PRESET_ID], source: 'explicit', expect: 'default' },
-    { name: 'binding 命中', args: [null, 'standard', isTavern, PRESET_ID], source: 'binding', expect: PRESET_ID },
-    { name: 'binding 不是酒馆预设 → 看 creation', args: [null, PRESET_ID, isTavern, 'standard'], source: 'creation', expect: PRESET_ID },
+    // P0-1：显式绑定是新格式对象（source: panel / top-select）
+    { name: 'binding 命中', args: [null, 'standard', isTavern, { mode: 'preset', presetId: PRESET_ID, source: 'panel' }], source: 'binding', expect: PRESET_ID },
+    { name: 'binding 失效（预设已删）→ fail closed', args: [null, 'tavern-lite', isTavern, { mode: 'preset', presetId: 'preset-gone', source: 'panel' }], source: 'binding-invalid', expect: 'default' },
+    { name: '显式解绑 mode:none → 硬空', args: [null, PRESET_ID, isTavern, { mode: 'none' }], source: 'unbound', expect: 'default' },
+    // P0-4：legacy 旧字符串 ⇒ 视为未绑定
+    { name: 'legacy 旧字符串 → 不注入', args: [null, 'standard', isTavern, PRESET_ID], source: 'legacy', expect: 'default' },
+    { name: 'binding 不是酒馆预设的 legacy → 看 creation', args: [null, PRESET_ID, isTavern, 'standard'], source: 'creation', expect: PRESET_ID },
     { name: '全都没有 → 兜底', args: [null, null, isTavern, ''], source: 'none', expect: 'default' },
   ]
   for (const c of cases) {
@@ -167,8 +174,8 @@ test('[5] 观测标签与真正的决议函数 pickAuthoritativePresetFromLog �
 })
 
 test('[6] readPresetBindingSource 直接读会话日志 + bindings，四种形态都对得上', () => {
-  assert.deepEqual(readPresetBindingSource('sid-explicit'), { bindingMode: 'legacy-string', bindingSource: 'explicit' })
-  assert.deepEqual(readPresetBindingSource('sid-binding'), { bindingMode: 'legacy-string', bindingSource: 'binding' })
+  assert.deepEqual(readPresetBindingSource('sid-explicit'), { bindingMode: 'legacy', bindingSource: 'explicit' })
+  assert.deepEqual(readPresetBindingSource('sid-binding'), { bindingMode: 'legacy', bindingSource: 'legacy' })
   assert.deepEqual(readPresetBindingSource('sid-creation'), { bindingMode: 'absent', bindingSource: 'creation' })
   assert.deepEqual(readPresetBindingSource('sid-none'), { bindingMode: 'absent', bindingSource: 'none' })
 })
