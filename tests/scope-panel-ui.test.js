@@ -372,3 +372,28 @@ test('后端：显式写入 mode:"allowlist" 的存量用户不受出厂默认�
   writeState({ mode: 'bogus' })
   assert.equal(readState().mode, 'global')
 })
+
+// ── ASI 雷区守卫 ─────────────────────────────────────────────
+// 事故（2026-09-25）：initScopePanel 的 IIFE 以 `})()` 结尾，中间只隔注释就是
+// `(function initVarPanel(){` —— 无分号时 ASI 把两者拼成「调用上一表达式返回值」，
+// 整个 bundle 求值即炸，酒馆管理面板整页白屏（node --check 抓不到，因为语法合法）。
+test('ASI 守卫：bundle 内所有行首 IIFE 的上一条语句不得以无分号的 })() 结尾', () => {
+  const src = fs.readFileSync(new URL('../lib/client.manager.bundle.js', import.meta.url), 'utf8')
+  const lines = src.split(/\r?\n/)
+  const hazards = []
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*\(function\b/.test(lines[i])) continue
+    let j = i - 1
+    while (j >= 0) {
+      const t = lines[j].trim()
+      if (t === '' || t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) { j--; continue }
+      break
+    }
+    if (j < 0) continue
+    const prev = lines[j].trim()
+    if (/\}\)\(\)\s*$/.test(prev) && !/;\s*$/.test(prev)) {
+      hazards.push('行' + (i + 1) + ' ← 上一语句(行' + (j + 1) + ')以 })() 结尾且无分号')
+    }
+  }
+  assert.deepEqual(hazards, [], '★ 发现 ASI 雷区（会白屏）：\n' + hazards.join('\n'))
+})
