@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { matchWorldbookEntries, buildWorldbookText, extractCardText, contentToText } from '../lib/utils.js'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // ── matchWorldbookEntries ──────────────────────────────
 test('matchWorldbookEntries: keyword 模式命中关键词', () => {
@@ -202,9 +203,17 @@ test('contentToText: 多段文本拼接', () => {
 console.log('\n✅ 所有测试通过！')
 
 // ── 清理逻辑（兼容性测试：DSH 不支持 SillyTavern 变量系统）──
-import { _test } from '../lib/index.js'
+//
+// ⚠ P0-5 起本文件要跑**真实装配**（白名单闸门必须端到端验），而 index.js 在模块加载
+//   那一刻就按 $DSH_HOME 绑定 ROOT / tavern-state.json。若沿用静态 import，ESM 会把
+//   它提升到文件顶部、赶在任何赋值之前执行 ⇒ 装配会读写**用户真实目录**。
+//   所以这里改成动态 import，并先把 DSH_HOME 指到临时目录。
+const CORE_TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-core-'))
+const CORE_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+process.env.DSH_HOME = CORE_TMP_HOME
+const { _test, apply } = await import(pathToFileURL(path.join(CORE_REPO, 'lib', 'index.js')).href)
 
-const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal, pickAuthoritativePreset, pickAuthoritativePresetFromLog, classifySessionPresetLines, extractAgentPresetFromLine, sessionIdKeys, sessionDirMatches } = _test
+const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal, pickAuthoritativePreset, pickAuthoritativePresetFromLog, classifySessionPresetLines, extractAgentPresetFromLine, sessionIdKeys, sessionDirMatches, decideInjectionScope, readState, writeState, writeBindingEntry } = _test
 
 test('cleanSillyTavernVars: 移除双冒号变量 {{xxx::yyy}}', () => {
   assert.equal(cleanSillyTavernVars('a{{setvar::key::value}}b'), 'ab')
@@ -645,8 +654,17 @@ test('pickAuthoritativePresetFromLog: 显式切到酒馆预设 → 用它，且�
   )
 })
 
-test('pickAuthoritativePresetFromLog: 无显式切换、无绑定 → 退回出生默认值', () => {
-  assert.equal(pickAuthoritativePresetFromLog(null, 'preset-mtyx98fa-pdsrh1', isTavern, ''), 'preset-mtyx98fa-pdsrh1')
+// ⚠ P0-5 语义变更：出生默认值（creation）**不再是注入依据** —— 与 legacy 同等对待。
+//   旧断言是「无显式切换、无绑定 → 退回出生默认值」，那正是「用户从没选过却被注入」的通道。
+test('pickAuthoritativePresetFromLog: 无显式切换、无绑定 → 出生默认值也**不注入**（P0-5）', () => {
+  assert.equal(pickAuthoritativePresetFromLog(null, 'preset-mtyx98fa-pdsrh1', isTavern, ''), 'default')
+  // 反证：同一张卡走**显式选择 / 显式绑定**时照常注入（否则这条测试是空跑）
+  assert.equal(pickAuthoritativePresetFromLog('preset-mtyx98fa-pdsrh1', null, isTavern, ''), 'preset-mtyx98fa-pdsrh1')
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, 'preset-mtyx98fa-pdsrh1', isTavern,
+      { mode: 'preset', presetId: 'preset-mtyx98fa-pdsrh1', source: 'panel' }),
+    'preset-mtyx98fa-pdsrh1'
+  )
 })
 
 test('pickAuthoritativePresetFromLog: 无显式切换、无绑定、出生默认是内置预设 → default', () => {
@@ -686,4 +704,175 @@ test('pickAuthoritativePresetFromLog: 绑定指向已删除的预设 → fail cl
       { mode: 'preset', presetId: 'preset-已被删除', source: 'panel' }),
     'default'
   )
+})
+
+// ══════════════════════════════════════════════════════════
+// P0-5 生效范围闸门：白名单语义改为「空 = 不放行」
+//
+//   旧语义：`mode:'allowlist'` + 两个名单都空 ⇒ **不限制**（全放行）。而默认状态
+//   恰好就是它 ⇒ 用户「一个都没勾」却在每条会话里都吃到了角色卡 / 世界书 / 会话记忆。
+//
+//   下面每条都用**哨兵**断言（不只断言长度）：同一套夹具下只改 state，
+//   看产物里有没有那张卡的三个哨兵（角色卡 / 世界书 / 会话记忆）。
+// ══════════════════════════════════════════════════════════
+
+const SCOPE_ROOT = path.join(CORE_TMP_HOME, '.agent-presets')
+const SCOPE_PRESET = 'preset-scope'
+const SCOPE_CARD = 'SENTINEL-SCOPE-CARD-5f2a91'
+const SCOPE_WB = 'SENTINEL-SCOPE-WB-7c3d18'
+const SCOPE_MEM = 'SENTINEL-SCOPE-MEM-9e6b40'
+
+// 一张「酒馆可管理」的预设：preset.yml + agent.cordis.yml（角色卡正文）+ 世界书（全量注入）
+;(function makeScopePreset() {
+  const dir = path.join(SCOPE_ROOT, SCOPE_PRESET)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'preset.yml'), 'name: ' + SCOPE_PRESET + '\n')
+  fs.writeFileSync(path.join(dir, 'agent.cordis.yml'), [
+    '- id: persona', '  name: persona', '  config:', '    prefix: |-', '      ' + SCOPE_CARD, '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(dir, 'characters.json'), JSON.stringify([
+    { name: '闸门角色', enabled: true, desc: SCOPE_CARD + '（角色卡正文）' },
+  ]))
+  fs.writeFileSync(path.join(dir, 'worldbook.json'), JSON.stringify({
+    version: 2, injectMode: 'full',
+    entries: [{ id: '1', name: '闸门条目', content: SCOPE_WB + '（世界书正文）', enabled: true, disable: false }],
+  }))
+})()
+
+/** 会话级记忆（<DSH_HOME>/tavern-data/sessions/<sid>/memory.md）—— 记忆也过同一道闸门。 */
+function writeScopeMemory(sid, text) {
+  const f = path.join(CORE_TMP_HOME, 'tavern-data', 'sessions', sid, 'memory.md')
+  fs.mkdirSync(path.dirname(f), { recursive: true })
+  fs.writeFileSync(f, text, 'utf8')
+}
+
+const scopeSections = {}
+apply({
+  get: () => undefined,
+  on: () => () => {},
+  effect: (fn) => fn(),
+  systemPrompt: { section: (o) => { scopeSections[o.name] = o; return () => {} } },
+  webServer: { register: () => {} },
+  sessions: {},
+})
+const scopeAssemble = scopeSections['tavern:card'].text
+const scopeCtx = (sid, cwd) => ({ agent: { session: { id: sid, header: { id: sid, cwd: cwd || '' } } } })
+/** 写一份 state（mode / 名单），readState() 每次组装都从盘上读，所以每条用例都要先写。 */
+const setScopeState = (over) => writeState({
+  cardEnabled: true, mode: 'allowlist', allowSessions: [], allowCwds: [], disabledCwds: [], ...over,
+})
+const SCOPE_S1 = 'sid-scope-s1'
+const SCOPE_S2 = 'sid-scope-s2'
+writeBindingEntry(SCOPE_S1, { mode: 'preset', presetId: SCOPE_PRESET, source: 'panel' })
+writeBindingEntry(SCOPE_S2, { mode: 'preset', presetId: SCOPE_PRESET, source: 'panel' })
+writeScopeMemory(SCOPE_S1, '# 记忆总结\n' + SCOPE_MEM + '（会话记忆正文）\n')
+writeScopeMemory(SCOPE_S2, '# 记忆总结\n' + SCOPE_MEM + '（会话记忆正文）\n')
+
+/** 断言产物里**没有**这张卡的任何哨兵（角色卡 / 世界书 / 会话记忆）。 */
+function assertScopeNoInjection(out, why) {
+  for (const s of [SCOPE_CARD, SCOPE_WB, SCOPE_MEM]) {
+    assert.ok(!String(out).includes(s), '★ 泄漏了哨兵 ' + s + '（' + why + '）')
+  }
+}
+/** 反证：同一套夹具在放行时确实能把三个哨兵都注入（否则「零注入」的断言是空跑）。 */
+function assertScopeInjected(out, why) {
+  for (const s of [SCOPE_CARD, SCOPE_WB, SCOPE_MEM]) {
+    assert.ok(String(out).includes(s), '★ 应当注入却没注入哨兵 ' + s + '（' + why + '）—— 夹具坏了')
+  }
+}
+
+test('P0-5 白名单：mode=allowlist + 两个名单皆空 → 零注入（角色卡/世界书/记忆 哨兵全无）', () => {
+  setScopeState({ mode: 'allowlist', allowSessions: [], allowCwds: [] })
+  const out = scopeAssemble(scopeCtx(SCOPE_S1))
+  // ⚠ 先点名哨兵、再断言空串：这样「闸门被改坏」时报错会指名道姓说是哪一段泄漏了
+  assertScopeNoInjection(out, 'allowlist 双空')
+  assert.equal(out, '', '★ 空名单仍然注入了内容 —— 旧语义「空 = 不限制」没关掉')
+  // 反证：同一会话切成 global 立刻注入（证明「零注入」不是夹具没造好）
+  setScopeState({ mode: 'global' })
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1)), 'global 反证')
+})
+
+test('P0-5 连带影响：空名单下世界书 / 会话记忆 / 反八股与角色卡**一并停止**（同一道闸门）', () => {
+  setScopeState({ mode: 'allowlist', allowSessions: [], allowCwds: [] })
+  const out = String(scopeAssemble(scopeCtx(SCOPE_S1)))
+  assert.ok(!out.includes(SCOPE_CARD), '★ 角色卡在空名单下仍在注入')
+  assert.ok(!out.includes(SCOPE_WB), '★ **世界书**在空名单下仍在注入')
+  assert.ok(!out.includes(SCOPE_MEM), '★ **会话记忆**在空名单下仍在注入')
+  assert.ok(!out.includes('写作风格铁律'), '★ 反八股在空名单下仍在注入')
+  // 反证：放行时这四段**都在**（证明它们确实走这道闸门，不是本来就注入不出来）
+  setScopeState({ mode: 'global' })
+  const on = String(scopeAssemble(scopeCtx(SCOPE_S1)))
+  for (const s of [SCOPE_CARD, SCOPE_WB, SCOPE_MEM, '写作风格铁律']) {
+    assert.ok(on.includes(s), '★ 反证失败：放行时却没注入 ' + s + ' —— 夹具坏了，上面的「零注入」是空跑')
+  }
+})
+
+test('P0-5 连带影响取证：关系网**不参与提示词注入**（空名单对它既不停也不漏）', () => {
+  // 关系网只有 /api/tavern/relations 这一条出口（供面板读），从来不进系统提示。
+  // 所以「空名单 → 关系网一并停止」这句话不成立 —— 这里把它钉死，免得对接方误以为
+  // 关系网也被这道闸门关掉了。做法：落一份带哨兵的 relations.json，
+  // 断言**放行时**提示词里也搜不到它。
+  const f = path.join(CORE_TMP_HOME, 'tavern-data', 'sessions', SCOPE_S1, 'relations.json')
+  fs.mkdirSync(path.dirname(f), { recursive: true })
+  fs.writeFileSync(f, JSON.stringify({ nodes: [{ id: 'n1', name: 'SENTINEL-SCOPE-REL-2b8c77' }], edges: [] }), 'utf8')
+  setScopeState({ mode: 'global' })
+  const on = String(scopeAssemble(scopeCtx(SCOPE_S1)))
+  assert.ok(on.includes(SCOPE_CARD), '反证失败：这一轮本就该注入角色卡')
+  assert.ok(!on.includes('SENTINEL-SCOPE-REL-2b8c77'), '★ 关系网竟然进了提示词 —— 说明它另有注入路径，上述结论要改')
+})
+
+test('P0-5 白名单：allowSessions=[s1] → s1 注入、s2 零注入（逐项判定没被误伤）', () => {
+  setScopeState({ mode: 'allowlist', allowSessions: [SCOPE_S1], allowCwds: [] })
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1)), '白名单内的会话')
+  const out2 = scopeAssemble(scopeCtx(SCOPE_S2))
+  assert.equal(out2, '', '★ 不在白名单里的会话仍然被注入')
+  assertScopeNoInjection(out2, '白名单外的会话')
+})
+
+test('P0-5 白名单：allowCwds 命中工作目录 → 放行；不命中 → 零注入', () => {
+  setScopeState({ mode: 'allowlist', allowSessions: [], allowCwds: ['C:\\work\\proj'] })
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\work\\proj\\')), 'allowCwds 命中')
+  const out = scopeAssemble(scopeCtx(SCOPE_S1, 'D:\\other'))
+  assert.equal(out, '', '★ 工作目录不在 allowCwds 里却放行')
+  assertScopeNoInjection(out, 'allowCwds 未命中')
+})
+
+test('P0-5 mode=global：行为与改动前一致（全放行；disabledCwds 黑名单依旧生效）', () => {
+  // ① 改动前 global 分支只做一件事：命中 disabledCwds 就返回空；否则放行。
+  //    两个 allowedBy 标记在改动前后**都是 false**（观测日志照旧记 allowedBy:'none'）。
+  assert.deepEqual(decideInjectionScope({ mode: 'global', allowSessions: [], allowCwds: [] }, SCOPE_S1, 'C:\\work'),
+    { allowed: true, allowedBySession: false, allowedByCwd: false })
+  assert.deepEqual(decideInjectionScope({ mode: 'global', allowSessions: ['x'], allowCwds: ['y'] }, SCOPE_S1, 'C:\\work'),
+    { allowed: true, allowedBySession: false, allowedByCwd: false }, '★ global 不该去看白名单')
+
+  // ② 端到端：global 且名单为空 → 照旧注入（**空名单的新语义只约束 allowlist 模式**）
+  setScopeState({ mode: 'global', allowSessions: [], allowCwds: [] })
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1)), 'global + 空名单')
+
+  // ③ global 的 disabledCwds 黑名单：命中就停（改动前就有，不许被顺手改掉）
+  setScopeState({ mode: 'global', disabledCwds: ['C:\\blocked\\proj'] })
+  const out = scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\blocked\\proj'))
+  assert.equal(out, '', '★ global 模式下 disabledCwds 黑名单失效了')
+  assertScopeNoInjection(out, 'global + disabledCwds 命中')
+  // 黑名单之外照旧注入
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\elsewhere')), 'global + 黑名单之外')
+})
+
+test('P0-5 闸门纯函数：四种名单组合的判定表（空 / 会话命中 / 目录命中 / 都不命中）', () => {
+  const st = (allowSessions, allowCwds, mode) => ({ mode: mode || 'allowlist', allowSessions, allowCwds, disabledCwds: [] })
+  // ① 两个名单都空 → 谁都不放行（本次改的那一支）
+  assert.equal(decideInjectionScope(st([], []), SCOPE_S1, 'C:\\work').allowed, false)
+  assert.equal(decideInjectionScope(st([], []), '', '').allowed, false, '连 sid / cwd 都取不到时也不放行')
+  assert.equal(decideInjectionScope(undefined, SCOPE_S1, 'C:\\work').allowed, false, 'state 缺失时保守不放行')
+  // ② allowSessions 非空、allowCwds 空 → 只按会话逐项判定
+  const r = decideInjectionScope(st([SCOPE_S1], []), SCOPE_S1, 'C:\\work')
+  assert.deepEqual(r, { allowed: true, allowedBySession: true, allowedByCwd: false })
+  assert.equal(decideInjectionScope(st([SCOPE_S1], []), SCOPE_S2, 'C:\\work').allowed, false)
+  // ③ allowSessions 空、allowCwds 非空 → 只按目录逐项判定
+  const r2 = decideInjectionScope(st([], ['C:\\work']), SCOPE_S2, 'C:\\work')
+  assert.deepEqual(r2, { allowed: true, allowedBySession: false, allowedByCwd: true })
+  assert.equal(decideInjectionScope(st([], ['C:\\work']), SCOPE_S2, 'D:\\x').allowed, false)
+  // ④ 两个名单都非空 → 任一命中即放行
+  const r3 = decideInjectionScope(st([SCOPE_S1], ['C:\\work']), SCOPE_S2, 'C:\\work')
+  assert.deepEqual(r3, { allowed: true, allowedBySession: false, allowedByCwd: true })
 })
