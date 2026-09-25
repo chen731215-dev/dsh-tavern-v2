@@ -756,6 +756,7 @@ apply({
   sessions: {},
 })
 const scopeAssemble = scopeSections['tavern:card'].text
+const scopeAssembleNsfw = scopeSections['tavern:nsfw'] ? scopeSections['tavern:nsfw'].text : null
 const scopeCtx = (sid, cwd) => ({ agent: { session: { id: sid, header: { id: sid, cwd: cwd || '' } } } })
 /** 写一份 state（mode / 名单），readState() 每次组装都从盘上读，所以每条用例都要先写。 */
 const setScopeState = (over) => writeState({
@@ -856,6 +857,26 @@ test('P0-5 mode=global：行为与改动前一致（全放行；disabledCwds 黑
   assertScopeNoInjection(out, 'global + disabledCwds 命中')
   // 黑名单之外照旧注入
   assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\elsewhere')), 'global + 黑名单之外')
+})
+
+test('P0-5b nsfw 一致性：tavern:nsfw 与主闸门共用 decideInjectionScope（空名单下破限段也停）', () => {
+  // 旧写法是 `if (hasAllowlist) {…检查…}` —— 空名单时**整段跳过检查** = 放行。
+  // 后果：主闸门把角色卡/世界书/记忆全关了，破限段却还在 —— 语义劈叉。本用例钉死它。
+  assert.ok(typeof scopeAssembleNsfw === 'function', '★ tavern:nsfw 段没注册 —— 夹具坏了，本用例是空跑')
+  setScopeState({ mode: 'allowlist', allowSessions: [], allowCwds: [], nsfwEnabled: true })
+  const out = String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)))
+  assert.ok(!out.includes('成人模式'), '★ 空名单下破限段（tavern:nsfw）仍在注入 —— nsfw 段没接统一闸门')
+  // 反证：显式加白后破限段恢复（证明「不注入」不是 nsfwEnabled 没生效之类的夹具问题）
+  setScopeState({ mode: 'allowlist', allowSessions: [SCOPE_S1], allowCwds: [], nsfwEnabled: true })
+  const on = String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)))
+  assert.ok(on.includes('成人模式'), '反证失败：加白后破限段没注入 —— 夹具坏了，上面的断言是空跑')
+})
+
+test('P0-5b nsfw：nsfwEnabled 关闭时照旧整段不注入（既有行为护栏，不许被顺带改掉）', () => {
+  setScopeState({ mode: 'global', nsfwEnabled: false })
+  const out = String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)))
+  assert.ok(!out.includes('成人模式'), '★ nsfwEnabled=false 却注入了破限段')
+  // 且不受白名单影响：global + nsfwEnabled=true 才注入（上一条用例已反证过，这里只守关闭态）
 })
 
 test('P0-5 闸门纯函数：四种名单组合的判定表（空 / 会话命中 / 目录命中 / 都不命中）', () => {
