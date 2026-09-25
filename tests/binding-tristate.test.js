@@ -29,6 +29,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { zstdCompressSync } from 'node:zlib'
+import { readFileSync } from 'node:fs'
 
 // Windows 上必须用 fileURLToPath（new URL().pathname 会给出 "/C:/..." 拼出 "C:\C:\..."）。
 const HERE = fileURLToPath(new URL('.', import.meta.url))
@@ -43,8 +44,13 @@ process.env.DSH_HOME = TMP_HOME
 const { _test, apply } = await import(pathToFileURL(path.join(REPO, 'lib', 'index.js')).href)
 
 const {
+  BINDING_SOURCE_PANEL,
+  BINDING_SOURCE_TOP_SELECT,
+  BINDING_SOURCE_LEGACY,
   normalizeBinding,
   bindingModeOf,
+  sessionBindingFields,
+  listAgentPresets,
   readBindings,
   writeBindings,
   resetBindingsCache,
@@ -448,4 +454,200 @@ test('[20] purgeLegacyBindings 支持 onlyPresetId 与 mode=none 两种口径', 
 test('[21] 清理：临时 DSH_HOME 不在用户真实目录里', () => {
   assert.ok(path.isAbsolute(TMP_HOME))
   assert.ok(TMP_HOME.toLowerCase().includes('dsh-binding-tristate-'), '用的是系统临时目录：' + TMP_HOME)
+})
+
+// ══════════════════════════════════════════════════════════
+// 六、P0-3 补完：后端把绑定元信息暴露给面板
+//
+//   ① bindingMode 四态：absent / none / legacy / preset
+//   ② bindingSource：none|absent → null，legacy → 'legacy'，显式 → 'panel'|'top-select'
+//   ③ boundPreset **行为不变**（回归护栏，本棒不许顺手改它）
+//   ④ listAgentPresets() 返回 description（既有字段一个不许少）
+//
+//   ⚠ /api/tavern/sessions 是个 HTTP 路由，单测打不到（要真 persistence 服务）。
+//     所以判定逻辑收在纯函数 sessionBindingFields() 里：这里测它，
+//     再用一条源码断言守住「路由真的把这三个字段挂上去了」。
+// ══════════════════════════════════════════════════════════
+
+// ── 夹具：四条覆盖四态的会话（bindings 文件 + 会话文件都真实落盘）──
+const SID_ABSENT = 'sid-bm-absent'   // 绑定文件里**根本没有**这个 key
+const SID_NONE = 'sid-bm-none'
+const SID_LEGACY = 'sid-bm-legacy'
+const SID_LEGACY_OBJ = 'sid-bm-legacy-obj'  // mode:'preset' 但 source:'legacy'
+const SID_PANEL = 'sid-bm-panel'
+const SID_TOP = 'sid-bm-top'
+for (const sid of [SID_ABSENT, SID_NONE, SID_LEGACY, SID_LEGACY_OBJ, SID_PANEL, SID_TOP]) {
+  writeSessionLog(sid, [creationLine(sid, 'standard')])
+}
+
+test('[22] bindingMode 四态：absent / none / legacy / preset 各一次（走真实 bindings 文件）', () => {
+  setBindings({
+    [SID_NONE]: { mode: 'none' },
+    [SID_LEGACY]: PRESET_FOOT,                                        // 旧字符串格式
+    [SID_LEGACY_OBJ]: { mode: 'preset', presetId: PRESET_A, source: 'legacy', at: 1, rev: 1 },
+    [SID_PANEL]: { mode: 'preset', presetId: PRESET_A, source: 'panel', at: 1, rev: 1 },
+    [SID_TOP]: { mode: 'preset', presetId: PRESET_B, source: 'top-select', at: 1, rev: 1 },
+  })
+  const all = readBindings()
+
+  // ① absent：文件里没有这条会话的绑定条目
+  assert.equal(all[SID_ABSENT], undefined, '夹具错了：absent 用例不该有条目')
+  assert.equal(sessionBindingFields(all[SID_ABSENT]).bindingMode, 'absent')
+  // ② none：用户显式解绑
+  assert.equal(sessionBindingFields(all[SID_NONE]).bindingMode, 'none')
+  // ③ legacy：旧字符串格式
+  assert.equal(sessionBindingFields(all[SID_LEGACY]).bindingMode, 'legacy')
+  // ③ legacy：mode:'preset' 但 source:'legacy'（无法证明是用户显式绑定）
+  assert.equal(sessionBindingFields(all[SID_LEGACY_OBJ]).bindingMode, 'legacy')
+  // ④ preset：panel / top-select 两种显式来源
+  assert.equal(sessionBindingFields(all[SID_PANEL]).bindingMode, 'preset')
+  assert.equal(sessionBindingFields(all[SID_TOP]).bindingMode, 'preset')
+
+  // 四态必须**两两可分**：legacy 不许再被展平成 none 或 preset
+  const modes = [SID_ABSENT, SID_NONE, SID_LEGACY, SID_PANEL]
+    .map(sid => sessionBindingFields(all[sid]).bindingMode)
+  assert.deepEqual(modes, ['absent', 'none', 'legacy', 'preset'], '★ 四态被合并了：' + modes.join('/'))
+  // 未归一化（原始字符串）直接喂进来也是同一个答案
+  assert.equal(sessionBindingFields(PRESET_FOOT).bindingMode, 'legacy')
+})
+
+test('[23] bindingSource 跟随：none/absent→null，legacy→"legacy"，显式→"panel"/"top-select"', () => {
+  const all = readBindings()
+  assert.equal(sessionBindingFields(all[SID_ABSENT]).bindingSource, null, 'absent 时必须是 null')
+  assert.equal(sessionBindingFields(all[SID_NONE]).bindingSource, null, 'none 时必须是 null')
+  assert.equal(sessionBindingFields(all[SID_LEGACY]).bindingSource, 'legacy')
+  assert.equal(sessionBindingFields(all[SID_LEGACY_OBJ]).bindingSource, 'legacy')
+  assert.equal(sessionBindingFields(all[SID_PANEL]).bindingSource, 'panel')
+  assert.equal(sessionBindingFields(all[SID_TOP]).bindingSource, 'top-select')
+  // 常量复用：不许另造一套字符串
+  assert.equal(sessionBindingFields(all[SID_PANEL]).bindingSource, BINDING_SOURCE_PANEL)
+  assert.equal(sessionBindingFields(all[SID_TOP]).bindingSource, BINDING_SOURCE_TOP_SELECT)
+  assert.equal(sessionBindingFields(all[SID_LEGACY]).bindingSource, BINDING_SOURCE_LEGACY)
+})
+
+test('[24] 回归护栏：boundPreset 取值与本棒改动前**逐条一致**（只许新增字段，不许改它）', () => {
+  // 期望值是照改前那一行手算出来的（不是照新代码反推的）：
+  //   (b && b.mode==='preset' && b.source !== 'legacy' && b.presetId) ? b.presetId : 'default'
+  const all = readBindings()
+  assert.equal(sessionBindingFields(all[SID_ABSENT]).boundPreset, 'default')
+  assert.equal(sessionBindingFields(all[SID_NONE]).boundPreset, 'default')
+  assert.equal(sessionBindingFields(all[SID_LEGACY]).boundPreset, 'default', '★ legacy 展平成 default 的行为被改了')
+  assert.equal(sessionBindingFields(all[SID_LEGACY_OBJ]).boundPreset, 'default')
+  assert.equal(sessionBindingFields(all[SID_PANEL]).boundPreset, PRESET_A)
+  assert.equal(sessionBindingFields(all[SID_TOP]).boundPreset, PRESET_B)
+  // 显式绑定但 presetId 为空（非法条目）：改前也是 default
+  assert.equal(sessionBindingFields({ mode: 'preset', presetId: '', source: 'panel' }).boundPreset, 'default')
+  // 返回值**只多不少**：boundPreset 仍在，且不许冒出别的新字段
+  assert.deepEqual(Object.keys(sessionBindingFields(all[SID_PANEL])).sort(), ['bindingMode', 'bindingSource', 'boundPreset'])
+})
+
+test('[25] 路由接线：/api/tavern/sessions 真的把这三个字段挂到每条会话上', () => {
+  const src = readFileSync(path.join(REPO, 'lib', 'index.js'), 'utf8')
+  const at = src.indexOf("path: '/api/tavern/sessions'")
+  assert.ok(at > 0, '源码里找不到 /api/tavern/sessions 路由')
+  const seg = src.slice(at, at + 4000)
+  assert.ok(/s\.boundPreset\s*=\s*bf\.boundPreset/.test(seg), '★ boundPreset 没有挂上去')
+  assert.ok(/s\.bindingMode\s*=\s*bf\.bindingMode/.test(seg), '★ bindingMode 没有挂上去（面板拿不到就永远降级）')
+  assert.ok(/s\.bindingSource\s*=\s*bf\.bindingSource/.test(seg), '★ bindingSource 没有挂上去')
+})
+
+// ── 夹具：三条用来验 description 的预设 ────────────────────
+const PRESET_DESC = 'preset-desc'   // 没进注册表 → description 走 preset.yml
+const PRESET_META = 'preset-meta'   // 进了 presets.json → description 走注册表（权威）
+const PRESET_NODESC = 'preset-nodesc' // 两处都没有 description → ''
+const META_DESC = '🎭 _足控天堂2 | 📚 2本世界书（142条）| 最后更新: 2026/9/25'
+for (const id of [PRESET_DESC, PRESET_META, PRESET_NODESC]) makePreset(id, 'X-' + id)
+fs.writeFileSync(path.join(ROOT, PRESET_DESC, 'preset.yml'), 'name: 面板显示名\ndescription: 🎭 真名线索-来自yml\n', 'utf8')
+// 注册表里的 description 才是权威 —— 正是「团队测试」看不穿「足控天堂」的那条
+fs.writeFileSync(path.join(ROOT, PRESET_META, 'preset.yml'), 'name: 团队测试\ndescription: 这个是yml兜底不该被用上\n', 'utf8')
+fs.writeFileSync(path.join(ROOT, PRESET_NODESC, 'preset.yml'), 'name: 无描述预设\n', 'utf8')
+
+const META_PATH = path.join(ROOT, 'presets.json')
+function withMetaPresets(extra, fn) {
+  const had = fs.existsSync(META_PATH)
+  const before = had ? fs.readFileSync(META_PATH, 'utf8') : ''
+  try {
+    const data = had ? JSON.parse(before) : { presets: [] }
+    if (!Array.isArray(data.presets)) data.presets = []
+    data.presets = data.presets.filter(p => p && p.dir !== PRESET_META).concat(extra)
+    fs.writeFileSync(META_PATH, JSON.stringify(data, null, 2), 'utf8')
+    return fn()
+  } finally {
+    if (had) fs.writeFileSync(META_PATH, before, 'utf8'); else try { fs.unlinkSync(META_PATH) } catch {}
+  }
+}
+
+test('[26] listAgentPresets() 返回 description：注册表优先，且既有字段一个不少', () => {
+  withMetaPresets([{ id: 'preset-meta-id', dir: PRESET_META, name: '团队测试', description: META_DESC, mode: 'roleplay' }], () => {
+    const all = listAgentPresets()
+    const meta = all.find(p => p.id === PRESET_META)
+    const yml = all.find(p => p.id === PRESET_DESC)
+
+    // ① 注册表的 description（真名线索）真的出来了 —— 面板靠它看穿「团队测试」
+    assert.ok(meta, '夹具错了：注册表里的预设没被列出来')
+    assert.equal(meta.description, META_DESC, '★ description 没透传出去')
+    assert.ok(meta.description.includes('_足控天堂2'), '★ 真名线索丢了 —— 用户还是看不穿这张卡')
+    assert.equal(meta.description.includes('yml兜底'), false, '★ 注册表优先失效，退到了 yml')
+    // ② 未进注册表的目录退到 preset.yml（不许是 undefined）
+    assert.ok(yml, '夹具错了：未注册预设没被列出来')
+    assert.equal(yml.description, '🎭 真名线索-来自yml')
+
+    // ③ 逐字段断言：既有 7 个字段语义不变，只多出 description 一个
+    assert.deepEqual(Object.keys(meta).sort(), ['description', 'dir', 'id', 'isBuiltin', 'isTavern', 'name', 'origin', 'presetId'])
+    assert.equal(meta.id, PRESET_META)
+    assert.equal(meta.dir, PRESET_META)
+    assert.equal(meta.name, '团队测试', '★ name 语义被改了')
+    assert.equal(meta.isTavern, true, '★ isTavern 语义被改了（注册表命中即酒馆预设）')
+    assert.equal(meta.isBuiltin, false)
+    assert.equal(meta.origin, 'tavern', '★ origin 语义被改了')
+    assert.equal(meta.presetId, 'preset-meta-id', '★ presetId 语义被改了')
+    assert.equal(yml.isTavern, false, '未注册目录不该被算成酒馆预设')
+    assert.equal(yml.origin, 'other', '★ origin 语义被改了')
+    assert.equal(yml.presetId, null, '★ 未注册目录的 presetId 应当是 null')
+    // ④ 排序规则照旧（按 name 中文排序）
+    const names = all.map(p => p.name)
+    assert.deepEqual(names, names.slice().sort((a, b) => String(a || '').localeCompare(String(b || ''), 'zh')))
+  })
+})
+
+test('[27] description 为空 / 缺失 / 类型异常 → 返回空串，绝不抛异常', () => {
+  const all = listAgentPresets()
+  const none = all.find(p => p.id === PRESET_NODESC)
+  assert.ok(none, '夹具错了：无描述预设没被列出来')
+  assert.equal(none.description, '', '★ 缺失 description 时应当是空串，不是 undefined')
+  // 本套件原有的三个夹具 preset.yml 里也没有 description 字段
+  for (const id of [PRESET_A, PRESET_B, PRESET_FOOT]) {
+    const p = all.find(x => x.id === id)
+    assert.ok(p, '夹具错了：' + id + ' 没被列出来')
+    assert.equal(typeof p.description, 'string', '★ description 必须是字符串（前端要 .replace）')
+  }
+
+  // 注册表里 description 为空串 / 缺失 / 非字符串 → 一律不炸，且不把脏值放出去
+  withMetaPresets([{ id: 'preset-meta-empty', dir: PRESET_META, name: '团队测试', description: '', mode: 'roleplay' }], () => {
+    const p = listAgentPresets().find(x => x.id === PRESET_META)
+    assert.equal(typeof p.description, 'string')
+    assert.ok(!p.description.includes('_足控天堂2'), '这次注册表里就没有真名线索')
+  })
+  withMetaPresets([{ id: 'preset-meta-bad', dir: PRESET_META, name: '团队测试', description: 42, mode: 'roleplay' }], () => {
+    const p = listAgentPresets().find(x => x.id === PRESET_META)
+    assert.equal(p.description, '这个是yml兜底不该被用上', '★ 非字符串 description 应当退化到 yml，而不是把 42 放出去')
+  })
+  withMetaPresets([{ id: 'preset-meta-node', dir: PRESET_META, name: '团队测试', mode: 'roleplay' }], () => {
+    const p = listAgentPresets().find(x => x.id === PRESET_META)
+    assert.equal(p.description, '这个是yml兜底不该被用上', '★ 注册表缺 description 时应当退化到 yml')
+  })
+})
+
+test('[28] 回归护栏：加 description 之后，既有字段在**全部**预设上仍然齐整', () => {
+  const all = listAgentPresets()
+  assert.ok(all.length >= 6, '预设数量不对：' + all.length)
+  for (const p of all) {
+    for (const k of ['id', 'name', 'dir', 'isTavern', 'isBuiltin', 'origin', 'presetId', 'description']) {
+      assert.ok(Object.prototype.hasOwnProperty.call(p, k), '★ 预设 ' + p.id + ' 少了字段 ' + k)
+    }
+    assert.equal(typeof p.isTavern, 'boolean')
+    assert.equal(typeof p.isBuiltin, 'boolean')
+    assert.ok(['tavern', 'builtin', 'other'].includes(p.origin), '★ origin 取值集合变了：' + p.origin)
+    assert.equal(typeof p.description, 'string')
+  }
 })
