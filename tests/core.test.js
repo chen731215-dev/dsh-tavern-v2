@@ -897,3 +897,193 @@ test('P0-5 闸门纯函数：四种名单组合的判定表（空 / 会话命中
   const r3 = decideInjectionScope(st([SCOPE_S1], ['C:\\work']), SCOPE_S2, 'C:\\work')
   assert.deepEqual(r3, { allowed: true, allowedBySession: false, allowedByCwd: true })
 })
+
+// ══════════════════════════════════════════════════════════
+// P2-1 提示词编译优化：bannedWords 双注入去重 + 世界书按需注入
+//
+//   · bannedWords 曾经塞两遍（词汇禁令 + 违禁词列表），哨兵词必须恰好出现一次；
+//   · groups 世界书的 injectMode 必须跟随卡设定（keyword → 按需注入）；
+//   · keys / keywords 并集匹配（ST 的 lorebook 主字段是 keys）；
+//   · wbInject 逃生阀：'full' = 无视卡设定强制全量（用户的后悔药）；
+//   · manifest 取证：入选条目清单（名 + 原因 + 字符数），绝不记正文。
+// ══════════════════════════════════════════════════════════
+
+const { entryKeys, selectWorldbookEntries, resolveWbIsFull } = _test
+
+const WB21_CONST = 'SENTINEL-WB21-CONST-3a1f'        // 无关键词（现语义视为常驻）
+const WB21_CONSTANT = 'SENTINEL-WB21-CONSTANT-4b2e'  // constant:true 显式常驻
+const WB21_KEYS = 'SENTINEL-WB21-KEYS-5c3d'          // 只写 keys
+const WB21_KW = 'SENTINEL-WB21-KW-6d4e'              // 只写 keywords
+const WB21_BOTH = 'SENTINEL-WB21-BOTH-7e5f'          // keys ∪ keywords
+const WB21_UNRELATED = 'SENTINEL-WB21-UNRELATED-8f6a-'.repeat(6) // 无关大条目
+
+// groups 结构（worldbooks.json，v2，顶层 injectMode=keyword）—— 与用户真实卡同形
+;(function makeWb21Preset() {
+  const dir = path.join(SCOPE_ROOT, 'preset-wb21')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'preset.yml'), 'name: preset-wb21\n')
+  fs.writeFileSync(path.join(dir, 'agent.cordis.yml'), [
+    '- id: persona', '  name: persona', '  config:', '    prefix: |-', '      SENTINEL-WB21-CARD-9a7b', '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(dir, 'worldbooks.json'), JSON.stringify({
+    version: 2, injectMode: 'keyword',
+    groups: [
+      { name: '组一', enabled: true, entries: [
+        { name: '常驻条目', content: WB21_CONST, enabled: true },
+        { name: '恒定条目', constant: true, keys: ['恒定触发词'], content: WB21_CONSTANT, enabled: true },
+        { name: 'keys条目', keys: ['触发词甲'], content: WB21_KEYS, enabled: true },
+        { name: 'kw条目', keywords: ['触发词乙'], content: WB21_KW, enabled: true },
+        { name: '并集条目', keys: ['触发词丙'], keywords: ['触发词丙二'], content: WB21_BOTH, enabled: true },
+      ] },
+      { name: '组二', enabled: true, entries: [
+        { name: '无关大条目', keys: ['无关词西'], content: WB21_UNRELATED, enabled: true },
+      ] },
+    ],
+  }))
+})()
+
+const WB21_SID = 'sid-wb21'
+writeBindingEntry(WB21_SID, { mode: 'preset', presetId: 'preset-wb21', source: 'panel' })
+/** WB21 组装：写好 state（默认 global）再组装该卡。 */
+const wb21Assemble = (stateOver) => {
+  setScopeState({ mode: 'global', allowSessions: [], allowCwds: [], disabledCwds: [], ...stateOver })
+  return String(scopeAssemble(scopeCtx(WB21_SID)))
+}
+
+// ── A. bannedWords 去重 ────────────────────────────────────
+test('P2-1 bannedWords 去重：哨兵词在 assemble 产物中恰好出现一次（原来两遍）', () => {
+  const BW = 'SENTINEL-BW21-WORD-1a2b'
+  const out = wb21Assemble({ bannedWords: [BW] })
+  assert.ok(out.includes('词汇禁令'), '词汇禁令段应该在（保留信息更全的那处）')
+  assert.ok(!out.includes('违禁词列表'), '重复的第二段（违禁词列表）应该已删除')
+  const n = out.split(BW).length - 1
+  assert.equal(n, 1, '★ bannedWords 哨兵出现了 ' + n + ' 次（应恰好 1 次）')
+})
+
+// ── B1. groups 世界书保留 injectMode ───────────────────────
+test('P2-1 groups 世界书：readWorldbook 保留顶层 injectMode=keyword（卡作者意图不被强制 full）', () => {
+  const out = wb21Assemble({}) // wbInject 默认 follow → 跟随卡的 keyword 模式
+  assert.ok(out.includes('SENTINEL-WB21-CARD-9a7b'), '角色卡应注入（夹具自检）')
+  assert.ok(out.includes(WB21_CONST), '无关键词条目（常驻语义）必须注入')
+  assert.ok(!out.includes(WB21_KEYS), '★ keyword 模式下未触发的 keys 条目不得注入（说明 injectMode 被强制成了 full）')
+  assert.ok(!out.includes(WB21_UNRELATED), '★ keyword 模式下无关条目不得注入')
+})
+
+test('P2-1 非 groups 世界书行为不变：顶层 full（worldbook.json 扁平结构）仍全量注入（回归）', () => {
+  // SCOPE 夹具是单数 worldbook.json + 顶层 full —— 行为必须与改动前一致
+  setScopeState({ mode: 'global' })
+  const out = String(scopeAssemble(scopeCtx(SCOPE_S1)))
+  assert.ok(out.includes(SCOPE_WB), '★ full 世界书哨兵没注入 —— 非 groups 路径被改坏了')
+})
+
+// ── B2. keys ∪ keywords 并集 ──────────────────────────────
+test('P2-1 entryKeys：keys ∪ keywords 并集，大小写不敏感去重', () => {
+  assert.deepEqual(entryKeys({ keys: ['Aa'], keywords: ['aa', 'Bb'] }), ['Aa', 'Bb'])
+  assert.deepEqual(entryKeys({ keys: ['只keys'] }), ['只keys'])
+  assert.deepEqual(entryKeys({ keywords: ['只kw'] }), ['只kw'])
+  assert.deepEqual(entryKeys({ keys: [], keywords: [] }), [])
+  assert.deepEqual(entryKeys({}), [])
+  assert.deepEqual(entryKeys({ key: '单字符串' }), ['单字符串'])
+})
+
+test('P2-1 selectWorldbookEntries：只写 keys / 只写 keywords 都能命中，同一条目不重复注入', () => {
+  const entries = [
+    { name: 'k', keys: ['触发词甲'], content: 'C1', enabled: true },
+    { name: 'w', keywords: ['触发词乙'], content: 'C2', enabled: true },
+    { name: 'b', keys: ['触发词丙'], keywords: ['别的词'], content: 'C3', enabled: true },
+  ]
+  const r = selectWorldbookEntries(entries, '聊到触发词甲、触发词乙和触发词丙', false)
+  const names = r.injectEntries.map(e => e.name)
+  assert.ok(names.includes('k'), '只写 keys 的条目没被命中')
+  assert.ok(names.includes('w'), '只写 keywords 的条目没被命中')
+  assert.ok(names.includes('b'), '并集条目没被命中')
+  assert.equal(names.length, new Set(names).size, '★ 同一条目被重复注入了')
+})
+
+test('P2-1 matchWorldbookEntries：keys 主字段支持（utils 与 index 两份实现对齐）', () => {
+  const wb = { injectMode: 'keyword', entries: [
+    { id: '1', keys: ['触发词甲'], content: 'X', enabled: true },
+    { id: '2', keywords: ['触发词乙'], content: 'Y', enabled: true },
+  ] }
+  for (const fn of [matchWorldbookEntries, _test.matchWorldbookEntries]) {
+    const hits = fn(wb, '提到触发词甲和触发词乙')
+    assert.equal(hits.length, 2, fn === matchWorldbookEntries ? 'utils 版命中数不对' : 'index 版命中数不对')
+    const wb2 = { injectMode: 'keyword', entries: [{ id: '1', keys: ['Hello'], content: 'X', enabled: true }] }
+    assert.equal(fn(wb2, 'say hello now').length, 1, 'keys 大小写不敏感匹配失效')
+    assert.equal(fn(wb2, '普通对话').length, 0, 'keys 未命中不应注入')
+  }
+})
+
+// ── C. 质量护栏 ───────────────────────────────────────────
+test('P2-1 护栏：常驻条目（constant:true / 无关键词）select 模式必注入；无关条目不注入', () => {
+  const entries = [
+    { name: 'const1', constant: true, keys: ['永不出现的触发词'], content: 'K1', enabled: true },
+    { name: 'nokey', content: 'K2', enabled: true },
+    { name: 'far', keys: ['绝对无关词'], content: 'K3', enabled: true },
+  ]
+  const r = selectWorldbookEntries(entries, '一段普通聊天内容', false)
+  const names = r.injectEntries.map(e => e.name)
+  assert.ok(names.includes('const1'), '★ constant:true 条目在 select 模式下丢了')
+  assert.ok(names.includes('nokey'), '★ 无关键词条目（常驻语义）在 select 模式下丢了')
+  assert.ok(!names.includes('far'), '★ 无关条目被注入了')
+})
+
+// ── B3. wbInject 逃生阀 ───────────────────────────────────
+test('P2-1 wbInject：resolveWbIsFull 判定表（逃生阀 > 卡设定）', () => {
+  const kw = { injectMode: 'keyword' }
+  const fu = { injectMode: 'full' }
+  assert.equal(resolveWbIsFull({ wbInject: 'follow' }, kw), false, 'follow + keyword 卡 → 按需')
+  assert.equal(resolveWbIsFull({ wbInject: 'follow' }, fu), true, 'follow + full 卡 → 全量（卡自己的设定）')
+  assert.equal(resolveWbIsFull({ wbInject: 'full' }, kw), true, '★ 逃生阀 full 必须压过卡的 keyword')
+  assert.equal(resolveWbIsFull(undefined, kw), false, 'state 缺失 → 跟随卡')
+  assert.equal(resolveWbIsFull({}, kw), false, 'wbInject 缺失 → 跟随卡')
+})
+
+test('P2-1 wbInject 默认 follow（readState 归一化：缺失/非法值一律回 follow，不臆造 full）', () => {
+  setScopeState({})
+  assert.equal(readState().wbInject, 'follow')
+  const out = wb21Assemble({})
+  assert.ok(!out.includes(WB21_UNRELATED), '默认 follow 下 keyword 卡的无关条目不得注入')
+})
+
+test('P2-1 wbInject=full 逃生阀端到端：keyword 卡恢复全量（后悔药必须真的能救）', () => {
+  const out = wb21Assemble({ wbInject: 'full' })
+  assert.ok(out.includes(WB21_CONST), '逃生阀下常驻条目照旧注入')
+  assert.ok(out.includes(WB21_KEYS), '★ 逃生阀下未触发的条目也必须注入（这才叫全量）')
+  assert.ok(out.includes(WB21_UNRELATED), '★ 逃生阀下无关条目也必须注入')
+})
+
+// ── B5. manifest 取证 ─────────────────────────────────────
+test('P2-1 manifest 取证：inject-debug.log 世界书行含入选清单（名+原因+字符数），绝不含条目正文', () => {
+  const logPath = path.join(SCOPE_ROOT, 'inject-debug.log')
+  const before = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').length : 0
+  wb21Assemble({ wbInject: 'follow' })
+  const added = fs.readFileSync(logPath, 'utf8').slice(before)
+  const line = added.split('\n').find(l => l.includes('世界书注入(ST)'))
+  assert.ok(line, '本轮没有世界书日志行 —— 夹具坏了')
+  assert.ok(line.includes('条目=['), '统计行缺入选清单')
+  assert.ok(line.includes('常驻条目[const:'), '清单缺常驻条目（名+原因+字符数）')
+  assert.ok(line.includes('恒定条目[const:'), '清单缺 constant:true 条目')
+  assert.ok(!line.includes('无关大条目'), '未入选条目不应出现在清单里')
+  // 铁律：绝不记条目正文 —— 所有正文哨兵都不得出现在日志行里
+  for (const s of [WB21_CONST, WB21_CONSTANT, WB21_KEYS, WB21_KW, WB21_BOTH, WB21_UNRELATED]) {
+    assert.ok(!line.includes(s), '★ 日志行泄漏了条目正文哨兵 ' + s)
+  }
+})
+
+// ── picks 数据形状（manifest 的数据源）─────────────────────
+test('P2-1 selectWorldbookEntries 返回 picks：与注入顺序一致，只含名/原因/字符数', () => {
+  const entries = [
+    { name: '常驻甲', content: 'A'.repeat(10), enabled: true },
+    { name: '命中乙', keys: ['触发词丁'], content: 'B'.repeat(20), enabled: true },
+  ]
+  const r = selectWorldbookEntries(entries, '提到触发词丁', false)
+  assert.ok(Array.isArray(r.picks), '缺 picks')
+  assert.equal(r.picks.length, r.injectEntries.length, 'picks 与注入条目数不一致')
+  assert.deepEqual(r.picks.map(p => p.name), r.injectEntries.map(e => e.comment || e.name))
+  for (const p of r.picks) {
+    assert.ok(['const', 'matched', 'stage', 'full'].includes(p.reason), '未知原因 ' + p.reason)
+    assert.equal(typeof p.chars, 'number', 'chars 应为数字')
+    assert.ok(!String(p).includes('AAAA') && p.chars <= 20, '★ picks 不得携带正文')
+  }
+})
