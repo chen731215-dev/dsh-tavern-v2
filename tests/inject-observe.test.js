@@ -48,6 +48,7 @@ const {
   readPresetBindingSource,
   observeInjection,
   pickAuthoritativePresetFromLog,
+  writeState,
 } = _test
 
 // ── 临时酒馆目录布局 ────────────────────────────────────
@@ -97,6 +98,9 @@ writeSessionLog('sid-none', [creationLine('sid-none', 'standard')])
 fs.writeFileSync(path.join(ROOT, 'session-bindings.json'), JSON.stringify({
   'sid-explicit': PRESET_ID,   // 陈旧的自动绑定 —— 但 explicit 必须压过它
   'sid-binding': PRESET_ID,
+  // ★ P0-5：creation 不再是注入依据（与 legacy 同等对待）。端到端用例要真的注入，
+  //   必须走**显式（面板）绑定**这一条路 —— sid-live 因此改成新格式 panel 绑定。
+  'sid-live': { mode: 'preset', presetId: PRESET_ID, source: 'panel', at: 1, rev: 1 },
 }))
 
 // ══════════════════════════════════════════════════════════
@@ -150,6 +154,9 @@ test('[4] bindingSource=none：三者皆无（原生 standard 会话，出生默
   assert.equal(rec.bindingMode, 'absent')
 })
 
+// ⚠ P0-5 起 creation 只留**标签**、不再参与决议，所以「标签 ↔ 决议值」不再一一对应：
+//   creation 路径 ⇒ bindingSource='creation'（日志能看出这次走的是出生默认），
+//   但 presetId='default'（不注入）。下面那条用例就是把这层新语义钉住。
 test('[5] 观测标签与真正的决议函数 pickAuthoritativePresetFromLog 优先级一致（不许两套标准）', () => {
   const isTavern = (id) => id === PRESET_ID
   const cases = [
@@ -161,7 +168,8 @@ test('[5] 观测标签与真正的决议函数 pickAuthoritativePresetFromLog �
     { name: '显式解绑 mode:none → 硬空', args: [null, PRESET_ID, isTavern, { mode: 'none' }], source: 'unbound', expect: 'default' },
     // P0-4：legacy 旧字符串 ⇒ 视为未绑定
     { name: 'legacy 旧字符串 → 不注入', args: [null, 'standard', isTavern, PRESET_ID], source: 'legacy', expect: 'default' },
-    { name: 'binding 不是酒馆预设的 legacy → 看 creation', args: [null, PRESET_ID, isTavern, 'standard'], source: 'creation', expect: PRESET_ID },
+    // P0-5：creation 不再是注入依据 ⇒ 决议 'default'，但**标签仍是 'creation'**
+    { name: 'binding 不是酒馆预设的 legacy → 标签 creation、决议不注入', args: [null, PRESET_ID, isTavern, 'standard'], source: 'creation', expect: 'default' },
     { name: '全都没有 → 兜底', args: [null, null, isTavern, ''], source: 'none', expect: 'default' },
   ]
   for (const c of cases) {
@@ -246,9 +254,15 @@ const fakeCtx = {
   webServer: { register: () => {} },
   sessions: {},
 }
+// ★ P0-5：白名单语义改成「空 = 不放行」之后，**默认状态**（mode:'allowlist' + 两个空名单）
+//   会把 tavern:card 整段关掉 ⇒ 端到端用例会变成「零注入」的空跑。
+//   本套件验的是观测日志，不是生效范围（范围本身在 core.test.js 里验），
+//   所以这里显式把 mode 设成 global 打开闸门。
+writeState({ cardEnabled: true, mode: 'global', allowSessions: [], allowCwds: [], disabledCwds: [] })
 apply(fakeCtx)
 const assemble = sections['tavern:card'].text
 const LIVE_SID = 'sid-live'
+// 会话出生在 PRESET_ID 上，但注入靠的是上面那条**面板绑定**（creation 已不再注入）
 writeSessionLog(LIVE_SID, [creationLine(LIVE_SID, PRESET_ID)])
 // 真实流程里 bindings 会被读到（apply → bindDshPaths 已让缓存失效），这里补一条记账
 const bindingsPath = path.join(ROOT, 'session-bindings.json')

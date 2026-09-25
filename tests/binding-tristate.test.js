@@ -3,7 +3,8 @@
  *
  * 背景（根因链，已逐行核实，本套件只守行为、不再考古）：
  *   ① 陈旧绑定盖过出生默认；② 解析出酒馆预设就自动写绑定（9 条脏数据来源）；
- *   ③ 白名单双空等价全放行（**下一棒**，本套件不碰）。
+ *   ③ 白名单双空等价全放行 —— P0-5 已在 core.test.js 里关掉（本套件不验范围，
+ *      夹具把 mode 设成 global 打开闸门，见 openGate）。
  *
  * 本套件守的验收矩阵（交接文档 P0）：
  *   1 新建会话从不选预设 → 零注入，产物里搜不到哨兵 `_足控天堂2` / `超天酱`
@@ -18,6 +19,7 @@
  *   · 旧字符串格式向后兼容读（读成 source:'legacy'）
  *   · mode:'none' 优先于 creation / 任何 fallback
  *   · P0-2 停写：非显式来源跑完一轮后 session-bindings.json 内容不变
+ *   · P0-5 creation（出生默认值）不再静默注入（[29] / [30] / [31]）
  *
  * ⚠ 全程用临时 DSH_HOME，不碰用户真实数据。
  *    运行：node --test tests/binding-tristate.test.js
@@ -29,7 +31,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { zstdCompressSync } from 'node:zlib'
-import { readFileSync } from 'node:fs'
+// 注：原 [25] 用 readFileSync 读源码做正则断言，已改成跑真路由，该导入随之删除。
 
 // Windows 上必须用 fileURLToPath（new URL().pathname 会给出 "/C:/..." 拼出 "C:\C:\..."）。
 const HERE = fileURLToPath(new URL('.', import.meta.url))
@@ -57,6 +59,8 @@ const {
   writeBindingEntry,
   resolveAuthoritativePreset,
   pickAuthoritativePresetFromLog,
+  classifyPresetBindingSource,
+  writeState,
   migrateLegacyBindings,
   purgeLegacyBindings,
 } = _test
@@ -96,6 +100,19 @@ makePreset(PRESET_FOOT, 'FOOTCARD', FOOT_SENTINELS.join(' / '))
 
 const BINDINGS_PATH = path.join(ROOT, 'session-bindings.json')
 
+// ── P0-5：生效范围闸门（白名单空 = 不放行）─────────────────
+// 语义改掉之后，**默认状态**（mode:'allowlist' + 两个名单都空）会把 tavern:card
+// 整段关掉 ⇒ 本套件所有端到端用例都会变成「零注入」，那就全成了空跑断言。
+// 本套件验的是「绑哪张卡 / 写不写绑定」，不是生效范围（范围本身在 core.test.js 里验），
+// 所以夹具显式把 mode 设成 global 把闸门打开。
+// ⚠ 只在夹具里设一次；任何一条用例改了 state 都必须自己改回来。
+function openGate(over) {
+  writeState(Object.assign({
+    cardEnabled: true, mode: 'global', allowSessions: [], allowCwds: [], disabledCwds: [],
+  }, over || {}))
+}
+openGate()
+
 /** 直接改写绑定文件（模拟磁盘现状），并让进程内缓存失效。 */
 function setBindings(obj) {
   fs.writeFileSync(BINDINGS_PATH, JSON.stringify(obj, null, 2), 'utf8')
@@ -121,14 +138,19 @@ const explicitLine = (sid, preset) => JSON.stringify({ type: 'event', name: 'age
 
 // ── 真实注入管线 ───────────────────────────────────────
 // ctx.effect 必须执行回调，否则 refresh(ctx) 不会被调用、section 根本不存在。
+// 同时把路由**接住**（[25] 要跑真路由，不再做源码正则断言）+
+// 给一个假会话持久化服务（/api/tavern/sessions 的 list() 要用）。
 const sections = {}
+const routes = []
+let sessionHeaders = []
 apply({
   get: () => undefined,
   on: () => () => {},
   effect: (fn) => fn(),
   systemPrompt: { section: (o) => { sections[o.name] = o; return () => {} } },
-  webServer: { register: () => {} },
+  webServer: { register: (r) => { routes.push(r) } },
   sessions: {},
+  sessionPersistence: { list: async () => sessionHeaders },
 })
 const assemble = sections['tavern:card'].text
 const ctxOf = (sid) => ({ agent: { session: { id: sid, header: { id: sid } } } })
@@ -194,6 +216,29 @@ test('[4] mode:none 是硬空：不看 creation、不看任何 fallback', () => 
   assert.equal(pickAuthoritativePresetFromLog(null, null, isTavern, none), 'default')
   // legacy 与 none 同时存在（对象里 mode 说了算）
   assert.equal(pickAuthoritativePresetFromLog(null, PRESET_A, isTavern, { mode: 'none', presetId: PRESET_A, source: 'legacy' }), 'default')
+
+  // ★ 加严（验收方点名）：上面四条**删掉 `if (b.mode === 'none') return DEFAULT_PRESET_ID`
+  //   整行后仍然全绿** —— 真正兜住它们的是 normalizeBinding 丢弃 presetId 的副作用
+  //   （判据没了也会走到 isTavern(undefined) ⇒ false ⇒ 'default'）。
+  //   所以这里补一个「判据缺失就会翻盘」的用例：喂一个**什么都认**的 isTavern
+  //   （连 undefined 都判 true），把那条副作用的掩护撤掉：
+  //     · 判据在      → 直接 return 'default'（根本不去看 isTavern）⇒ 'default'
+  //     · 判据被删掉  → b.source 不是 legacy ⇒ return isTavernAll(b.presetId) ? b.presetId : …
+  //                    ⇒ b.presetId 是 undefined ⇒ 返回 undefined ≠ 'default' ⇒ **变红**
+  const isTavernAll = () => true
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, PRESET_A, isTavernAll, none), 'default',
+    '★ mode:none 的判据没了（端到端的零注入只是 normalizeBinding 的副作用）',
+  )
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, PRESET_FOOT, isTavernAll, { mode: 'none', presetId: PRESET_A, source: 'panel' }), 'default',
+    '★ mode:none 的判据没了（creation 是酒馆预设时同样不许翻盘）',
+  )
+  // 反证：这个 isTavernAll 确实能让函数返回非 default 值（否则上面两条也是空跑）
+  assert.equal(pickAuthoritativePresetFromLog(PRESET_A, null, isTavernAll, none), PRESET_A, 'explicit 依旧压过 none')
+  assert.equal(pickAuthoritativePresetFromLog(null, null, isTavernAll, { mode: 'preset', presetId: PRESET_A, source: 'panel' }), PRESET_A)
+  // P0-5：creation 也不再是注入依据
+  assert.equal(pickAuthoritativePresetFromLog(null, PRESET_A, isTavernAll, null), 'default', 'P0-5 起 creation 也不注入')
 })
 
 test('[5] 判定顺序：顶部随后显式选的预设 > 显式解绑 > 显式绑定 > 出生默认', () => {
@@ -240,10 +285,17 @@ writeSessionLog('sid-s6', [creationLine('sid-s6', PRESET_B)])
 // 场景 9：两个会话各自绑一张卡
 writeSessionLog('sid-c1', [creationLine('sid-c1', 'standard')])
 writeSessionLog('sid-c2', [creationLine('sid-c2', 'standard')])
-// P0-2 停写用例：creation 就是酒馆预设（旧代码会顺手写绑定）
+// P0-2 停写用例（P0-5 后改用「既有 panel 绑定」这条同样非显式、但**真的会注入**的来源：
+//   creation 已不再注入，拿它当反证的话这条用例就成了空跑）
 writeSessionLog('sid-w1', [creationLine('sid-w1', PRESET_A)])
 // P0-2 仍写用例：顶部显式选了 A
 writeSessionLog('sid-w2', [creationLine('sid-w2', 'standard'), explicitLine('sid-w2', PRESET_A)])
+// ── P0-5 creation 通道（验收方挖出的场景）——─────────────
+// 「creation = 足控天堂」+ 各种绑定形态，全部必须零注入。
+writeSessionLog('sid-cr1', [creationLine('sid-cr1', PRESET_FOOT)])                                     // 无绑定
+writeSessionLog('sid-cr2', [creationLine('sid-cr2', PRESET_FOOT)])                                     // + 同卡 legacy 绑定
+writeSessionLog('sid-cr3', [creationLine('sid-cr3', PRESET_FOOT)])                                     // + 无关 legacy 绑定（验收方原始复现）
+writeSessionLog('sid-cr4', [creationLine('sid-cr4', PRESET_FOOT), explicitLine('sid-cr4', PRESET_FOOT)]) // 反证：显式选了它
 
 // 场景 1
 test('[7] 场景1：新建会话、从不选预设 → 零注入，产物里搜不到足控天堂哨兵', () => {
@@ -306,6 +358,18 @@ test('[11] 场景5：解绑本会话 → 写 {mode:none} → 零注入，且**�
   writeSessionLog('sid-s5', [creationLine('sid-s5', PRESET_B)])
   assert.equal(assemble(ctxOf('sid-s5')), '', '★ mode:none 没有压住 creation')
   writeSessionLog('sid-s5', [creationLine('sid-s5', 'standard')])
+  // ④ 加严（验收方点名）：上面①②③**删掉 mode:'none' 判据后仍会绿**（兜住它们的
+  //    是 normalizeBinding 丢弃 presetId 的副作用）。这条用「什么都认」的 isTavern
+  //    撤掉那层掩护，判据一没它就变红 —— 见 [4] 里的同一手法。
+  const isTavernAll = () => true
+  assert.equal(
+    pickAuthoritativePresetFromLog(null, PRESET_B, isTavernAll, { mode: 'none' }), 'default',
+    '★ mode:none 的判据没了（端到端零注入只是 normalizeBinding 的副作用，守不住判据）',
+  )
+  assert.equal(
+    pickAuthoritativePresetFromLog(PRESET_A, null, isTavernAll, { mode: 'none' }), PRESET_A,
+    '反证：这个 isTavernAll 确实能返回非 default 值（否则上一条是空跑）',
+  )
 })
 
 // 场景 6
@@ -342,15 +406,20 @@ test('[13] 场景9：两个会话并发切换 → 不串卡', () => {
 // ══════════════════════════════════════════════════════════
 
 test('[14] P0-2 停写：非显式来源跑完一轮注入后 session-bindings.json 内容不变', () => {
-  setBindings({ 'some-other-session': { mode: 'preset', presetId: PRESET_B, source: 'panel', at: 1, rev: 1 } })
+  // ⚠ P0-5 起 creation **不再注入**，「creation = 酒馆预设」这条反证失效了
+  //   （它现在恒为零注入，用它会让本条变成空跑）。
+  //   改用「面板 / 既有绑定」这条**同样非显式**（resolution.source === 'binding' ≠ 'explicit'）
+  //   但**真的会注入**的来源 —— 守的还是同一件事：非显式来源不许顺手写绑定。
+  setBindings({ 'sid-w1': { mode: 'preset', presetId: PRESET_A, source: 'panel', at: 1, rev: 1 } })
   const before = readBindingsFileRaw()
-  const out = assemble(ctxOf('sid-w1'))       // creation = PRESET_A（旧代码会顺手写一条）
+  const out = assemble(ctxOf('sid-w1'))
   assert.ok(out.includes(SENTINEL_A), '这一轮确实注入了 A（否则这条测试是空跑）')
   assert.equal(readBindingsFileRaw(), before, '★ 非显式来源仍然写了绑定 —— 止血失败')
-  // legacy 来源同样不许写
+  // legacy 来源同样不许写（P0-4：它连注入都不该注入）
   setBindings({ 'sid-w1': PRESET_A })
   const before2 = readBindingsFileRaw()
-  assemble(ctxOf('sid-w1'))
+  const out2 = assemble(ctxOf('sid-w1'))
+  assert.equal(out2, '', '★ legacy 来源不该注入')
   assert.equal(readBindingsFileRaw(), before2, '★ legacy 来源触发了写入')
 })
 
@@ -541,14 +610,90 @@ test('[24] 回归护栏：boundPreset 取值与本棒改动前**逐条一致**�
   assert.deepEqual(Object.keys(sessionBindingFields(all[SID_PANEL])).sort(), ['bindingMode', 'bindingSource', 'boundPreset'])
 })
 
-test('[25] 路由接线：/api/tavern/sessions 真的把这三个字段挂到每条会话上', () => {
-  const src = readFileSync(path.join(REPO, 'lib', 'index.js'), 'utf8')
-  const at = src.indexOf("path: '/api/tavern/sessions'")
-  assert.ok(at > 0, '源码里找不到 /api/tavern/sessions 路由')
-  const seg = src.slice(at, at + 4000)
-  assert.ok(/s\.boundPreset\s*=\s*bf\.boundPreset/.test(seg), '★ boundPreset 没有挂上去')
-  assert.ok(/s\.bindingMode\s*=\s*bf\.bindingMode/.test(seg), '★ bindingMode 没有挂上去（面板拿不到就永远降级）')
-  assert.ok(/s\.bindingSource\s*=\s*bf\.bindingSource/.test(seg), '★ bindingSource 没有挂上去')
+/**
+ * 跑一次**真路由**并把响应 JSON 取回来。
+ * 路由是异步的（persistence.list().then(…)），所以等 res.end 被调用。
+ */
+function callSessionsRoute() {
+  const route = routes.find(r => r.path === '/api/tavern/sessions')
+  assert.ok(route, 'apply() 没有注册 /api/tavern/sessions 路由')
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('★ 路由 5 秒内没有响应')), 5000)
+    const res = {
+      writeHead: () => {},
+      end: (body) => {
+        clearTimeout(timer)
+        try { resolve(JSON.parse(String(body))) } catch (e) { reject(e) }
+      },
+    }
+    route.handler({ method: 'GET', url: '/api/tavern/sessions' }, res)
+  })
+}
+
+// ⚠ 旧版 [25] 是**源码正则断言**，不是行为断言：实现里把 bindingMode 硬编码成
+//   'preset' 时它照样绿（源码里那三行赋值还在）。现在改成跑真路由 + 换输入看取值变化。
+test('[25] 路由接线：/api/tavern/sessions 真的把这三个字段挂到每条会话上（跑真路由 + 取值随输入变）', async () => {
+  sessionHeaders = [
+    { id: SID_ABSENT, createdAt: 4 },
+    { id: SID_NONE, createdAt: 3 },
+    { id: SID_LEGACY, createdAt: 2 },
+    { id: SID_PANEL, createdAt: 1 },
+  ]
+  const triple = (byId, id) => [byId[id].boundPreset, byId[id].bindingMode, byId[id].bindingSource]
+
+  // ① 第一轮：panel 绑定 / none / legacy（旧字符串）/ absent —— 四种形态各一次
+  setBindings({
+    [SID_NONE]: { mode: 'none' },
+    [SID_LEGACY]: PRESET_FOOT,                                       // 旧字符串格式 → legacy
+    [SID_PANEL]: { mode: 'preset', presetId: PRESET_A, source: 'panel', at: 1, rev: 1 },
+  })
+  const body1 = await callSessionsRoute()
+  assert.equal(body1.ok, true, '路由没回 ok')
+  assert.equal(body1.sessions.length, 4)
+  const byId1 = Object.fromEntries(body1.sessions.map(s => [s.id, s]))
+  assert.deepEqual(
+    [SID_PANEL, SID_NONE, SID_LEGACY, SID_ABSENT].map(id => triple(byId1, id)),
+    [
+      [PRESET_A, 'preset', 'panel'],
+      ['default', 'none', null],
+      ['default', 'legacy', 'legacy'],
+      ['default', 'absent', null],
+    ],
+    '★ 路由没把三个字段挂上去 / 挂错了值',
+  )
+  // 三个字段必须真的在**每条**会话上（不是只挂了第一条）
+  for (const s of body1.sessions) {
+    assert.ok(Object.prototype.hasOwnProperty.call(s, 'boundPreset'), '★ 少了 boundPreset：' + s.id)
+    assert.ok(Object.prototype.hasOwnProperty.call(s, 'bindingMode'), '★ 少了 bindingMode：' + s.id)
+    assert.ok(Object.prototype.hasOwnProperty.call(s, 'bindingSource'), '★ 少了 bindingSource：' + s.id)
+  }
+
+  // ② 第二轮：**换输入**，取值必须跟着变（硬编码 bindingMode:'preset' 时这里必红）
+  setBindings({
+    [SID_NONE]: { mode: 'preset', presetId: PRESET_B, source: 'top-select', at: 2, rev: 1 },  // none → preset/top-select
+    [SID_LEGACY]: { mode: 'none' },                                                          // legacy → none
+    [SID_ABSENT]: { mode: 'preset', presetId: PRESET_FOOT, source: 'panel', at: 3, rev: 1 },  // absent → preset/panel
+  })
+  const body2 = await callSessionsRoute()
+  const byId2 = Object.fromEntries(body2.sessions.map(s => [s.id, s]))
+  assert.deepEqual(
+    [SID_NONE, SID_LEGACY, SID_ABSENT, SID_PANEL].map(id => triple(byId2, id)),
+    [
+      [PRESET_B, 'preset', 'top-select'],
+      ['default', 'none', null],
+      [PRESET_FOOT, 'preset', 'panel'],
+      ['default', 'absent', null],   // 这一轮没给 SID_PANEL 记账 → 回落到 absent
+    ],
+    '★ 路由返回的三件套没有跟着 bindings 变化 —— 是硬编码的',
+  )
+  // 与纯函数对账：路由挂的就是 sessionBindingFields 的返回值，不许另算一套
+  const all = readBindings()
+  for (const id of [SID_NONE, SID_LEGACY, SID_ABSENT, SID_PANEL]) {
+    const bf = sessionBindingFields(all[id])
+    assert.equal(byId2[id].boundPreset, bf.boundPreset, '★ ' + id + ' 的 boundPreset 与纯函数不一致')
+    assert.equal(byId2[id].bindingMode, bf.bindingMode, '★ ' + id + ' 的 bindingMode 与纯函数不一致')
+    assert.equal(byId2[id].bindingSource, bf.bindingSource, '★ ' + id + ' 的 bindingSource 与纯函数不一致')
+  }
 })
 
 // ── 夹具：三条用来验 description 的预设 ────────────────────
@@ -650,4 +795,80 @@ test('[28] 回归护栏：加 description 之后，既有字段在**全部**预�
     assert.ok(['tavern', 'builtin', 'other'].includes(p.origin), '★ origin 取值集合变了：' + p.origin)
     assert.equal(typeof p.description, 'string')
   }
+})
+
+// ══════════════════════════════════════════════════════════
+// 七、P0-5 creation（出生默认值）通道：不再静默注入
+//
+//   验收方（独立对抗验证）实测：`creation = 足控天堂` + 一条无关 legacy 绑定
+//   ⇒ 注入 135,808 字，而用户从未选过这张卡。线上当前不触发（部署默认 standard），
+//   但部署默认值一变、或出现带 preset 的创建路径，原故障原样复发。
+//
+//   分寸：creation 的**读取与 'creation' 标签都保留**（观测日志仍要能看出
+//   「这次走的是 creation 路径」），只是决议结果不再是注入依据 ⇒ 返回 default，
+//   语义上等同于 legacy：**视为未绑定**。
+//
+//   ⚠ 生效范围闸门已由夹具设成 mode:'global'（见 openGate），
+//     所以这里的「零注入」只能来自 creation 不再注入，不是被闸门挡掉的。
+// ══════════════════════════════════════════════════════════
+
+test('[29] creation = 足控天堂 + 无绑定 → 零注入（验收方挖出的场景）', () => {
+  setBindings({})
+  const r = resolveAuthoritativePreset('sid-cr1')
+  assert.equal(r.presetId, 'default', '★ creation 仍被当成注入依据')
+  const out = assemble(ctxOf('sid-cr1'))
+  assert.equal(out, '', '★ creation = 足控天堂，用户从没选过却在注入')
+  assertNoInjection(out, 'creation 无绑定')
+  // 反证：这张卡走**显式选择**时确实会注入（否则上面两条是空跑 —— 夹具没造好）
+  const outExplicit = assemble(ctxOf('sid-cr4'))
+  assert.ok(outExplicit.includes(FOOT_SENTINELS[0]), '反证失败：显式选了足控天堂时本就该注入')
+})
+
+test('[30] creation = 足控天堂 + 一条 legacy 绑定 → 零注入（验收方原始复现场景）', () => {
+  // ① legacy 绑定就指向足控天堂本身（线上那 9 条的形态）
+  setBindings({ 'sid-cr2': PRESET_FOOT })
+  assert.equal(resolveAuthoritativePreset('sid-cr2').presetId, 'default')
+  const out2 = assemble(ctxOf('sid-cr2'))
+  assert.equal(out2, '', '★ creation + 同卡 legacy 绑定仍在注入')
+  assertNoInjection(out2, 'creation + 同卡 legacy')
+
+  // ② legacy 绑定指向**另一张无关的卡**（验收方复现用的组合）
+  setBindings({ 'sid-cr3': PRESET_A })
+  assert.equal(resolveAuthoritativePreset('sid-cr3').presetId, 'default')
+  const out3 = assemble(ctxOf('sid-cr3'))
+  assert.equal(out3, '', '★ creation + 无关 legacy 绑定仍在注入')
+  assertNoInjection(out3, 'creation + 无关 legacy')
+  assert.ok(!out3.includes(SENTINEL_A), '★ 无关 legacy 绑定被当成显式绑定注入了')
+
+  // ③ legacy 是结构化对象（mode:'preset' + source:'legacy'）也一样
+  setBindings({ 'sid-cr3': { mode: 'preset', presetId: PRESET_FOOT, source: 'legacy', at: 1, rev: 1 } })
+  const out4 = assemble(ctxOf('sid-cr3'))
+  assert.equal(out4, '', '★ creation + 结构化 legacy 绑定仍在注入')
+  assertNoInjection(out4, 'creation + 结构化 legacy')
+})
+
+test('[31] creation 路径的**观测标签仍然保留**（决议不注入，但日志 label 还在）', () => {
+  // ① 决议：不注入
+  const r = resolveAuthoritativePreset('sid-cr1')
+  assert.equal(r.presetId, 'default', '★ P0-5：creation 不再是注入依据')
+  // ② 标签：仍是 'creation' —— 观测日志要能看出「这次走的是 creation 路径」，
+  //    否则排查时只会看到 presetId='default'，看不出是出生默认那张卡在起作用。
+  assert.equal(r.source, 'creation', '★ creation 的观测标签被删了 —— 对不上账')
+  assert.equal(r.bindingMode, 'absent', 'bindings 里没有这条记账')
+  assert.equal(
+    classifyPresetBindingSource(null, PRESET_FOOT, isTavern, null), 'creation',
+    '★ 纯函数层面的 creation 标签也不许删',
+  )
+  // ③ creation + legacy 组合：标签同样是 'creation'（legacy 视为未绑定，让位给 creation）
+  setBindings({ 'sid-cr2': PRESET_FOOT })
+  assert.equal(resolveAuthoritativePreset('sid-cr2').source, 'creation')
+  assert.equal(resolveAuthoritativePreset('sid-cr2').presetId, 'default', '标签是 creation，但决议仍然不注入')
+  //    对照：creation 不是酒馆预设时，标签如实报 'legacy'（说明它不是硬编码 creation）
+  setBindings({ 'sid-s3': PRESET_A })
+  assert.equal(resolveAuthoritativePreset('sid-s3').source, 'legacy')
+  assert.equal(resolveAuthoritativePreset('sid-s3').presetId, 'default')
+  // ④ 反证：标签不是恒为 creation（显式路径仍是自己那个标签）
+  setBindings({})
+  assert.equal(resolveAuthoritativePreset('sid-cr4').source, 'explicit')
+  assert.equal(resolveAuthoritativePreset('sid-cr4').presetId, PRESET_FOOT)
 })
