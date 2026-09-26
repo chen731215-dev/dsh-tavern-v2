@@ -1,6 +1,6 @@
 {
     "name": "dsh-tavern",
-    "version": "2.4.1",
+    "version": "2.5.0",
     "description": "DeepSeek Tavern - DSH roleplay plugin: character cards, worldbooks, presets, memory, relations, plot options. Install the companion plugins dsh-muv-engine and dsh-muv-table as well for the full experience (status bar, plot options, variable tables). PolyForm-Noncommercial-Copyleft-1.0.0",
     "type": "module",
     "main": "lib/index.js",
@@ -18,8 +18,8 @@
     "license": "PolyForm-Noncommercial-Copyleft-1.0.0",
     "engines": { "node": ">=22.5" },
     "scripts": {
-        "test": "node --test tests/core.test.js",
-        "check": "node --check lib/index.js && node --check lib/utils.js && node --check tests/core.test.js",
+        "test": "node --test tests/core.test.js && node --test tests/greeting-seed.test.js && node --test tests/memory-isolation.test.js && node --test tests/session-storage-migration.test.js && node --test tests/preset-enhance.test.js && node --test tests/inject-observe.test.js && node --test tests/binding-tristate.test.js && node --test tests/binding-panel-ui.test.js && node --test tests/scope-panel-ui.test.js && node --test tests/global-regex-panel.test.js && node --test tests/preset-idx.test.js",
+    "check": "node --check lib/index.js && node --check lib/utils.js && node --check tests/core.test.js && node --check tests/preset-enhance.test.js && node --check tests/binding-tristate.test.js && node --check tests/binding-panel-ui.test.js && node --check tests/scope-panel-ui.test.js && node --check tests/global-regex-panel.test.js",
         "check:client": "node --check lib/client.manager.bundle.js"
     },
     "dsh": {
