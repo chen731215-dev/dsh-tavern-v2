@@ -28,12 +28,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
 
-import { _test } from '../lib/index.js'
+// ── 自包含夹具 ────────────────────────────────────────────
+// 原版直接读真机上的 `preset-mt5ip9cc-t6josi`（那张真卡），并把作者机器上的
+// `C:/Users/21334/.../dsh-session/lib/types/surface.js` 写死作校验器来源 ——
+// 两者都只存在于作者机器上，换台机器 / 进 CI 必红（22 个用例连坐）。
+// 现在由 tests/fixtures/with-temp-dsh-home.js 在 lib 求值前把 $DSH_HOME 指向临时
+// 目录，并在那里造一张同 id 的最小夹具卡；断言语义不变，且不再碰真机数据。
+import { _test, FIXTURE_PRESET_ID, FIXTURE_GREETING } from './fixtures/with-temp-dsh-home.js'
 
 const {
   greetingTextFor,
@@ -49,53 +52,65 @@ const {
   GREETING_PREAMBLE,
 } = _test
 
-// ── 真卡的预设 id 与开场白 ────────────────────────────────
-// 这套卡就是用户报告里那张：`preset-mt5ip9cc-t6josi`，
-// characters.json[0] = { name:"_足控天堂2", first: 2921 字, 以 "【主页】" 开头 }。
-const REAL_PRESET_ID = 'preset-mt5ip9cc-t6josi'
+// ── 夹具卡（内容见文件顶部 FIXTURE_*）─────────────────────
+// 原版这里读真机上的 `preset-mt5ip9cc-t6josi`；现在读的是本文件在临时
+// $DSH_HOME 下造的同 id 夹具卡，断言（以【主页】开头、首条 assistant 落盘等）语义不变。
+const REAL_PRESET_ID = FIXTURE_PRESET_ID
 
-// ── 真 Session 的包内不变量（能拿到就用真的，拿不到用等价本地实现）────
-const require_ = createRequire(import.meta.url)
+// ── 真 Session 的包内不变量 ───────────────────────────────
+// 原版会去作者机器的绝对路径 import 真校验器 `dsh-session/lib/types/surface.js`，
+// 那条路径在别的机器上不存在，只会静默回退。这里直接固定用等价实现，
+// 免得留下一颗「换台机器就换行为」的暗雷。
 let surfaceValidators = null
-let surfaceValidatorsFrom = '本地等价实现'
-try {
-  const candidates = [
-    'C:/Users/21334/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session/lib/types/surface.js',
-  ]
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      surfaceValidators = await import(pathToFileURL(candidate).href)
-      surfaceValidatorsFrom = candidate
-      break
-    }
-  }
-} catch { /* 保持 null */ }
-void require_
+const surfaceValidatorsFrom = '等价本地实现（自包含）'
 
-/** 没有真校验器时的等价实现：只覆盖本文件会触发的两条规则。 */
-function localValidateSurfaceMetadata(event) {
-  const surfaceEligible = new Set(['system/message', 'user/message', 'assistant/message', 'tool/result'])
+// ── surface 元数据校验（对齐真实现，本文件自带、不依赖机器环境）────
+// 真实现见 `@deepseek-ai/dsh-session/lib/types/surface.js` 的 validateSurfaceMetadata()：
+//   ① 只有「产出模型消息」的事件类型才参与 surface：system/message、user/message、
+//      assistant/message、tool/result（外加 developer/message）；
+//   ② 这些事件没带 surfaceOp 时 **不报错**，只是不进 surface（surfaceOp 视为 undefined）；
+//   ③ 带 surfaceOp 时才校验：replace 的 startSeq/endSeq 必须指向更早的事件，
+//      sourceEventSeqs 必须是非空、去重、且都小于自身 seq 的安全整数。
+// 旧版本这里写成「surface 事件缺 surfaceOp 就抛错」，比真实现严格得多 —— 于是
+// FakeSession 一 append turn/start 就炸。这里按真实现重写，语义一致。
+const SURFACE_EVENT_TYPES = new Set([
+  'developer/message',
+  'system/message',
+  'user/message',
+  'assistant/message',
+  'tool/result',
+])
+
+function surfaceOpOf(event) {
   const op = event.surfaceOp
-  if (op === undefined) {
-    throw new Error(`session event "${event.type}" is surface-eligible and requires a surfaceOp marker`)
+  if (op === undefined) return undefined
+  if (!SURFACE_EVENT_TYPES.has(event.type)) {
+    throw new Error(`event type "${event.type}" must be surface-ineligible when surfaceOp is present`)
   }
-  if (op === 'append') return op
-  if (op.startSeq >= event.seq || op.endSeq >= event.seq) {
-    throw new Error('surface replace: startSeq and endSeq must reference earlier events')
-  }
-  const raw = event.sourceEventSeqs
-  if (raw !== undefined) {
-    if (!Array.isArray(raw) || raw.length === 0) throw new Error('sourceEventSeqs must not be empty')
-    if (new Set(raw).size !== raw.length) throw new Error('sourceEventSeqs must not contain duplicates')
-    for (const seq of raw) {
-      if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('sourceEventSeqs must be non-negative safe integers')
-      if (seq >= event.seq) throw new Error('sourceEventSeqs must reference earlier events')
-    }
-  }
-  if (!surfaceEligible.has(event.type)) throw new Error('invalid surface type')
   return op
 }
-const validateSurfaceMetadata = surfaceValidators?.validateSurfaceMetadata || localValidateSurfaceMetadata
+
+function localValidateSurfaceMetadata(event) {
+  const op = surfaceOpOf(event)
+  if (op !== undefined && op !== 'append' && (op.startSeq >= event.seq || op.endSeq >= event.seq)) {
+    throw new Error(`surface replace at seq ${event.seq}: startSeq and endSeq must reference earlier events`)
+  }
+  if (op !== undefined) {
+    const raw = event.sourceEventSeqs
+    if (raw !== undefined) {
+      if (!Array.isArray(raw) || raw.length === 0) throw new Error('sourceEventSeqs must not be empty')
+      if (new Set(raw).size !== raw.length) throw new Error('sourceEventSeqs must not contain duplicates')
+      for (const seq of raw) {
+        if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('sourceEventSeqs must be non-negative safe integers')
+        if (seq >= event.seq) throw new Error('sourceEventSeqs must reference earlier events')
+      }
+    }
+  }
+  return op
+}
+const validateSurfaceMetadata = localValidateSurfaceMetadata
+void surfaceValidators
+void surfaceValidatorsFrom
 
 /**
  * 最小 Session 替身，行为对齐真 Session 的三条关键语义：
@@ -744,6 +759,6 @@ test('对照臂：settlement 判据能对「缺 stream 的旧形态」变红', (
   assert.ok(!/(^|\s)stream:\s*\[\]/.test(mutated), '砍掉后判据必须不再匹配（否则判据是空的）')
 })
 
-// 清理提示：本文件不写任何临时文件，也不改 tests/core.test.js。
-void os
+// 清理提示：本文件不写任何临时文件（夹具目录由 with-temp-dsh-home.js 负责），
+// 也不改 tests/core.test.js。
 void path
