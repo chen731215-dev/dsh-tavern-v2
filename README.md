@@ -176,7 +176,8 @@ dsh plugin add dsh-tavern
 
 ## 📖 详细教程
 
-见 [TUTORIAL.md](TUTORIAL.md) — 包含世界书配置、记忆总结、NSFW 写法、预设管理等详细说明。
+见 [TUTORIAL.md](TUTORIAL.md) — 包含世界书配置、记忆总结、预设管理等详细说明。
+（注：插件曾内置「成人模式强破限注入」与「通用增强层」，**均已移除** —— 破限与文风请写在你自己的 ST 预设里。）
 
 ---
 
