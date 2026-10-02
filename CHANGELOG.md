@@ -1,5 +1,684 @@
 # Changelog
 
+## v2.5.1 (2026-10-03，发布)
+
+### 🔧 兼容性：不再被新版 DSH 判为「插件过期」自动屏蔽（#11）
+
+**根因（这次查到了确凿位置）**：DSH 在导入插件前，会用**包自己的 `peerDependencies`** 里所有
+`@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 声明去比对运行时版本，**全部命中才放行**
+（`dsh-*` 文档原文：*"These checks use peer declarations, not `engines.dsh`"*）。
+而 semver 对**预发布版本**有一条硬规则：`1.2.3-alpha` 只能被「**同 major.minor.patch 元组**且带预发布的比较器」接受。
+
+我们此前声明 `^0.1.0-rc.6`，用 DSH 自带的 semver 实测结果：
+
+| peer 范围 | 0.1.0-rc.6 | 0.1.5-rc.2 | 0.2.0-rc.2 | 0.2.0 |
+|---|---|---|---|---|
+| `^0.1.0-rc.6`（旧） | ✅ | ❌ | ❌ | ❌ |
+| 本版（全元组联合） | ✅ | ✅ | ✅ | ✅ |
+
+也就是说：**任何一个预发布运行时（0.1.5-rc.x、0.2.0-rc.2 都在内）都会把本插件判为不兼容**，
+用户必须在 profile 的 `compatibility.json` 里手工加精确版本豁免才能装上——这就是「最新版 DSH
+认为插件过期、自动屏蔽」的真正来源，**不是 DSH 的问题**。
+
+**修法**：改成覆盖所有已发布运行时的联合范围（每个预发布元组各一条）：
+
+```
+"@deepseek-ai/dsh-client-runtime":
+  "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.3-alpha.2 || ^0.1.5-rc.1 || ^0.2.0-rc.2"
+```
+
+已验证：8 个运行时版本（0.1.0-rc.6 → 0.2.0）全部通过。**升级后不再需要手工豁免。**
+
+### 🐛 会话串台：面板不再采信"自己写下的旧会话"（#10）
+
+0.2.0 的 sessions 快照里**没有 `current` 字段**（`{ids, byId, phase, projectionsBySession}`），
+而兜底链最后一环是插件自己上次写进 `data-dsh-current-session` 的**旧值** ⇒ 切换会话后面板、
+记忆、关系网全都停在上一个会话。
+
+- 判据换成 DSH 自己用的那个：列表行上的 `retainedBy.mainView > 0`（**空白新会话同样成立**）；
+- `getCurrentSessionId` / `resolveCurrentSessionId` / `resolveFromServer` 三处一起换；
+- 插件自己写下的属性**从"依据"降级为"最后兜底"**，不再优先。
+
+### 🐛 新建预设不再往 DSH 名册塞空壳
+
+声明行是从磁盘上的 `agent.cordis.yml` 渲染的，而「＋ 新建」那一刻磁盘上只有**空骨架**
+（persona 的 prefix 为空、没有任何工具行）；旧流程紧接着就同步声明，且此后**保存预设不再重新同步**，
+于是名册里永久停着一行「有名字但完全不起作用」的预设。
+
+- 骨架组合不再声明（返回 `not-saved-yet` 并告诉用户先保存）；
+- **保存预设后重新同步一次**（只在真的写了组合文件时，自动保存不算）；
+- 内容没变则不写盘、不备份（此前每次保存都会在 `tavern-data/backups/` 堆一个 `.bak`）。
+
+### 🐛 预设名被覆盖成目录名
+
+自动保存（`dataOnly`）不带 `presetYml`，旧代码在此处用 `presetId`（= 目录名）兜底并写回 `preset.yml`，
+把「酒馆默认」永久改成了 `tavern-lite`。现在名字优先级为
+**本次带来的 → 磁盘已有的 → 注册表**，且当磁盘上的名字等于目录名/id（bug 痕迹）时改用注册表真名。
+
+### 🐛 导入世界书文件不再被吞成空卡
+
+SillyTavern 的「世界书导出」也是 `.json`（形如 `{entries:{…}}`）。此前从「角色卡」入口导入，
+会静默塞进一张 name/description/first_mes 全空的卡，用户以为"卡进来了但世界书没跟来"。
+
+- 识别为世界书格式 ⇒ **自动改道世界书导入**并在状态栏说明；
+- 没有任何角色卡字段的 JSON ⇒ 明确拒绝并提示用「世界书」入口，不再产出空卡。
+
+### ➖ 移除：成人模式注入（#2）
+
+该开关与对应的破限注入段已整块删除。issue #2 报告的是"没开开关却被写入成人注入"，
+其根因（前端内存默认值与服务端状态不同步）随功能移除一并消失——此处如实记为**移除**，不是"修好了开关"。
+
+### ✅ 本版同时关闭的历史 issue
+
+- **#1** 桌面版 `DSH_HOME` 重定向后预设写进 DSH 扫不到的目录 —— 2.3.5（PR #8）已修；
+- **#5** persona `text:` → `prefix:` —— 2.3.5 已修（`extractCardText` 兼容两种键名）。
+
+### 验证
+
+- 全量单测：**407/407 通过**
+- 兼容范围：用 DSH 内置 semver 逐版本比对（8 个运行时全 ✅）
+
+---
+
+## v2.5.1 开发期记录（2026-09-27 起，已并入上方发布条目）
+
+> 下列内容在发版前一直挂在本地（`package.json` 的 version 当时故意保持 2.5.0，
+> 避免 pnpm 去 registry 找一个还不存在的版本）。本版统一 bump 到 2.5.1 并发布。
+
+### 🔗 会话绑定改走 DSH 原生 agentPreset：空白新会话也能绑定，注入严格按会话隔离
+
+用户诉求：**「保存预设就是保存一个 agent 预设」「只有会话选择了这个酒馆 agent 预设才管」
+「防止串会话」「不用先发一条消息才能绑定」**。本次把这四点落到 DSH 自己的机制上。
+
+#### A. 根因：面板根本拿不到「当前会话」（尤其空白新会话）
+
+- 客户端主路径读 `ctx.sessions.list.getSnapshot().current` —— 而 DSH 的会话列表快照里
+  **没有 `current` 字段**（session-controller 的 list store 初始化就是
+  `{ids, byId, phase, projectionsBySession}`），这一路永远 undefined；
+- 兜底三路（URL / 面包屑 / `data-dsh-current-session` 属性）在空白新会话上同样取不到：
+  **DSH 从不用 URL 表达会话**（ui-workspace 里没有任何 location/history 用法，
+  切换会话只改内存 + localStorage），而那个属性是「上一个会话」的旧值。
+- 结果：面板提示「先发一条消息，再回来操作绑定」，`/api/tavern/bind-preset` 也被 400 顶回
+  ⇒ **新会话的首条消息裸奔**（角色扮演的第一个回合没有卡、没有世界书）。
+- 修法：新增 `dshMainViewSessionId()`，判据换成 DSH 自己用的那个 ——
+  列表行上的 `retainedBy.mainView > 0`（DSH 的 `mainSessionId()` / `uiSession.current` /
+  agent-preset 的 `mainBlankSeat` 都是它，**空白新会话同样生效**）。
+  `getCurrentSessionId` / `resolveCurrentSessionId` / `resolveFromServer` 三处一起换掉。
+
+#### B. 绑定 = 会话的原生 agentPreset（服务端）
+
+- `POST /api/tavern/bind-preset` 现在**先调 DSH 原生服务**
+  `ctx.get('agentPresets').select(agent, '<目录名>')`：DSH 会把 `agent-preset/selected`
+  追加进**该会话**的事件流 ⇒ 顶部预设选择器、酒馆注入决议、会话隔离三者同源；
+  空白会话（`turnBoundary.lastTurn === 0`）正是它允许的唯一窗口。
+- 酒馆自己的 `session-bindings.json` 从「唯一依据」降级为**兼容兜底**：原生成功时它只是
+  同一事实的第二份记账；原生走不通（旧版 DSH / 会话已开跑）时仍保住世界书/记忆跟随。
+- 别名换算：酒馆注册表的 `default` → DSH 侧的目录名 `tavern-lite`（`agentPresetIdFor`）。
+  两套 id 混用会直接选错预设，已有单测钉住。
+- **如实回报**：响应新增 `native` / `nativeOk` / `locked`，把
+  `agent-preset/locked`（会话已开跑，DSH 锁定卡片本体）、`agent-preset/not-found`、
+  `agent-preset/invalid` 分开透出；面板据此给出准确文案，不再把失败说成成功。
+- `POST /api/tavern/unbind-preset` = **原生交还** DSH 部署默认预设
+  （读 `settings.yaml` 的 `agent-presets.default`，实测 `standard`），而不是只写
+  `{mode:'none'}` 让顶部选择器继续显示酒馆卡。
+- 写绑定的入口收紧（并入装机版 2026-09-27 的手改）：漏传 `sessionId` 直接 400，
+  **不再兜底 `lastSessionId`** —— 那是全进程全局量，可能指向别的会话（绑错会话 = 串台）。
+
+#### C. 注入决议：以「会话当下的原生预设」为第一权威（同时不咬死已开跑会话）
+
+- 新增 `nativeAgentPresetOf(ctx, sid)`：读 DSH 原生投影
+  `ctx.sessionProjections.stateOf(session, 'agentPreset')`（与 DSH 的 `presetForSession` 同源），
+  不依赖 zstd 日志落盘。
+- 决议权威次序（2026-09-27 定稿，**三个**失败模式都要挡 —— 少挡一个就出一类回归）：
+  - **ⓐ 投影挂的是酒馆预设**，且能证明「不是出生值」（日志缺失 / 没 header / 与 header 不同）
+    ⇒ 注入它。覆盖：空白会话用 DSH 新建页的预设条选卡、面板的原生绑定、
+    以及「部署默认就是酒馆预设」的机器。
+  - **ⓑ 投影挂的是非酒馆预设**，且与出生 header **不同** ⇒ 一定有人刚换过、那帧还没落盘
+    ⇒ 不注入（这就是"刚切走、还在按旧账本注入"的串台窗口）。
+  - **ⓒ 其余情况**（投影 == 出生值 / 投影读不到 / 没有该服务）⇒ 一律退回「日志 → 账本」。
+    ★ 这条保守项**必须**在：DSH 一旦开跑就锁死预设本体，已开跑的会话只能靠账本跟随；
+    若在这里用投影（= 出生值 standard）去推翻账本，等于把用户正在进行的角色扮演全掐死
+    （这正是上一版犯的错，本版修正）。
+- **新增 `armNativePresetWatcher(ctx)`**：订阅 DSH 的 `session/event`，一看到
+  `agent-preset/selected` 就让账本跟着走 —— 换到酒馆预设记成 `{source:'top-select'}`；
+  换走酒馆卡则记成 `{mode:'none'}`（硬空）。于是「用户切回出生值 standard」这一格
+  由**事件**关闭，窗口从"一帧"缩到 0（不必等日志落盘，也不用拿投影去猜）。
+  另外：与酒馆无关的会话切预设**不会**在账本里留下脏条目（只记酒馆关心过的会话）。
+
+#### D. 会话列表把「活着但还没落盘」的空白新会话也列出来
+
+`GET /api/tavern/sessions` 合并 `liveAgents` 登记表，标 `live/blank` 并排在**最前**
+（否则 createdAt=0 会被降序挤到末尾、再被 `slice(0,20)` 切掉），
+面板不再说「当前会话不在会话列表里（可能刚创建）」。
+
+#### E. 查证：本版 DSH 的「预设」是**声明行**，旧目录不再被读取（酒馆预设目前不在顶部选择器里）
+
+写完后顺手核了一遍 DSH 本体，发现一件比绑得更底层的事：
+
+- `@deepseek-ai/dsh-agent-preset/skills/editing-cordis-compositions/SKILL.md:71` 原文：
+  「Before declaration rows, a user preset was a directory `$DSH_HOME/.agent-presets/<id>/`
+  … **Nothing reads that directory any more.**」
+  全 asar 的 `@deepseek-ai/` 代码里 `.agent-presets` **只剩这一处文档**（逐文件扫描确认）。
+- 真正的预设是**声明行**：`- insert: [{ id: 'preset-<id>',
+  name: '@deepseek-ai/dsh-agent-preset', config: { id, name, description, order, plugins } }]` ——
+  出厂 `standard/ptc/minimal/cordis` 就是 `dsh-web-app/presets/*.patch.yml` 这么写的。
+- 当前 profile（`~/.dsh/profiles/desktop`）里**没有任何 `preset-` 行**，profile 补丁层只有
+  agent-default-model / ui-* / llm-pi-ai 等条目。
+
+⇒ 结论：**酒馆现在那些 `.agent-presets/<id>/` 目录并不在 DSH 的顶部预设选择器里**，
+所以「会话选择了这个酒馆 agent 预设」这件事此前根本无从发生；`agentPresets.select()` 对
+`tavern-lite` 这类 id 会回 `agent-preset/not-found`（对 `standard` 这类真预设才会成功）。
+这也正是「保存预设就是保存一个 agent 预设」这句话目前还不成立的原因。
+
+为此本次**只加机制、不碰你的配置**：
+
+- `renderPresetDeclaration()`：把酒馆预设目录渲染成 declaration row
+  （`name/description/order` 取 `preset.yml`，`plugins` 取 `agent.cordis.yml` 原文）；
+  **声明的 `config.id` 用目录名**（`agentPresetIdFor`），不用酒馆别名 ——
+  既避开与 `agent-presets.default`（DSH 默认预设）同名词碰撞，又与「绑定时传的 id」
+  「注入判据认的 id」三者统一；id 还要过 DSH 的格式校验（小写字母/数字/连字符），
+  不合规直接拒绝渲染（不生成注定激活失败的行）。
+- `composePresetDeclarationBlock()` / `mergeManagedPresetBlock()`：拼成带界标的**受管块**，
+  有旧块整块替换、没有则追加，**块外一个字节都不动**（幂等、界标残缺时走追加不删）；
+  `stripManagedPresetBlock()` 整块摘掉（回滚用）。
+- `applyPresetDeclarations()`：**三层保护的写盘器** ——
+  ① **默认 dry-run**（不传 `{dryRun:false, confirm:true}` 就只算不写）；
+  ② 写前自检 `validatePresetPatchText()`（界标成对/无 tab/含插入条目）+ 备份到
+  `<DSH_HOME>/tavern-data/backups/`；
+  ③ 原子写（临时文件 + rename）+ 回读自检 + **块外内容必须不变**，不过就自动回滚。
+- `GET/POST /api/tavern/preset-declarations`：GET 永远是 dry-run；POST 只有带
+  `{apply:true, confirm:true}`（或 `{remove:true, confirm:true}` 摘块）才真的写。
+- `mergeManagedPresetBlock()` 还处理了一个**会让人开不了机**的坑：profile 新建时
+  `cordis.patch.yml` 里只有一行 `[]`，若把我们的条目**追加**在它后面，文件就成了
+  「`[]` 之后再跟顶层节点」——不是顶层数组，DSH 直接拒绝启动
+  （`dshmarket/src/patch.ts` 的注释里写着这个坑）。做法与它一致：把未注释的 `[]` 注释掉再追加。
+- `isTavernPresetDir()` 放宽：注册表里有这个 id 也算酒馆预设（迁移到声明后旧目录会被删，
+  注入判据不能因此失效）。
+
+真实数据 dry-run 验证（只读）：`default` → 声明成 `preset-tavern-lite`；
+`preset-fixture` 原样；目标 `~/.dsh/profiles/desktop/cordis.patch.yml`
+现有 1303 字节（含你手写的 providers/密钥）在合并后**原样保留在前**（合并后 10682 字节）。
+
+- `nativePresetRoster()`：读 DSH **原生名册**（`agentPresets.list()`）——顶部选择器里到底有什么。
+  `selectNativeAgentPreset()` 现在先对名册：目标不在名册里就直接回 `not-in-roster` 并把名册带回去
+  （不再让人对着 `agent-preset/not-found` 猜）；**名册读不到时按「不知道」处理，绝不误判**。
+  `GET /api/tavern/preset-declarations` 也带上 `roster` / `missingFromRoster`。
+- **路线 B**（DSH 官方推荐的那条）：`renderPresetBundleFiles()` 生成 DSH bundle 的两份文件
+  （`package.json` 带 `dsh.bundle.patch` + `cordis.patch.yml` 里是声明行），
+  `writePresetBundle()` 落到 `<DSH_HOME>/tavern-data/preset-bundle/`（**只写酒馆自己的数据目录**），
+  同样默认 dry-run、必须 confirm；`GET/POST /api/tavern/preset-bundle` 对应，
+  并给出 `plugin_manager { action: 'install_bundle', target: … }` 的安装方式（安装要跑 pnpm，
+  按 DSH 的规矩交给 plugin_manager，酒馆不代劳）。
+- `GET /api/tavern/preset-declarations` 增加名册字段，dry-run 就能看出「哪些酒馆预设 DSH 还没声明」。
+
+真实数据验证（只读）：两条路线都对 `default`→`preset-tavern-lite`、
+`preset-fixture` 渲染成功；路线 B 的 bundle 目录 `~/.dsh/tavern-data/preset-bundle/`
+在 dry-run 阶段**不存在**（没写盘）；你的 profile 补丁层哈希全程未变。
+
+⚠️ **仍未写入你的配置** —— 写盘入口已经就绪且默认 dry-run，但要不要按下这个键、
+以及按哪条路（写 profile 补丁层 / 按 DSH 官方路子生成 bundle 走 `plugin_manager`），
+得你说了算：目标文件写坏 = DSH 起不来，而且那里面有你的模型/provider 配置。
+
+#### F. 声明开关与生命周期：面板上那个键由**你**按，预设增删改后名册自动跟
+
+- 状态里新增 `presetDeclarations.mode`：`off`（**出厂**，一个字节都不碰用户配置）/
+  `patch`（维护 profile 补丁层里的受管块）/ `bundle`（生成 DSH bundle 交 plugin_manager）。
+  只认这三个值，非法值归 `off`。
+- `syncDeclarationsBestEffort()`：`createPreset` / `renamePreset` / `deletePreset` 之后按当前模式
+  尽力同步（未启用时是 no-op，失败只记日志，绝不影响预设操作本身）。
+  **删除这条尤其重要**：受管块是从注册表整块重渲染的，删掉预设后那一行会跟着消失 ——
+  否则 DSH 名册里会留一张指向已删目录的坏卡。
+- 写入类路由会**把开关跟着结果走**：写成功 → 进入对应模式；撤下成功 → 回到 `off`。
+- 面板新增一行状态 + 三个按钮（📢 声明为 DSH 预设 / 📦 只生成 bundle / 🧹 撤下声明）：
+  「声明」按钮**先 dry-run 拿预览 → `window.confirm` 讲清目标文件与字节数 → 才 POST 写盘**；
+  「撤下」同样要 confirm。状态行会显示「名册 N 个、还缺酒馆预设 X 个」——
+  缺哪些直接列出来。（这条路你自己按，我不替你写配置。）
+
+#### G. 面板显示「本会话生效的预设」不再只看酒馆账本
+
+- `GET /api/tavern/sessions` 对**活会话**增算原生权威：`authoritativePresetId` /
+  `authoritativeSource`（只算活的：全量 20 条都读事件流太贵；活会话通常一两个）。
+- 面板 `authoritativeFields()` 用它覆盖账本字段：`native` / `explicit` 折算成「顶部选择」，
+  `default` 折算成「未绑定」。**修的是编造状态**：用户在天花板顶部给会话选的卡不在酒馆账本里，
+  改之前面板会显示「未绑定」，而那个会话其实正按酒馆预设注入。
+
+#### H. 「已开跑」判定与 DSH 对齐 + bundle 同步提醒装机
+
+- `nativeTurnStarted()`：会话是否已经开跑，**优先用 DSH 自己的判据**
+  （`turnBoundary` 投影的 `openTurnStartSeq !== null || lastTurn > 0`，见 dsh-agent-loop
+  的投影定义），投影读不到才退回「日志里找 turn/start、user/message」的启发式。
+  为什么改：日志被裁剪、会话是 resume/import 进来的时候，日志启发式会漏判，
+  面板就会把「其实已经锁死」的会话说成「可以绑定」—— 提示错了同样是编造状态。
+- `syncDeclarationsBestEffort()` 在 **bundle 模式**下同步完会带回 `needsInstall: true`：
+  文件更新 **≠** DSH 名册更新，还要重新 `install_bundle`。不提醒的话用户会以为名册已经变了。
+
+#### I. 面板：两套预设 id 空间对齐（修掉「静默切错编辑目标」与「假告警」）
+
+服务端 `/api/tavern/presets` 的每一条**同时带着两套 id**：`id` = DSH 目录名（如 `tavern-lite`）、
+`presetId` = 酒馆注册表 id（如 `default`）。而会话权威给的是目录名、账本里记的可能是注册表 id。
+只按一种 id 匹配就会出两类问题：
+
+- **预设标签处（严重）**：`loadSessionPresets` 找不到就**静默把编辑目标换成"第一个预设"** ——
+  用户以为在编辑会话那张卡，保存却落到另一张卡上（**数据级串台**，改世界书改错人）。
+- **绑定卡处**：显示「该预设已不存在，绑定会 fail-closed」——**假告警**，预设好好的。
+
+改法：新增 `matchPresetInList(list, id)`，按 `id` / `presetId` / `dir`（含 basename）三选一匹配；
+`findPreset` 委托给它；标签处命中后把 `activeId` **统一成列表条目的 id（目录名）**，
+只有真的找不到才回退第一个。
+
+> ⚠ 这个 helper 特意放在 `// ── P0-3b` 与 `// ── P0-3 结束 ──` 之间：
+> `tests/binding-panel-ui.test.js` 是**按源码段抽取**在 vm 里跑的，定义放段外，
+> 测试沙箱里就没有它（函数声明提升，段外调用点照样能用）。
+
+#### J. 拆开 `default` 的哨兵/别名双重身份（修「绑了酒馆默认却没有卡」）
+
+`DEFAULT_PRESET_ID`（`'default'`）在本插件里**身兼两职**：既是酒馆注册表里「酒馆默认」
+这个预设的 id（→ 目录 `tavern-lite`），又是「本会话不注入」的哨兵值
+（`pickAuthoritativePresetFromLog` 的返回、`isTavernSession` 与 `tavern:card` 的
+`!== DEFAULT_PRESET_ID` 判断、面板把 `default` 展平成"未绑定"）。
+
+后果：**绑了「酒馆默认」的会话会被当成"没绑"** —— 角色卡不注入，破限段 / 事实修正段
+也不注入，用户明明绑了卡却什么都没有。
+
+改法（把两件事分开，别名只出现在通信层）：
+- 写入口 `POST /api/tavern/bind-preset` 落盘时用 `agentPresetIdFor()` 换成**目录名**
+  （`default` → `tavern-lite`），响应里的 `presetId` 仍然是酒馆 id（前端不用改）；
+- `armNativePresetWatcher` 本来就记的是 DSH 原生值（目录名）✓；
+- `resolveAuthoritativePreset` 再兜住**存量**的 `'default'` 绑定：按「酒馆默认预设」解析
+  （映射成 `tavern-lite`），而不是当成"没有预设"。
+
+于是 `'default'` 只剩一个含义：**没有任何酒馆预设被选中**（哨兵），语义终于单一。
+
+#### K. 收尾两处：写入口统一 id 空间 + 声明体积的诚实提示
+
+- `setSessionPreset()`（`POST /api/tavern/bind`，旧的绑定入口）也改用 `agentPresetIdFor()`
+  落盘：账本里一律是 **DSH 侧 id（目录名）**，不再混入酒馆别名。
+  （面板的绑定流量早就走 `bind-preset` 了，这条只是把「唯一写入口」的原则补齐。）
+- `applyPresetDeclarations()` 新增 `warning`：合并后超过 256 KB 时明确提示
+  **声明会把每个预设的整个组合（含角色卡正文）内联进 DSH 配置，而 DSH 每次启动都要解析它**，
+  并建议改用「只生成 bundle」那条路。用户在按下写入**之前**就能看到代价，而不是启动后才发现。
+
+#### L. 真 Cordis 宿主测试（第一次「跑起来」验证：挂载 + **真注入**）
+
+新增 `tests/cordis-mount.test.js`：**从 DSH 的 `app.asar` 里就地读出真实的
+`@deepseek-ai/cordis`（只读）**，在临时 `DSH_HOME` 里用假服务起一个**真 cordis 宿主**，
+把插件挂上去，然后调用它注册的**真路由**与**真 system prompt 段**。它证实了三处
+此前只靠源码推导的假设：
+
+1. `inject: ['webServer','systemPrompt','sessions']` 被满足后 apply() 真的跑完
+   —— 实测注册了 34 条路由 + 4 个 prompt 段（`tavern:card` / `tavern:nsfw` / `tavern:edits` / `tavern:enhance`）；
+2. **插件自己的 fiber 能用 `ctx.get()` 解析出宿主服务** —— `/api/tavern/preset-declarations`
+   返回 `roster: ["standard","tavern-lite"]`，说明 `agentPresets.list()` 真的被调到了；
+3. **注入真的按会话走**（这是本目标的第二条，此前只有单测）：
+   给两条会话分别设成酒馆预设 / `standard`，调 `tavern:card` 段 ——
+   前者返回的提示词**含预设卡正文的哨兵串**，后者返回**空字符串**；
+   `tavern:nsfw` 段（另一套判据 `isTavernSession`）同样如此。**会话隔离在真宿主里成立。**
+4. **跨作用域的事件投递**（此前列为「未验证」的最后一条运行时假设）：
+   从一个**子作用域** `emit('session/event', …)`（DSH 就是这样：会话在自己的 fiber 里
+   append 后广播；`dispatch()` 按 `hook.global || filter(...)` 收集监听者），
+   我们的 watcher（`{ global: true }`）**确实收到了**，并立刻把账本改成
+   `{ presetId: 'tavern-lite', source: 'top-select' }` / `{ mode: 'none' }`
+   ⇒ 「用户切走预设但账本还旧」的串台窗口在真宿主里关闭。
+
+> 顺手修掉了实验脚本里的一个真 bug：**asar 数据区起点要对齐 4 字节**
+> （`16 + jsonLen + padding`）。漏掉 padding 时每个文件都会多出「上一个文件的尾巴」
+> 1–3 字节 —— 表现为 `package.json` 解析失败、JS 文件开头多一个 `;`、UTF-8 首字节被截断。
+> 之前几轮读源码时看到的那点"开头怪字符"就是它。
+
+环境拿不到 asar/cordis 时该文件**明确 skip**（不让它变成假红灯）；也可用
+`DSH_CORDIS_DIR` / `DSH_ASAR` 指定路径。
+
+#### M. 面板声明开关的**行为级**测试（顺带修掉一处「成功提示被覆盖」）
+
+`tests/binding-panel-ui.test.js` 的 VM 试验台原来没给声明开关的四个元素和 `window.confirm`，
+所以那几个按钮在沙箱里是"哑"的（只有静态断言）。现在补齐后，按下去会发生什么被真正钉住：
+
+- 📢 声明：**先 GET dry-run 预览 → `window.confirm`（文案含目标文件、前后字节数、会备份）→ 才 POST
+  `{apply:true, confirm:true}`**；并断言**顺序**（预览下标 < 写入下标），外加一条对照臂
+  （删掉预览步骤后该顺序断言必须失败）；
+- 用户在确认框里**取消** ⇒ 一个写请求都不许发（不许先写后问）；
+- 🧹 撤下声明必须确认，且带 `remove+confirm`；取消同样不发请求；
+- 📦 只生成 bundle 打到 `/api/tavern/preset-bundle`，并把 `install_bundle` 命令显示出来。
+
+> ★ 写这组测试时立刻抓到一个**真 UX bug**：成功后 hint 行写下「✅ 已写入（…，备份：<路径>）」
+> 紧接着被 `loadDeclareStatus()` 的状态刷新**覆盖**成「还没被 DSH 声明：…」——
+> 用户就此**拿不到回滚要用的备份路径**。修法：状态刷新只写状态行（名册缺失信息本来就在那），
+> **绝不碰 hint 行**（hint 只放"刚做完一件事"的结果：备份路径 / 安装命令 / 错误）。
+
+#### N. 修复 `加载预设失败` 的真因：预设查找 helper 被放进了嵌套作用域
+
+装机后「🎭 当前 Agent 预设」那张卡报 **`❌ 加载预设失败，请刷新页面`**，下拉框一直停在"加载中…"。
+排查结论（**服务端是清白的**：`/api/tavern/presets`、`/api/tavern/agent-presets` 都返回 200、数据正常）：
+
+- **根因**：`matchPresetInList` 被声明在**绑定卡的嵌套作用域里**（缩进 8，与 `curSid`/`setStatus` 同层），
+  而调用它的 `loadSessionPresets` 在**面板工厂顶层**（缩进 6）。函数声明的提升**只在同一个函数内**生效，
+  于是运行时抛 `ReferenceError: matchPresetInList is not defined`；该链末尾又有 `.catch`，
+  错误被吞掉后只剩一条红字 —— 与用户看到的现象完全一致。
+- 这个错误**只有真浏览器里才会出现**：UI 回归测试是按源码段（`// ── P0-3b` … `// ── P0-3 结束`）
+  在 vm 里跑的，而 `loadSessionPresets` 不在那一段里 —— **外层调用点从来没被执行过**。
+- **修法**：把 `matchPresetInList` 挪到面板工厂顶层（与 `getActivePresetId` 同层），`findPreset` 改为调它；
+  UI 测试沙箱改为**注入从 bundle 里抠出来的真实现**（不再依赖"它恰好在切片里"）。
+- **新增 3 条回归**（`tests/binding-panel-ui.test.js` 现 31 例）：
+  1. **结构回归**：`matchPresetInList` 的声明缩进必须与 `loadSessionPresets` 相同（嵌套即失败）；
+  2. **真执行回归**：抠出 `loadSessionPresets` 真源码、注入真 helper、喂真响应，断言状态行渲染出预设名
+     且 `dataset.presetId` 命中目录名（顺带钉住"编辑目标被静默改写"那条）；
+  3. **对照臂**：不注入 helper（等价于它在别的作用域）⇒ 必须复现那条 `加载预设失败` 红字。
+
+> 教训：**"函数声明会提升，所以放哪都行"只对同一函数作用域成立。**
+> 用"按源码段抽取"的测试去验证"跨段调用"是无效验证 —— 测试的范围决定了它能证明什么。
+
+#### P. 功能体检 + 按用户要求删功能 / 清死代码（客户端 -37 KB）
+
+用户要求"排查哪些功能有用哪些没用" → 产出 `AUDIT-功能体检.md`（三方交叉比对：面板控件 ↔
+客户端引用 ↔ 服务端路由，再逐条追到"是否真的进入注入"）。**最大的发现**：「🔗 角色关系网」的
+数据**从不进入提示词**（`readSessionRelations` 只在 merge 与 GET 路由里被调用，注入区一次都没出现）。
+
+按用户指示执行：
+
+1. **删除「✨ 通用增强层·运行时注入」整层** —— 卡片、开关处理、`state.enhanceRuntime` 写入、
+   服务端 `tavern:enhance` 段、两处响应字段全清。理由：用户要用 **ST 预设**替代它
+   （原话"我希望可以让 st 的预设来代替这个通用增强"）。底层 `buildEnhanceRuntimeBlock` /
+   `enhanceRuntimeEnabled`（utils，有单测）与 `/api/tavern/preset/enhance`（含自动备份）**保留**，
+   但不再有任何自动注入。注入段：4 → **3**（`tavern:card` / `tavern:nsfw` / `tavern:edits`）。
+2. **删除「✨ 套用通用增强模块包」界面入口**（按钮 + 覆盖勾选），API 保留可脚本调用。
+3. **删除「🤖 Agent 预设管理」整段死代码（114 行）** —— markup 早已注释、JS 的 4 个入口目标元素
+   都不存在；删除前验证 `agentPresets` / `agentGroupCollapsed` 等在段外零引用。
+4. **清掉旧版「生效范围」遗留**（块注释 84 行 + 惰性回填 59 行）、`renderWorldbooks`
+   （39 行 + 4 个调用点）、旧 `tavern-inject-status` 指示等。
+   **客户端 500,123 → 463,166 字节（-37 KB ≈ 370 行）**。
+5. **修 ✍️ 写作辅助「保存违禁词」的反馈串卡**：原先写 `#tavern-api-status`（那元素在
+   「记忆与总结」卡片里）→ 在「增强」页签点保存看不到反馈；现在写本卡片自己的
+   `#tavern-writing-status`，并补失败分支。
+
+**清理中的一次自伤（已修 + 加防）**：删旧「生效范围回填」时区间**多删了 3 行活代码** ——
+那条 `return fetch('/api/tavern/state')…` 是回填 `activePresetIdx` 的（面板重开不回落到第 0 组），
+恰好夹在惰性代码中间。`node --check` 报 `SyntaxError` → 定位补回，并新增
+`preset-idx.test.js [5]`「回填链必须在」把这类误删钉死。
+
+**文档更正**：`AUDIT-功能体检.md` 第一版把 `tavern-allow-add-btn` 那几处判为"无守卫、潜在
+TypeError"—— 复查发现整段在 `/* */` 块注释里（扫描只跳过 `//` 行），**不存在该风险**；已更正。
+
+#### O. 面板布局：二十来张卡片收进 4 个页签（简洁，但不许丢功能）
+
+面板原来把 20+ 张卡片一次铺开，重点（会话绑定 / 当前预设）直接被淹掉。现在按用途分成 4 个页签：
+
+| 页签 | 收纳的卡片 |
+|---|---|
+| 🎭 会话 | 当前 Agent 预设 / 当前会话绑定 / 生效范围 |
+| 📚 内容 | 角色卡 / 世界书 / 开场白 / 预设 /（额外设定 输入框） |
+| 🎲 玩法 | NSFW / 剧情选项 / 全局正则 / 通用增强层 / AI 工具 / 联网搜索 / 反AI八股 |
+| ⚙️ 增强 | 高级功能（故事背景 / 记忆与总结 / 写作辅助 / 关系网 / 回复体检） |
+
+**做法**：只做「搬家」，**没有改一行 markup**，所有 id、事件绑定、既有测试锚点原样不动 ——
+面板渲染完之后用一个安装器把卡片按标题移进对应页签。
+
+三条安全设计（这是"功能不会缺失"的关键）：
+
+1. **认不出来的元素一律留在页签之外**。所以底部「当前将保存的 agent.cordis.yml / 💾 保存预设 /
+   ✅ 保存并关闭 / 状态行」在任何页签下都常驻可见；以后新加卡片忘了登记，结果只是"没被收纳"，
+   **绝不会"消失"**（宁可多显示，不可丢功能）。
+2. **幂等**：重复挂载只会重建一套页签（`#tavern-tabbar` 已存在就直接返回）。
+3. **记住上次页签**（`localStorage['tavern.panel.tab']`），非法值回落「会话」，不会白屏。
+
+**新增测试** `tests/panel-tabs.test.js`（8 例）：前 4 例静态结构断言
+（顶层 12 张卡片一张不漏都有页签规则 / 页签定义完整 / footer 文案与控件不被任何规则认领 /
+散件规则指向的 id 在真 markup 里确实存在）；后 4 例带一个**迷你 DOM** 真跑安装器
+（卡片全进页签且页签正确、footer 留在页签外、点按钮切换并落 localStorage、恢复上次页签、
+非法值回落、幂等）。改分组只需动 bundle 里的 `TAB_DEFS` 表。
+
+#### Q. 关系网软注入 + 通用增强与 NSFW 连根删除（按用户指示）
+
+用户指示：*"关系网先做软注入吧，提醒模型有这个东西，但是不影响剧情，把通用的那个删掉，nfsw也删掉"*。
+
+**① 关系网「软注入」（新增）**
+
+- 体检结论是关系网数据**从不进提示词**（`readSessionRelations` 只被 merge 与 GET 路由调用）。
+  现在新增 `buildRelationsHintText(sessionId, state)`：有数据时在 `tavern:card` 段尾追加**一行**：
+  `【关系网】本会话记录了 N 个角色、M 条关系（仅作为背景资料存在，不要在正文里主动提及、
+  罗列或据此改变剧情走向；用户明确问到时才可以参照）。`
+- **只给存在性，不给内容**（人名、关系标签一律不进提示词）—— 这是"不影响剧情"的实现方式，
+  也让 token 代价可以忽略。
+- 开关：`state.relationsHint`（默认**开**）。面板「🔗 角色关系网」卡片里加了复选框
+  （`#tavern-relations-hint`，改动即写 `/api/tavern/state`）；关掉则一行都不注入。
+- 测试（`core.test.js` 新增 3 例）：有数据时**必须**不含人名/关系内容且要求"别主动展开"；
+  无数据/开关关/无会话 id 时返回空串；**集成断言**：真的拼进 `tavern:card` 段（防止"写了函数没人调"）。
+
+**② 「通用增强」连根删除**（上一轮只删了界面，这轮删底层）
+
+- `lib/utils.js`：`ENHANCE_PACK_FILE` / `ENHANCE_CONTRACT_TAGS` / `isEnhanceProtectedName` /
+  `normalizeEnhancePack` / `mergeEnhanceModules` / `enhanceRuntimeEnabled` /
+  `buildEnhanceRuntimeBlock` **全部删除**（utils.js 239 → 105 行）。
+- `lib/index.js`：utils 的 import、`readEnhancePack` / `enhanceBackupStamp` / `applyEnhancePack`、
+  `/api/tavern/preset/enhance` 路由、`_test` 里的 10 个导出项，全删。
+- 删除 `lib/preset-enhance-pack.json`（13 KB 模块包）与 `tests/preset-enhance.test.js`（23 例）。
+- 理由：用户要用 **ST 预设**替代它 —— 预设是数据，用户写得比插件猜得准。
+
+**③ NSFW 破限段连根删除**
+
+- `lib/index.js`：整个 `tavern:nsfw` 段（96 行，"成人模式/内容策略暂停"那一大段）、
+  `state.nsfwEnabled` 的写入与两处响应字段、`sectionSizes.nsfw`、内嵌调试页的 NSFW 开关与回读。
+- `lib/client.manager.bundle.js`：🔞 NSFW 卡片、`state.nsfw`、状态同步与开关处理器、
+  体积统计里的"破限"项、页签规则里的 NSFW 条目。
+- **⚠ 关键搬迁**：体积快照 `flushPromptStats()` 原先由 `tavern:nsfw`（order 最大 = 最晚组装）
+  负责落盘。删除后最晚组装的是 `tavern:edits`（order=0），落盘已搬过去（**4 条 return 路径全都要落盘**，
+  否则面板的体积统计会停在上一轮）。这一点写了测试守着（`core.test.js`）。
+- **注入段：3 → 2**（只剩 `tavern:card` / `tavern:edits`）。
+- 理由同 ②：破限交给 ST 预设（用户的预设里本来就有一大套）。
+
+#### 本轮的一次自伤（已修复，如实记录）
+
+清理"通用增强"底层时，我先写了个按**单句锚点**定位的区间脚本；该锚点同时出现在我刚加的
+"已删除"说明注释里，于是脚本**从第 14 行删到 2184 行（2171 行）**，把服务端半个文件删掉了。
+`node --check` 竟然还通过（删除边界恰好落在顶层声明边界上），是我从脚本自己打印的
+"行 14-2184"看出区间荒谬才发现。
+
+**恢复方式**：装机版 `~/.dsh/profiles/desktop/node_modules/dsh-tavern/lib/index.js`
+是上一轮同步留下的**完整**副本 → 覆盖回来（6655 行，关键函数逐个核对存在）。
+本轮的服务端改动随后用**带断言的脚本**重做：每一步先断言"区间内必须含 X、不得含 Y、长度在范围内"，
+不符就整体中止不写盘（这套断言后来真的又拦下了 3 次：`_test` 导出数是 0、响应字段数是 4 不是 3、
+统计文案因 CRLF/空格匹配失败）。
+
+**教训**：① 区间删除的锚点必须**唯一**（我用了会重复的句子）；② 中文/CRLF 文件里的正则要带 `\r?`；
+③ 改完立刻用"关键函数存在性 + 全量测试"双重验证，而不是只看 `--check`。
+
+**④ 收尾：清掉残留的可见「NSFW」字样**（用户反馈"增强里高级设置的简介还是有 nfsw 字样"）
+
+- 「⚙️ 高级功能」卡片简介：`记忆 / 关系网 / 故事背景 / NSFW` → **`记忆 / 关系网 / 故事背景 / 写作辅助 / 回复体检`**（如实列出里面现在有的东西）。
+- 内嵌调试页：卡片标题 `🔞 注入开关` → `🔧 注入开关`，删掉 HTML 注释里的 NSFW 字样，体积统计行 `· 破限 N 字符` 一并去掉。
+- 客户端两处**已经说错**的注释（"NSFW 开关已移到…"）改成现状描述。
+- **防回归测试**（`panel-tabs.test.js ④b`）：扫面板 markup 的**可见文案**（跳过注释），出现 `NSFW` / `nsfw` / `🔞` 即失败；并断言高级功能简介必须列出「记忆 / 关系网 / 故事背景」。
+- 唯一保留的 `NSFW` 在 `breakLimitKeywords` —— 那是**功能用的关键词表**（识别"这个预设模块是破限包"以便排到前面），不是界面文案；删掉会改变排序行为。
+
+#### R. 新功能：保存预设时自动生成 skill + 选中预设自动绑定 + 手动选择 skill
+
+用户要求：*"导入角色卡世界书点击保存，生成 agent 预设的同时生成一个 skill；选择这个 agent 预设就自动
+绑定相关的 skill；再加一个手动选择 skill 的选项"*。
+
+**机制依据（读 DSH 源码 + 真 cordis 实测得到的硬约束）**
+
+- skill 由 `dsh-skill` 注册表统一管理，来源是**提供方**；`dsh-skill-filesystem` 扫描这些根（rank）：
+  `<项目>/.dsh/skills`(100) → `<项目>/.agents/skills`(200) → 自定义(300) → **`<DSH_HOME>/skills`(400)** →
+  `<agentsHome>/skills`(500) → 随包目录(600)，并且**监视**它们（Chokidar）⇒ 新增/改名/删除**免重启**生效。
+- skill 形态：`<name>/SKILL.md`（或扁平 `<name>.md`）；frontmatter **必填** `name` 与 `description`，
+  可选 `whenToUse`；`name` 必须匹配 `^[a-z0-9]+(?:-[a-z0-9]+)*$`（`dsh-skill` 的 `SKILL_NAME`），
+  **不合规会被整条丢弃**。
+
+**实现（三件事分开做，互不耦合）**
+
+1. **生成**：`buildSkillMarkdown(presetId, {includeFull})` 把预设渲染成一份**设定索引**：
+   何时用它 / 角色卡清单 / 世界书与启用条目名 / 预设模块清单；`includeFull=true` 时把启用中的
+   世界书条目正文附在末尾（上限 60 KB）。frontmatter 用**单行引号标量**（转义 `\` `"`、压掉换行）。
+   保存路由 `/api/tavern/save` 成功后调用 `syncPresetSkillAfterSave()` —— **best-effort，失败不影响保存**。
+2. **自动绑定**：`buildSkillsHintText(sessionId, presetId, state)` 在该会话装配 `tavern:card` 时追加**一行指针**：
+   `【可用 skill】本会话绑定了 skill：… 。需要确认本预设的角色/世界书设定细节时，用 skill 工具加载它…`
+   刻意**不把 skill 正文塞进提示词**（否则设定注入两遍：烧 token 且与卡/世界书打架）。
+3. **手动选择**：面板新增「🎓 技能（Skill）」卡片（📚 内容 页签）：生成/更新、删除、刷新清单、
+   磁盘上所有可用 skill 的勾选列表 + 保存绑定；三个开关（保存时自动生成 / 附录世界书全文 / 会话提示）。
+
+**绑定关系的存法**：`presets.json` 每条预设加 `skills: ["tavern-xxx", "手选的别的skill"]`；
+删预设时顺带 `deletePresetSkill()` 清掉生成的目录（否则 `~/.dsh/skills` 会堆孤儿 skill —— 而它们是
+会被模型整轮看到的）。
+
+**路由**：`GET /api/tavern/skills?presetId=…`（绑定 + 可用清单 + 真实写入目录 + 三个开关状态）、
+`POST /api/tavern/skills/generate`、`POST /api/tavern/skills/bind`、`POST /api/tavern/skills/delete`。
+
+**预览时抓到并修掉的两个真 bug**（测试夹具没覆盖，但**正好是你默认预设的形态**）：
+
+1. **两套 id 空间**：面板传的是**目录名**（`tavern-lite`），而注册表条目的 id 是别名（`default`）。
+   原先只按 `id` 查 ⇒ ① skill 描述退化成 id（`《tavern-lite》`）；② `setPresetSkillNames` 直接
+   `preset-not-found`，**手动绑定在默认预设上会失败**。修法：新增 `findPresetMetaEntry()`，
+   id / dir / `default`↔`tavern-lite` 三种都认（读写两侧都用它）。
+2. **名字前缀重复**：`tavern-lite` → `tavern-tavern-lite`。修法：目录名本身以 `tavern-` 开头时不再叠前缀。
+
+**验证**：`tests/skill-gen.test.js`（14 例）覆盖名字合规、frontmatter 合法、索引 vs 全文、
+写盘位置与幂等、删除幂等、磁盘清单（目录式/扁平式/去重）、绑定读写与非法名过滤、开关生效、
+会话提示只给指针不给正文、以及**真 apply + 真路由**的端到端（列表→生成→绑定→删除）。
+另外用**从 `app.asar` 整包解出的 DSH 自带 `yaml` 解析器**校验了生成的 SKILL.md：
+三份真实预设（`tavern-lite` / `preset-fixture` / `preset-muoerasc-fzyxqg`）的 frontmatter
+都能被正确读出，`name` 全部合规、`description` 非空且无裸换行。
+
+> 未做（留作后续）：用 `ctx.skills.register(...)` 在**会话作用域**注册 runtime skill
+> （那才是"只有这个会话看得见"的强隔离）；当前方案是"全局文件 + 会话级指针"，物理隔离在提示词层。
+
+#### S. 新功能：设定注入量「会话级」切换（全量注入 ⇄ 跟随规则）
+
+用户要求原文：*"做一个切换吧，全量注入和规则注入，因为我需要做一些 nfsw 的内容，不确定模型会不会写"*。
+
+**现状澄清**：这个开关**早就有了**，但是在「🎯 生效范围」里的**全局** `<select>`（`跟随卡设定 / 全量注入`），
+`state.wbInject === 'full'` 的实现是"**所有会话**都强制全量"。**缺的是"就这一场"的粒度** ——
+用户要的正是"这一段剧情确保设定全进去，别的时候省 token"。
+
+**判定链（唯一权威，注入点与体积统计共用同一函数）**
+
+```
+会话级覆盖 state.wbInjectBySession[sessionId]   ← 新增，优先级最高
+   'full'   → 强制全量（哪怕卡是 keyword、全局是 follow）
+   'follow' → 老实跟随卡设定（哪怕全局开了 full —— 省 token 的后悔药）
+   （无）    ↓
+全局 state.wbInject === 'full' → 全量
+   ↓
+世界书自己的 injectMode（groups 展平保留顶层模式）
+```
+
+`resolveWbIsFull(state, wb, sessionId)` 加了**可选**第三参：老调用点不传就退回原行为（兼容不破坏）。
+
+**接口与界面**
+
+- `POST /api/tavern/wb-inject-session { sessionId, mode: 'full'|'follow'|'' }`（`''` = 清除覆盖）；
+  响应回报 `override` / `effective` / `globalWbInject` / `cardInjectMode`（如实说明"卡设定本来是什么"）。
+- `/api/tavern/bind`（GET）与 `/api/tavern/sessions` 现在都带 `wbOverride` / `wbEffective` / `wbInjectGlobal`
+  —— **面板一律用后端的判定结果，不自己算**（算错等于骗用户"设定已经全进去了"）。
+- 面板「🔗 当前会话绑定」卡片新增一行：`🪶 跟随规则（省 token）` / `💯 全量注入（确保看到设定）`
+  + 状态行说明"当前是哪种、为什么"（本会话指定 / 全局开关 / 跟随卡设定）。
+
+**顺带修掉一个真问题**：旧**数组格式**的世界书文件里显式写的 `injectMode` 会被迁移**丢掉**，
+静默变成全量注入（手工编辑过、或早期版本写的文件会中招）。新增 `legacyInjectMode()`：
+各本书**显式且一致**才采用，分歧或没声明都保守用 `full`（多注入 > 漏设定；ST 导入的书没有这个字段，
+行为完全不变）。
+
+**测试**：新增 `tests/wb-inject-mode.test.js`（11 例）：判定链 6 种组合（含"覆盖不外溢到别的会话"、
+"不给 sessionId 不炸"）、切换**真的改变注入条目**（规则模式只给命中的，全量给全部启用项，
+禁用项在任何模式下都不进）、真路由端到端（切换 → 回报 → 清除）、全局 full 被会话 follow 压过、
+缺 sessionId 不乱写、以及 legacy 迁移保留 keyword 的回归。
+
+#### 事故记录（第二次同类）
+
+用 PowerShell `Get-Content -Raw | Set-Content -Encoding utf8` 想批量替换 `loadBound`→`loadBinding` 时，
+**PowerShell 按 GBK 读取再以 UTF-8 写回**，把整个客户端文件的中文写成 `鈥?` 乱码（`--check` 立刻报错）。
+处理：**用完好的装机版覆盖回滚**，然后**只用 edit 工具**重新应用四处改动 + 逐一 `--check` + 全量测试。
+教训重申：**永远不要用 shell 文本命令改这些源码**（第一章 Q 节已记过一次，这次是复发）。
+
+#### T. 修正 skill 的定位：正文是**指令**，不是"设定索引"（新增「写作指令」形态，默认）
+
+用户纠正：*"不是提示词，是 skill，skill 会让模型输出"* —— **用户是对的，我上一版定位错了**。
+
+**机制依据（DSH 源码原文）**
+
+- `dsh-tool-skill/lib/index.js:187`：注入的 skill 内容 `form: "instructions"`；
+- `:192`：`/技能名` 走的 pre-step 注入用的是同一个 `renderSkillContent`；
+- `:244/251`：目录里对模型说的是 *"A skill is a reusable set of **task-specific instructions**…
+  A user may also invoke a skill directly; its `<skill_content>` block then appears in this conversation.
+  **Follow it**"*；
+- `dsh-client-ui-skill/README.zh.md:85`：`/名称` 触发时，宿主把 `<skill_content>` 作为
+  **指令上下文追加在该步骤各项注入的末尾**（最贴近模型的回答），且"加载是确定性的：模型无需被要求
+  调用 skill 工具就能收到完整正文"。
+
+⇒ 所以 **skill ≠ 背景设定**：它是**要照做的指令**，而且落在**离回答最近的位置**。同一段文字埋在
+system prompt 顶部、和作为 skill 注入到末尾，模型照做的概率差别很大 —— 这才是用户要的东西。
+
+**改法**
+
+1. **新增形态**：`buildSkillMarkdown(presetId, { style })`，默认 `'instructions'`：
+   - 正文 = **预设里启用中的写作要求**（模块**内层**逐条原文，按包分组）+ 卡正文（"照此扮演"）；
+   - 刻意**不写**"以 system prompt 的卡/世界书为准"这类自我否定的话 —— 那会让模型不去照做；
+   - `description` / `whenToUse` 也跟着变成"写作指令 / 要按本预设写正文时"。
+   - `'index'` 形态保留（只列角色/世界书清单，省 token），两种形态都支持 `includeFull`（附世界书全文）。
+2. **模块是两层结构**：`presets.json` = `[{name, modules:[{name, content, enabled}]}]`。
+   之前只取了外层包名 ⇒ skill 里**一条写作要求都没有**。现在按内层扁平化，并且
+   **排除 `enabled:false`**（那是"选一"里的落选项，比如 nsfw 风格的其它档 —— 一起写进去会让指令互相矛盾）。
+3. **状态/接口/界面**：`state.skillStyle`（默认 instructions）；`/api/tavern/skills` 回报 `style`；
+   `/api/tavern/skills/generate` 接受 `style`（非法值回落默认）；面板卡片新增「技能形态」下拉，
+   **切换后立刻重新生成**（否则磁盘上还是旧形态，用户会以为没生效）。
+
+**实例（用户真实预设 `tavern-lite`）**：63 条内层里启用 28 条 → 指令形态 23,491 字节
+（含 `❤️nsfw风格|更舒缓` 157 字、`❤️ASMR对话` 116 字、`📏字数要求`、`📝文风（选一）丨s喵特调一` 1401 字…），
+索引形态 1,901 字节。未启用的（`❤️nsfw风格|正常`、`⚙️我不是主角` 等）一条都没进去。
+
+**测试**：`skill-gen.test.js` 增至 20 例，新增：指令形态含启用条目原文 / 排除未启用 / 排除 0 字标记模块 /
+不许出现自我否定句、两种形态的 frontmatter 各自贴合、真路由切换形态后文件形状跟着变、非法形态回落。
+**另**：给面板加那行下拉时我多写了一个 `</div>`，`panel-tabs` 测试立刻抓到
+「⚙️ 高级功能」卡片被算成"嵌套卡片"而消失（顶层卡片数 11→10）—— 又一次证明这套界面结构测试有用。
+
+#### 测试
+
+18 个文件、403 例全绿（新增 wb-inject-mode 11 例、skill-gen 20 例；删掉 preset-enhance 的 23 例）：
+- `tests/native-preset-binding.test.js`（19）：id 换算、部署默认预设读取、服务缺失/locked/
+  not-found/invalid/无活 Agent 的如实折叠、原生投影读取、决议链的原生回退、空白判定；
+- `tests/client-main-view-session.test.js`（8）：**对打包产物里的函数源码求值**，
+  钉住「空白新会话能取到 id」「mainView 缺失返回空串（不拿上一个会话顶替）」等；
+- `tests/native-bind-route.test.js`（9）：真 `apply()` + 真路由 + 假 DSH 服务，
+  端到端跑「空白会话绑定成功 / 已开跑 locked / 解绑交还默认 / 会话隔离 / 活会话入列表」；
+- `tests/preset-declaration.test.js`（25）：声明行渲染（转义、缩进、多条目、**目录名 id**、
+  非法 id 拒绝、坏预设不连坐）、受管块拼接（追加不动用户内容、整块替换且幂等、界标残缺不猜、
+  **空数组占位符 `[]` 被注释而非追加**）、写盘三层保护（默认 dry-run 不写 / 缺 confirm 拒绝 /
+  apply 成功且备份 + 幂等 / remove 回滚 / 自检拦住缺界标与 tab）、以及路线 B 的 bundle
+  （package.json 指向 cordis.patch.yml、坏预设不连坐、dry-run 不建目录、confirm 后内容与渲染一致）。
+- `tests/native-preset-binding.test.js`（30）：名册读取（两种形状/服务缺失/抛错）、
+  名册预检（`not-in-roster` 且不去调注定失败的 select）、名册读不到时不误判，
+  **决议权威五连**：投影是酒馆预设 ⇒ 注入它；投影是 standard 且账本有酒馆绑定
+  ⇒ 退回账本（旧版兼容）；**已开跑会话（投影 == 出生值）⇒ 账本仍生效**；
+  投影 ≠ 出生值 ⇒ 立刻以投影为准；以及 **watcher 三连**：换成酒馆预设记 top-select、
+  把酒馆卡切走清成硬空（随后决议立刻变成不注入）、与酒馆无关的会话不留脏条目。
+- `tests/native-preset-binding.test.js`（31）：另有 **「已开跑」判定与 DSH 对齐** ——
+  投影说已开跑就以投影为准（日志裁剪/resume 进来也不漏判），投影不可用才退回日志启发式。
+- `tests/client-main-view-session.test.js`（15）：除会话 id 解析外，还钉住面板声明开关 ——
+  四个元素齐全、声明按钮**先预览再确认后写**（顺序断言）、撤下必须 confirm、
+  bundle 按钮给出 `install_hint`、**显示层优先用原生权威**，以及
+  **`matchPresetInList` 三种 id 写法都命中**（含「标签处必须用它 + 命中后统一 id 空间」的顺序断言）。
+- `tests/preset-declaration.test.js`（30）：另含 **bundle 模式同步带回 `needsInstall`**
+  （patch 模式没有这一步）与 **大配置的体积提示**（超阈值才提示，小配置不许"狼来了"）。
+
+- `tests/native-bind-route.test.js`（11）：另有 **「绑酒馆默认 ⇒ 落盘成目录名 tavern-lite」**
+  ——存别名会被当成"没绑"（卡不注入），所以这条同时断言「响应仍用酒馆 id」与
+  「决议认得出它」。
+- `tests/cordis-mount.test.js`（4）：**真 cordis 宿主** —— 插件 mount 成功、自己的 ctx
+  解析得到宿主服务、原生绑定在真宿主里走通（`default` → `tavern-lite`）、**真注入**
+  （酒馆会话的提示词含卡正文哨兵、`standard` 会话一个字都不含；`tavern:nsfw` 段同判据）、
+  以及**跨作用域事件投递**（子作用域发 `session/event` ⇒ 账本随之更新）；
+  拿不到 cordis 时明确 skip。
+
+  - `tests/binding-panel-ui.test.js`（31）：原有 23 例（真名/XSS/解绑/仅对新会话生效…）之外，
+    新增 5 例**声明开关的行为级**测试（预览→确认→写入的顺序、取消不写、撤下要确认、
+    bundle 显示安装命令、对照臂），以及 3 例**作用域回归**（见 N 节：结构 + 真执行 + 对照臂）
+    ——顺带修掉「成功提示被状态刷新覆盖」那处 UX bug。
+
+  - `tests/panel-tabs.test.js`（8）：**面板标签页布局** —— 顶层 12 张卡片全都被页签规则收走、
+    页签定义完整、**底部操作区（yml/保存/状态）不被任何规则认领 ⇒ 永远可见**、
+    散件规则的 id 真存在；以及用迷你 DOM **真跑安装器**（卡片落对页签、footer 留在页签外、
+    切页签 + localStorage 持久化与回落、幂等）。
+
+全套 17 个文件 **386 例全绿**；`lib/index.js`、`lib/client.manager.bundle.js` 语法检查通过。
+
 ## v2.4.3 (2026-09-23)
 
 ### 🧹 清理：播种不再追加 user 引导消息 + 手动注入防重复

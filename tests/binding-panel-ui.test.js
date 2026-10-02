@@ -46,6 +46,29 @@ function mutate(bundleText, from, to) {
   return src.replace(from, to)
 }
 
+/**
+ * 按签名从 bundle 里抠出**整段函数源码**（花括号配对；内层 `}` 不会被截断）。
+ * @param {string} bundleText
+ * @param {string} signature 以 `function xxx(` 开头的原文
+ */
+function extractFnSource(bundleText, signature) {
+  const start = bundleText.indexOf(signature)
+  if (start < 0) throw new Error('bundle 里找不到：' + signature)
+  let depth = 0
+  let seen = false
+  for (let i = start; i < bundleText.length; i++) {
+    const ch = bundleText[i]
+    if (ch === '{') { depth++; seen = true; continue }
+    if (ch === '}') { depth--; if (seen && depth === 0) return bundleText.slice(start, i + 1) }
+  }
+  throw new Error('花括号没配平：' + signature)
+}
+
+/** 从 bundle 里抠出顶层的 `matchPresetInList` 真实现，用于注入 VM 沙箱。 */
+function loadMatchPresetFromBundle(bundleText) {
+  return new Function('return (' + extractFnSource(bundleText, 'function matchPresetInList(') + ');')()
+}
+
 // ── 极简假元素 ──
 class FakeEl {
   constructor(attrs = {}) {
@@ -54,6 +77,7 @@ class FakeEl {
     this.innerHTML = ''
     this.textContent = ''
     this.style = {}
+    this.dataset = {}
     this.value = attrs.value != null ? attrs.value : ''
     this.checked = false
   }
@@ -86,7 +110,8 @@ const SESSION = 'session-abc123'
  *                      failSessions, failPresets, fetchLog }
  */
 async function runPanel(o = {}) {
-  const src = o.src || extractSource(fs.readFileSync(BUNDLE, 'utf8'))
+  const bundleText = o.bundleText || fs.readFileSync(BUNDLE, 'utf8')
+  const src = o.src || extractSource(bundleText)
   const fetchLog = o.fetchLog || []
   const els = {
     '#tavern-binding-current': new FakeEl({ value: '' }),
@@ -97,6 +122,12 @@ async function runPanel(o = {}) {
     '#tavern-binding-new-session': new FakeEl(),
     '#tavern-binding-next-select': new FakeEl({ value: '' }),
     '#tavern-binding-status': new FakeEl(),
+    // 预设声明开关（用户自己要按的那三个按钮）：给上真元素，才能行为级地测到它们
+    '#tavern-declare-status': new FakeEl(),
+    '#tavern-declare-hint': new FakeEl(),
+    '#tavern-declare-apply': new FakeEl(),
+    '#tavern-declare-bundle': new FakeEl(),
+    '#tavern-declare-off': new FakeEl(),
   }
   els['#tavern-binding-legacy'].style.display = 'none'
   const container = { querySelector: (sel) => els[sel] || null }
@@ -124,15 +155,44 @@ async function runPanel(o = {}) {
       if (o.throwBind) throw new Error('network down')
       return { json: async () => o.bindResponse || { ok: true } }
     }
+    // ── 预设声明（dry-run 预览 / 写盘 / 生成 bundle）──
+    if (url.indexOf('/api/tavern/preset-declarations') >= 0) {
+      const isWriteReq = opts && opts.method === 'POST'
+      const base = o.declareResponse || {
+        ok: true, mode: 'off', target: 'C:\\fake\\profiles\\p\\cordis.patch.yml',
+        bytesBefore: 100, bytesAfter: 900, okCount: 2, failed: [], replaced: false,
+        roster: ['standard', 'tavern-lite'], missingFromRoster: ['tavern-lite'],
+      }
+      // 写盘响应另给一份：真实服务端这时候会回 wrote + backupPath
+      if (isWriteReq && !o.declareResponse) {
+        return { json: async () => Object.assign({}, base, { wrote: true, dryRun: false, backupPath: 'C:\\fake\\tavern-data\\backups\\cordis.patch.yml.2026.bak' }) }
+      }
+      return { json: async () => base }
+    }
+    if (url.indexOf('/api/tavern/preset-bundle') >= 0) {
+      return {
+        json: async () => o.bundleResponse || {
+          ok: true, wrote: true, bundleDir: 'C:\\fake\\tavern-data\\preset-bundle',
+          installHint: "plugin_manager { action: 'install_bundle', target: 'C:\\fake\\tavern-data\\preset-bundle' }",
+        },
+      }
+    }
     return { json: async () => ({ ok: false, error: 'unexpected ' + url }) }
   }
   // P0-3c：会话权威缓存的写入口。真实 bundle 里它在工厂作用域（getActivePresetId 旁边），
   // 沙箱里注入一个间谍 —— 顺便断言「解绑/绑定」有没有真的刷新会话权威值。
   const boundCalls = []
+  const confirmCalls = []
   const sandbox = {
     container,
     fetch: fetchImpl,
+    // 声明开关会弹 window.confirm：默认「点确定」，用 o.confirm=false 模拟用户取消
+    window: { confirm: (msg) => { confirmCalls.push(String(msg || '')); return o.confirm !== false } },
     getCurrentSessionId: () => session,
+    // ★ matchPresetInList 声明在**面板工厂顶层**（loadSessionPresets 那一层），
+    //   已不在被抽取的 P0-3 源码段里 —— 按源码段跑的沙箱必须自己补上。
+    //   这里抠 bundle 里的**真实现**注入，不另写一份（避免逻辑分叉）。
+    matchPresetInList: loadMatchPresetFromBundle(bundleText),
     setSessionBoundPresetId: (id) => { boundCalls.push(String(id == null ? '' : id)) },
     getSessionBoundPresetId: () => (boundCalls.length ? boundCalls[boundCalls.length - 1] : ''),
     esc: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
@@ -144,7 +204,7 @@ async function runPanel(o = {}) {
   vm.createContext(sandbox)
   vm.runInContext(src, sandbox, { timeout: 5000 })
   await delay(60) // 等挂载时的 loadPresets → loadBinding 链走完
-  return { els, fetchLog, sandbox, boundCalls }
+  return { els, fetchLog, sandbox, boundCalls, confirmCalls }
 }
 
 const isWrite = (f) => f.opts && f.opts.method === 'POST' &&
@@ -374,8 +434,204 @@ test('无会话：未检测到会话时提示用户先发消息，而不是静�
 })
 
 // ════════════════════════════════════════════════════════════════
-// 文案存在性（面板 HTML 里三个按钮必须都在，且 ② ③ 是两个不同按钮）
+// 预设声明开关（📢 声明为 DSH 预设 / 📦 只生成 bundle / 🧹 撤下声明）
+//   这一步只有用户能按，所以按下去会发生什么，必须行为级钉住。
 // ════════════════════════════════════════════════════════════════
+const isDeclarePost = (f) => f.opts && f.opts.method === 'POST' && f.url.indexOf('/api/tavern/preset-declarations') >= 0
+
+test('📢 声明为 DSH 预设：先 dry-run 预览 → 弹确认（文案含目标文件与字节数）→ 才真写', async () => {
+  const { els, fetchLog, confirmCalls } = await runPanel({})
+  const btn = els['#tavern-declare-apply']
+  assert.equal((btn.listeners.click || []).length, 1, '声明按钮必须且只能挂一个 click handler')
+  const mark = fetchLog.length            // 只看点击之后产生的请求（挂载时也会 GET 一次状态）
+  btn.dispatch('click')
+  await delay(80)
+  const since = fetchLog.slice(mark)
+
+  // ① 预览是 GET（dry-run），且发生在确认之后、写入之前
+  const preview = since.find((f) => f.url.indexOf('/api/tavern/preset-declarations') >= 0 && !isDeclarePost(f))
+  assert.ok(preview, '点下去必须先 GET 一次拿 dry-run 预览')
+  assert.ok(!preview.opts || !preview.opts.method || preview.opts.method === 'GET', '预览必须是 GET')
+
+  // ② 确认框要把代价讲清楚
+  assert.equal(confirmCalls.length, 1, '必须弹一次确认')
+  assert.match(confirmCalls[0], /cordis\.patch\.yml/, '确认文案要写清目标文件')
+  assert.match(confirmCalls[0], /100/, '要说清写入前的字节数')
+  assert.match(confirmCalls[0], /900/, '要说清写入后的字节数')
+  assert.match(confirmCalls[0], /备份/, '要说明会自动备份')
+
+  // ③ 确认之后才 POST，且带上 apply+confirm
+  const post = since.find(isDeclarePost)
+  assert.ok(post, '确认后应 POST /api/tavern/preset-declarations')
+  assert.deepEqual(JSON.parse(post.opts.body), { apply: true, confirm: true })
+  assert.ok(since.indexOf(preview) < since.indexOf(post), '顺序：预览 → 确认 → 写入')
+
+  // ④ ★ 结果提示必须留在 hint 行（含备份路径）——不能被紧接着的状态刷新覆盖
+  assert.match(els['#tavern-declare-hint'].textContent, /已写入/, '写完要给结果提示')
+  assert.match(els['#tavern-declare-hint'].textContent, /备份/, '要把备份路径留在界面上（回滚要用）')
+  assert.match(els['#tavern-declare-status'].textContent, /名册/, '名册信息走状态行')
+})
+
+test('📢 用户在确认框里取消 ⇒ 一个字节都不写（绝不许先写后问）', async () => {
+  const { els, fetchLog, confirmCalls } = await runPanel({ confirm: false })
+  fetchLog.length = 0
+  els['#tavern-declare-apply'].dispatch('click')
+  await delay(80)
+  assert.equal(confirmCalls.length, 1, '仍然要弹确认')
+  assert.equal(fetchLog.filter(isDeclarePost).length, 0, '★ 取消后不许发生任何写请求')
+  assert.match(els['#tavern-declare-hint'].textContent, /取消|没写/, '要如实告诉用户没写')
+})
+
+test('🧹 撤下声明：必须确认，且带 remove+confirm 才发请求', async () => {
+  const { els, fetchLog, confirmCalls } = await runPanel({})
+  fetchLog.length = 0
+  els['#tavern-declare-off'].dispatch('click')
+  await delay(80)
+  assert.equal(confirmCalls.length, 1, '撤下前必须确认')
+  const post = fetchLog.find(isDeclarePost)
+  assert.ok(post, '确认后应 POST')
+  assert.deepEqual(JSON.parse(post.opts.body), { remove: true, confirm: true })
+
+  // 取消 ⇒ 不发
+  const second = await runPanel({ confirm: false })
+  second.fetchLog.length = 0
+  second.els['#tavern-declare-off'].dispatch('click')
+  await delay(80)
+  assert.equal(second.fetchLog.filter(isDeclarePost).length, 0, '取消撤下 ⇒ 不许发请求')
+})
+
+test('📦 只生成 bundle：打到 /api/tavern/preset-bundle，并把安装命令显示出来', async () => {
+  const { els, fetchLog } = await runPanel({})
+  fetchLog.length = 0
+  els['#tavern-declare-bundle'].dispatch('click')
+  await delay(80)
+  const post = fetchLog.find((f) => f.opts && f.opts.method === 'POST' && f.url.indexOf('/api/tavern/preset-bundle') >= 0)
+  assert.ok(post, '应 POST /api/tavern/preset-bundle')
+  assert.deepEqual(JSON.parse(post.opts.body), { apply: true, confirm: true })
+  assert.match(els['#tavern-declare-hint'].textContent, /install_bundle/, '要把官方安装方式告诉用户')
+})
+
+test('对照臂：把「声明」按钮的预览步骤删掉（直接写）后，顺序断言必须失败', async () => {
+  const src = mutate(
+    fs.readFileSync(BUNDLE, 'utf8'),
+    'var pv = await declarePreview();',
+    'var pv = { target: "", bytesBefore: 0, bytesAfter: 0, okCount: 0, failed: [] };',
+  )
+  await assert.rejects(async () => {
+    const { els, fetchLog } = await runPanel({ src })
+    const mark = fetchLog.length
+    els['#tavern-declare-apply'].dispatch('click')
+    await delay(80)
+    const since = fetchLog.slice(mark)
+    const postIdx = since.findIndex(isDeclarePost)
+    const previewIdx = since.findIndex((f) => f.url.indexOf('/api/tavern/preset-declarations') >= 0 && !isDeclarePost(f))
+    // ★ 必须是「写之前就预览过」：删掉预览步骤后，唯一那次 GET 出现在 POST 之后
+    assert.ok(previewIdx >= 0 && postIdx >= 0 && previewIdx < postIdx, '写入前必须先 GET 预览')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// 结构回归：预设查找 helper 的作用域
+//   事故：matchPresetInList 曾被放进绑定卡的**嵌套作用域**，而调用它的
+//   loadSessionPresets 在外层 —— 函数声明只在**同一个函数内**提升，于是运行时
+//   `matchPresetInList is not defined`，整张「当前 Agent 预设」卡变成
+//   「❌ 加载预设失败，请刷新页面」。按源码段跑的 UI 测试抓不到（它不执行外层调用点）。
+// ════════════════════════════════════════════════════════════════
+test('结构回归：matchPresetInList 必须与调用它的 loadSessionPresets 同层（嵌套 = 运行时 ReferenceError）', () => {
+  const text = fs.readFileSync(BUNDLE, 'utf8')
+  const lineOf = (needle) => {
+    const lines = text.split('\n')
+    const i = lines.findIndex((l) => l.includes(needle))
+    assert.ok(i >= 0, '找不到：' + needle)
+    return { n: i + 1, indent: lines[i].match(/^\s*/)[0].length }
+  }
+  const helper = lineOf('function matchPresetInList(')
+  const outer = lineOf('function loadSessionPresets(')
+  assert.ok(text.includes('var matched = matchPresetInList(data.presets'),
+    '调用点必须还在（否则本测试失去意义）')
+  assert.equal(helper.indent, outer.indent,
+    'matchPresetInList（行 ' + helper.n + '，缩进 ' + helper.indent + '）必须和 loadSessionPresets（行 ' +
+    outer.n + '，缩进 ' + outer.indent + '）同层，否则外层调用会在真浏览器里抛 ReferenceError')
+})
+
+test('真跑一遍 loadSessionPresets：注入真 helper 后不抛错、状态行渲染成功（本轮事故的复现测试）', async () => {
+  const text = fs.readFileSync(BUNDLE, 'utf8')
+  const fnSrc = extractFnSource(text, 'function loadSessionPresets(')
+  const presetStatus = new FakeEl()
+  const targets = {
+    'tavern-session-preset-btn': new FakeEl(),
+    'tavern-session-preset-label': new FakeEl(),
+    'tavern-session-preset-panel': new FakeEl(),
+    'tavern-session-preset-identity': new FakeEl(),
+  }
+  const payload = {
+    ok: true, currentPresetId: 'tavern-lite',
+    presets: [
+      { id: 'tavern-lite', presetId: 'default', name: '酒馆默认', origin: 'tavern', description: '📚 1 本世界书' },
+      { id: 'preset-x', presetId: 'preset-x', name: '另一个', origin: 'tavern' },
+    ],
+  }
+  const sandbox = {
+    document: {
+      getElementById: (id) => targets[id] || null,
+      createElement: () => new FakeEl(),
+    },
+    fetch: async () => ({ json: async () => payload }),
+    getCurrentSessionId: () => 'sid-1',
+    getActivePresetId: () => '',
+    setActivePresetId: () => {},
+    presetStatus,
+    state: { characters: [], worldbooks: [], presets: [] },
+    presetIdentityClue: () => '',
+    presetIdentityText: () => '',
+    // 这段代码还会用到这几个同层函数（切片外）——给最小桩
+    esc: (s) => String(s == null ? '' : s),
+    loadCurrent: async () => {},
+    loadWb: async () => {},
+    saveCurrent: () => {},
+    matchPresetInList: loadMatchPresetFromBundle(text),
+    console,
+  }
+  const names = Object.keys(sandbox)
+  const factory = new Function(...names, 'return ' + fnSrc)
+  const loadSessionPresets = factory(...names.map((k) => sandbox[k]))
+  await loadSessionPresets()   // ← 抛 ReferenceError 就是本轮那个 bug
+  assert.match(presetStatus.innerHTML, /酒馆默认/, '状态行要渲染出当前预设名')
+  assert.equal(targets['tavern-session-preset-label'].textContent, '酒馆默认')
+  assert.equal(targets['tavern-session-preset-label'].dataset.presetId, 'tavern-lite',
+    '★ currentPresetId（目录名）要匹配上列表条目，而不是被改写成第一个预设')
+})
+
+test('对照臂：不注入 helper（等价于它在别的作用域里）⇒ 状态行必须变成那条红字报错', async () => {
+  const text = fs.readFileSync(BUNDLE, 'utf8')
+  const fnSrc = extractFnSource(text, 'function loadSessionPresets(')
+  const presetStatus = new FakeEl()
+  const targets = {
+    'tavern-session-preset-btn': new FakeEl(),
+    'tavern-session-preset-label': new FakeEl(),
+    'tavern-session-preset-panel': new FakeEl(),
+  }
+  const sandbox = {
+    document: { getElementById: (id) => targets[id] || null, createElement: () => new FakeEl() },
+    fetch: async () => ({ json: async () => ({ ok: true, currentPresetId: 'tavern-lite', presets: [{ id: 'tavern-lite', name: '酒馆默认' }] }) }),
+    getCurrentSessionId: () => 'sid-1',
+    getActivePresetId: () => '',
+    setActivePresetId: () => {},
+    presetStatus,
+    state: { characters: [], worldbooks: [], presets: [] },
+    presetIdentityClue: () => '',
+    presetIdentityText: () => '',
+    // 故意不给 matchPresetInList —— 等价于「它在别的作用域里，这里看不见」
+    console,
+  }
+  const names = Object.keys(sandbox)
+  const loadSessionPresets = new Function(...names, 'return ' + fnSrc)(...names.map((k) => sandbox[k]))
+  await loadSessionPresets()
+  // 函数末尾有 .catch，所以错误被吞掉、promise 依然 resolve ——
+  // 用户看到的就是这条红字（正是线上事故的现象）。
+  assert.match(presetStatus.textContent, /加载预设失败/,
+    '看不见 helper 时必须复现「❌ 加载预设失败，请刷新页面」')
+})
 test('面板 HTML：三个 UI 概念的按钮文案齐全且互不相同', () => {
   const html = fs.readFileSync(BUNDLE, 'utf8')
   assert.match(html, /id="tavern-binding-unbind"[^>]*>🔓 解绑本会话</)
