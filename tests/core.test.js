@@ -213,7 +213,57 @@ const CORE_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 process.env.DSH_HOME = CORE_TMP_HOME
 const { _test, apply } = await import(pathToFileURL(path.join(CORE_REPO, 'lib', 'index.js')).href)
 
-const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal, pickAuthoritativePreset, pickAuthoritativePresetFromLog, classifySessionPresetLines, extractAgentPresetFromLine, sessionIdKeys, sessionDirMatches, decideInjectionScope, readState, writeState, writeBindingEntry } = _test
+const { cleanSillyTavernVars, sanitizePromptText, randomPick, randomRoll, normalizeName, cleanName, estimatePromptBudget, migrateSessionStorageOutOfPresetRoot, DEFAULT_PRESET_YML, DEFAULT_PRESET_META, detectRefusal, pickAuthoritativePreset, pickAuthoritativePresetFromLog, classifySessionPresetLines, extractAgentPresetFromLine, sessionIdKeys, sessionDirMatches, decideInjectionScope, readState, writeState, writeBindingEntry, buildRelationsHintText } = _test
+
+/**
+ * 直接往会话级 relations.json 写一份关系网（形状与 sessionRelationsFile 一致：
+ * <SESSION_DATA_ROOT>/sessions/<safe sid>/relations.json）。
+ * 用文件写入而不是导出内部函数，是为了不为了测试而扩大 _test 的导出面。
+ */
+function writeSessionRelationsForTest(sessionId, rel) {
+  const safe = String(sessionId || 'default').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
+  const f = path.join(CORE_TMP_HOME, 'tavern-data', 'sessions', safe, 'relations.json')
+  fs.mkdirSync(path.dirname(f), { recursive: true })
+  fs.writeFileSync(f, JSON.stringify(rel, null, 2), 'utf8')
+}
+
+// ── 关系网「软注入」（用户要求：提醒模型有这东西，但不影响剧情）──────────
+test('关系网软注入：有数据时只给"存在性 + 别据此推进剧情"，不给任何关系内容', () => {
+  const sid = 'sid-rel-hint-1'
+  writeSessionRelationsForTest(sid, {
+    nodes: [{ id: 'a', name: '阿离' }, { id: 'b', name: '沈砚' }],
+    edges: [{ from: 'a', to: 'b', label: '青梅竹马' }],
+  })
+  const out = String(buildRelationsHintText(sid, { relationsHint: true }) || '')
+  assert.ok(out.includes('【关系网】'), '要有存在性提示：' + out)
+  assert.ok(out.includes('2 个角色'), '要报节点数')
+  assert.ok(out.includes('1 条关系'), '要报边数')
+  // ★ 关键：不许把内容（人名/关系标签）塞进去 —— 那才会影响剧情
+  assert.equal(out.includes('阿离'), false, '★ 软注入不得包含具体人名')
+  assert.equal(out.includes('沈砚'), false, '★ 软注入不得包含具体人名')
+  assert.equal(out.includes('青梅竹马'), false, '★ 软注入不得包含关系内容')
+  assert.ok(/不要.*主动.*提及|不要在正文里主动提及/.test(out), '必须明确要求不要主动展开')
+})
+
+test('关系网软注入：无数据 / 开关关闭 / 无会话 时都返回空串（不占 token）', () => {
+  assert.equal(buildRelationsHintText('sid-rel-hint-empty', { relationsHint: true }), '', '没数据就不注入')
+  const sid = 'sid-rel-hint-2'
+  writeSessionRelationsForTest(sid, { nodes: [{ id: 'a' }], edges: [] })
+  assert.equal(buildRelationsHintText(sid, { relationsHint: false }), '', '★ 关掉开关必须一点都不注入')
+  assert.equal(buildRelationsHintText('', { relationsHint: true }), '', '没有会话 id 不注入')
+})
+
+test('关系网软注入：真的拼进了 tavern:card 段（不是只写了函数没人调）', () => {
+  const sid = 'sid-rel-hint-card'
+  writeSessionRelationsForTest(sid, { nodes: [{ id: 'a' }], edges: [] })
+  writeBindingEntry(sid, { mode: 'preset', presetId: SCOPE_PRESET, source: 'panel' })
+  setScopeState({ mode: 'global', relationsHint: true })
+  const out = String(scopeAssemble(scopeCtx(sid)) || '')
+  assert.ok(out.includes('【关系网】'), '★ 卡片段必须带上关系网软注入：' + out.slice(-200))
+  setScopeState({ mode: 'global', relationsHint: false })
+  const off = String(scopeAssemble(scopeCtx(sid)) || '')
+  assert.equal(off.includes('【关系网】'), false, '关掉后卡片段里不该再有它')
+})
 
 test('cleanSillyTavernVars: 移除双冒号变量 {{xxx::yyy}}', () => {
   assert.equal(cleanSillyTavernVars('a{{setvar::key::value}}b'), 'ab')
@@ -859,24 +909,39 @@ test('P0-5 mode=global：行为与改动前一致（全放行；disabledCwds 黑
   assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\elsewhere')), 'global + 黑名单之外')
 })
 
-test('P0-5b nsfw 一致性：tavern:nsfw 与主闸门共用 decideInjectionScope（空名单下破限段也停）', () => {
-  // 旧写法是 `if (hasAllowlist) {…检查…}` —— 空名单时**整段跳过检查** = 放行。
-  // 后果：主闸门把角色卡/世界书/记忆全关了，破限段却还在 —— 语义劈叉。本用例钉死它。
-  assert.ok(typeof scopeAssembleNsfw === 'function', '★ tavern:nsfw 段没注册 —— 夹具坏了，本用例是空跑')
-  setScopeState({ mode: 'allowlist', allowSessions: [], allowCwds: [], nsfwEnabled: true })
-  const out = String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)))
-  assert.ok(!out.includes('成人模式'), '★ 空名单下破限段（tavern:nsfw）仍在注入 —— nsfw 段没接统一闸门')
-  // 反证：显式加白后破限段恢复（证明「不注入」不是 nsfwEnabled 没生效之类的夹具问题）
-  setScopeState({ mode: 'allowlist', allowSessions: [SCOPE_S1], allowCwds: [], nsfwEnabled: true })
-  const on = String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)))
-  assert.ok(on.includes('成人模式'), '反证失败：加白后破限段没注入 —— 夹具坏了，上面的断言是空跑')
+test('P0-5b NSFW 破限段已删除：装配结果里再也不该出现「成人模式」', () => {
+  // 历史：这段曾与主闸门语义劈叉（空名单时主闸门关了、破限段还在），后来统一走
+  // decideInjectionScope。**现在整段被用户删掉**（这类要求交给 ST 预设表达），
+  // 所以断言更强也更简单：段本身不该存在，装配结果里也不该再有那段文字。
+  assert.equal(scopeAssembleNsfw, null, '★ tavern:nsfw 段必须保持删除状态（段还在 = 用户要求没落实）')
+  for (const st of [
+    { mode: 'global', nsfwEnabled: true },
+    { mode: 'allowlist', allowSessions: [SCOPE_S1], allowCwds: [], nsfwEnabled: true },
+    { mode: 'global', nsfwEnabled: false },
+  ]) {
+    setScopeState(st)
+    const out = String(scopeAssemble(scopeCtx(SCOPE_S1)) || '')
+    assert.ok(!out.includes('成人模式'), '★ 破限段已删除，不该再注入：' + JSON.stringify(st))
+    assert.ok(!out.includes('CSAM'), '★ 破限段已删除，不该再注入（CSAM 行）')
+  }
 })
 
-test('P0-5b nsfw：nsfwEnabled 关闭时照旧整段不注入（既有行为护栏，不许被顺带改掉）', () => {
-  setScopeState({ mode: 'global', nsfwEnabled: false })
-  const out = String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)))
-  assert.ok(!out.includes('成人模式'), '★ nsfwEnabled=false 却注入了破限段')
-  // 且不受白名单影响：global + nsfwEnabled=true 才注入（上一条用例已反证过，这里只守关闭态）
+test('P0-5b NSFW 段真的不存在了：源码里不许再有 tavern:nsfw 段与 nsfwEnabled 写入', () => {
+  const src = fs.readFileSync(path.join(fileURLToPath(new URL('..', import.meta.url)), 'lib', 'index.js'), 'utf8')
+  assert.equal(src.includes("name: 'tavern:nsfw'"), false, 'tavern:nsfw 段不许复活')
+  assert.equal(/if \(typeof body\.nsfwEnabled === 'boolean'\)/.test(src), false, '不许再接受 nsfwEnabled 开关')
+  assert.equal(/nsfwEnabled: state\.nsfwEnabled/.test(src), false, '响应里不许再回这个字段')
+  // 体积快照必须仍在（原由 nsfw 段负责落盘，删除后搬到 edits 段 —— 搬丢了面板统计就停了）
+  assert.ok(/flushPromptStats\(\);\s*return ''/.test(src), 'edits 段的提前 return 也要落盘体积快照')
+})
+
+test('P0-5b NSFW 段真的不存在了：源码里不许再有 tavern:nsfw 段与 nsfwEnabled 写入', () => {
+  const src = fs.readFileSync(path.join(fileURLToPath(new URL('..', import.meta.url)), 'lib', 'index.js'), 'utf8')
+  assert.equal(src.includes("name: 'tavern:nsfw'"), false, 'tavern:nsfw 段不许复活')
+  assert.equal(/if \(typeof body\.nsfwEnabled === 'boolean'\)/.test(src), false, '不许再接受 nsfwEnabled 开关')
+  assert.equal(/nsfwEnabled: state\.nsfwEnabled/.test(src), false, '响应里不许再回这个字段')
+  // 体积快照必须仍在（原由 nsfw 段负责落盘，删除后搬到 edits 段 —— 搬丢了面板统计就停了）
+  assert.ok(/flushPromptStats\(\);\s*return ''/.test(src), 'edits 段的提前 return 也要落盘体积快照')
 })
 
 test('P0-5 闸门纯函数：四种名单组合的判定表（空 / 会话命中 / 目录命中 / 都不命中）', () => {
