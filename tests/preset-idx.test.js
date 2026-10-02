@@ -58,3 +58,28 @@ test('[4] 对照臂：state 里没有该字段时 GET 不臆造默认值（回�
   const st = readState()
   assert.equal(st.activePresetIdx, undefined, '没有持久化过就不该有值 —— 服务端不编造')
 })
+
+// ── 5. 前端回填：清理死代码时最容易误删的就是它 ──────────────
+test('[5] 面板必须保留「读 state 回填 activePresetIdx」这条链（死代码清理的误删防线）', () => {
+  const src = fs.readFileSync(path.join(REPO, 'lib', 'client.manager.bundle.js'), 'utf8')
+  // ① 必须真的发这条请求（面板重开不落回第 0 组全靠它）
+  assert.ok(/return fetch\('\/api\/tavern\/state'\)\.then\(function \(r\) \{ return r\.json\(\); \}\)\.then\(function \(sdata\) \{/.test(src),
+    '回填链的 state 请求被删了：activePresetIdx 会失效（面板每次都落回第 0 组）')
+  // ② 必须真的把值写回光标，且越界回退 0
+  assert.ok(/state\.activePresetIdx = sdata\.activePresetIdx < state\.presets\.length \? sdata\.activePresetIdx : 0;/.test(src),
+    '回填赋值被删了')
+  // ③ 只碰光标，不碰预设内容（这条链里不许出现 saveCurrent / refreshYml 之外的写盘动作）
+  const seg = src.slice(src.indexOf('return fetch(\'/api/tavern/state\')'), src.indexOf('}).catch(function () {});', src.indexOf('return fetch(\'/api/tavern/state\')')))
+  assert.equal(/saveCurrent\(/.test(seg), false, '回填链里不许保存预设内容（只准动光标）')
+})
+
+test('[6] 旧版「生效范围」元素不许再被引用（界面已换 chips 版）', () => {
+  const src = fs.readFileSync(path.join(REPO, 'lib', 'client.manager.bundle.js'), 'utf8')
+  for (const id of ['tavern-allow', 'tavern-ignore', 'tavern-mode-allow', 'tavern-mode-global',
+                    'tavern-inject', 'tavern-inject-status', 'tavern-scope-status', 'tavern-nowcwd',
+                    'tavern-wb-manager-list', 'tavern-switch-agent']) {
+    assert.equal(src.includes("'" + id + "'"), false, '不该再引用旧元素：' + id)
+    assert.equal(src.includes('#' + id + "'"), false, '不该再查旧元素：' + id)
+  }
+  assert.ok(src.includes('tavern-scope2-status'), '现行生效范围卡（chips 版）必须还在')
+})
