@@ -203,16 +203,24 @@ test('④ includeFull=true 时把启用中的条目正文附在末尾（禁用�
 // ════════════════════════════════════════════════════════════════
 test('⑤ 写到 <DSH_HOME>/skills/<name>/SKILL.md，重复写幂等', () => {
   const id = 'preset-skill-a'
+  // 先清干净：本测试要断言"第一次真写 / 第二次不写"，不能受前面测试留下的文件影响。
+  fs.rmSync(path.join(SKILLS_ROOT, skillNameForPreset(id)), { recursive: true, force: true })
   const r1 = writePresetSkill(id, {})
   assert.equal(r1.ok, true, JSON.stringify(r1))
   assert.equal(path.dirname(r1.dir), SKILLS_ROOT, '★ 必须写 DSH 用户级 skill 根（被监视 ⇒ 免重启）')
   assert.equal(r1.name, skillNameForPreset(id))
   assert.ok(fs.existsSync(r1.file))
+  assert.equal(r1.unchanged, false, '第一次是真写')
   const first = fs.readFileSync(r1.file, 'utf8')
+  const mtime1 = fs.statSync(r1.file).mtimeMs
   const r2 = writePresetSkill(id, {})
   assert.equal(r2.ok, true)
   assert.equal(fs.readFileSync(r2.file, 'utf8'), first, '内容由预设决定 ⇒ 重复写应完全一致')
   assert.equal(r1.bytes, r2.bytes)
+  // ★ 内容一致时**必须一个字节都不写**：DSH 有 chokidar 监视 <DSH_HOME>/skills，
+  //   写一次盘 = 宿主重新加载一次技能清单（用户实测：点「生成/切形态」后聊天输入框会卡住点不动）。
+  assert.equal(r2.unchanged, true, '★ 内容一致 ⇒ unchanged=true')
+  assert.equal(fs.statSync(r2.file).mtimeMs, mtime1, '★ 没写盘 ⇒ mtime 一动不动（宿主收不到事件）')
 })
 
 test('⑥ 删除：目录没了、再加回来也不报错（幂等）', () => {
@@ -404,7 +412,7 @@ test('⑮ 工具探测路由：拿不到 ctx.tools 时如实报告 false（不�
   assert.equal(out.registeredProbe, false)
 })
 
-test('⑯ 工具探测路由：有 ctx.tools 时能注册并回收探针（证明"酒馆能注册全局工具"）', async () => {
+test('⑯ 工具探测路由是**只读**的：报能力、不注册（连点不产生宿主副作用）', async () => {
   const routes = []
   const registered = []
   const disposed = []
@@ -425,13 +433,45 @@ test('⑯ 工具探测路由：有 ctx.tools 时能注册并回收探针（证�
     effect: (fn) => fn(),
     logger: { warn: () => {}, info: () => {}, error: () => {} },
   }, services))
+  // 连问三次，模拟用户连点「🎓 技能」的按钮（loadSkills() 里挂着这条探测）
   const out = await callRoute(routes, '/api/tavern/tool-probe')
-  assert.equal(out.hasToolsService, true)
-  assert.equal(out.hasRegister, true)
-  assert.equal(out.registeredProbe, true, '注册尝试应当成功（证明下一步可以做真正的查询工具）')
+  await callRoute(routes, '/api/tavern/tool-probe')
+  await callRoute(routes, '/api/tavern/tool-probe')
+
+  // 该证明的"能力"一样都不少：
+  assert.equal(out.hasToolsService, true, '要能发现宿主 tools 服务')
+  assert.equal(out.hasRegister, true, '要能报告"具备 register() 能力"（下一步做查询工具的依据）')
+  assert.equal(out.canRegister, true)
   assert.deepEqual(out.sampleTools, ['pwsh', 'web'], '要能列出已有工具名，确认这确实是工具注册表')
-  assert.deepEqual(registered, ['tavern_tool_probe'])
-  assert.deepEqual(disposed, ['tavern_tool_probe'], '★ 探针注册后必须立刻回收，不留痕迹')
+
+  // 但**绝不允许留下副作用**：旧写法会真的注册一个探针工具再 dispose，而这条接口是被
+  // 「生成/刷新/删除/切形态」四个按钮按刷新频率调用的（用户实测：点完输入框会卡住点不动）。
+  assert.equal(out.registerSkipped, true, '要明确声明自己跳过了注册')
+  assert.equal(out.registeredProbe, false, '不能再报"已注册探针"')
+  assert.deepEqual(registered, [], '★ 一次都不能注册（连问三次也一样）')
+  assert.deepEqual(disposed, [], '★ 没注册就没有回收动作')
+})
+
+test('⑯b 宿主没有 tools 服务时：如实报 false，且不炸', async () => {
+  const routes = []
+  const services = {
+    webServer: { register: (r) => routes.push(r) },
+    systemPrompt: { section: () => () => {} },
+    sessions: { get: () => undefined },
+  }
+  const { apply } = await import(pathToFileURL(path.join(REPO, 'lib', 'index.js')).href)
+  apply(Object.assign({
+    get: (n) => services[n],
+    on: () => () => {},
+    effect: (fn) => fn(),
+    logger: { warn: () => {}, info: () => {}, error: () => {} },
+  }, services))
+  const out = await callRoute(routes, '/api/tavern/tool-probe')
+  assert.equal(out.ok, true)
+  assert.equal(out.hasToolsService, false)
+  assert.equal(out.canRegister, false)
+  assert.equal(out.registerSkipped, false, '连服务都没有，谈不上"跳过注册"')
+  assert.equal(out.registeredProbe, false)
 })
 
 /** 起一个假 ctx 并调用某条路由（探测类路由共用）。 */
