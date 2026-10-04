@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.5.4 (2026-10-04)
+
+### 🧹 删除「自动播种开场白」整套退役机制
+
+v2.5.3 已经把它改成 fail-closed（在新会话上必然拒绝、一个字节都不写），也就是说它
+**永远不会生效了**。既然退役，就按用户要求连根删掉，不留会误导后人的死代码：
+
+| 删除 | 它原来干什么 |
+|---|---|
+| `seedGreetingMessage()` | 把开场白当首条 `assistant/message` 写进会话日志（**就是把 5 个会话写坏的那段**） |
+| `seedGreetingForSession()` | 上面那个的评估/安全阀层（开关、子会话、判重、回合号对账） |
+| `armGreetingSeed()` | 安装 `agent/created` / `agent/inbox/inserted` / `agent/request-error` 三个监听去触发播种 |
+| `appendGreetingPreamble()` + `GREETING_PREAMBLE` | 撞 400 时补种一条 user 引导（同为 surface 事件，一样会写坏日志） |
+| `greetingSeeds` / `greetingWatched` / `greetingDowngraded` / `greetingIdsOf()` | 播种用的去重与记账 |
+| `hasLiveUserMessage()` / `closeDanglingBracket()` | 只被上面这些调用的辅助函数 |
+| `noteGreetingRejected()` | 记录"模型网关拒绝 assistant 打头"（那个前提已作废） |
+| 状态位 `greetingSeedEnabled` | 开关。现在整个字段不再被读写（`tavern-state.json` 里的残留键被忽略，无需清理） |
+
+**保留**（这是现在唯一合法的开场白路径）：
+
+- `canAppendGreetingSurface()` 闸门 —— 仍然守着**手动注入**：日志里已有 `system/message`
+  才允许追加 surface 事件；
+- `appendGreetingToSessionEnd()` / `insertGreetingForSession()` / `pickGreetingCard()` /
+  `greetingTextFor()` / `hasCardGreeting()` —— 面板「📌 开场白 → 注入开场白到会话末尾」；
+- **从 `armGreetingSeed()` 里拆出 `armLiveAgents()`** —— 只保留 `agent/created` /
+  `agent/inbox/inserted` 两个监听做**活会话登记**（手动注入 API 要按 sessionId 找到 Agent）。
+  拆出来是必须的：原来登记和播种是同一个监听里的两件事，直接删掉播种会把登记一起带走，
+  手动注入就会报"找不到会话"。
+
+**行为**：新会话不再有任何自动写入；开场白只能手动注入，且要求该会话已经跑过至少一个回合
+（否则服务端明确拒绝并说明原因）。`noteGreetingSeed()` 更名为 `noteGreetingLog()`，
+日志文件名仍是 `greeting-seed.log`（不打断历史排查习惯，旧行还留在那儿）。
+
+### ✅ 验证
+
+- `greeting-seed.test.js` 40 → **23 项**：删掉全部播种用例（它们测的机制已不存在），
+  保留并强化闸门 / 事故现场重演 / 手动注入 / settlement / 源码护栏。
+  新增护栏「**播种 API 必须整体不存在**」——9 个已删除的名字只要在**代码**里再出现就变红
+  （注释里提到它们是被允许的：那是"这里曾经有什么"的说明），并带一条反例证明判据不是永真。
+  另一条护栏要求 `apply()` 必须调 `armLiveAgents(ctx)`，且登记监听里**不许出现
+  `session.append(`** —— 从源码层面堵死"顺手把播种加回来"。
+- 全量回归 **403/403 通过**（用例总数下降是删除了失效用例，不是失败）。
+- `lib/index.js` 里对 9 个已删除符号的**代码引用为 0**（仅注释保留历史说明）。
+
 ## v2.5.3 (2026-10-04)
 
 ### 🔴 严重：开场白播种会把会话日志写坏到**永久打不开**（5 个会话中招）
