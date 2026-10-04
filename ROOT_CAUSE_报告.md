@@ -44,7 +44,7 @@ tavern 的 `client.js` 由 dsh web 服务打包进**浏览器缓存的 `client.j
 （`undici`/`yaml`/`zod`/`json5`/`@ai-sdk` 等自身逻辑完整）后，**第一方代码均无未保护裸 `.indexOf(`**：
 - tavern（index.js + client bundle）：全受保护 ✅
 - agent-teams / recall / tdai-memory / zh_pro / better-sidebar / soul-md / vision / mobile-fix 等：无裸 `indexOf` ✅
-- `<home>\.dsh\profiles\web\node_modules` 中 `@local/*`、`@linxin666/*` 等 UI 包：候选多为第三方依赖，非事件源 ✅
+- `%DSH_HOME%\profiles\<profile>\node_modules` 中 `@local/*`、`@linxin666/*` 等 UI 包：候选多为第三方依赖，非事件源 ✅
 
 结论：**没有被加载的插件在磁盘版本里存在未保护 indexOf 作为事件源头。**
 

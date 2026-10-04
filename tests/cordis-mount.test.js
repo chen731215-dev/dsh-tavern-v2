@@ -27,7 +27,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const REPO = path.resolve(HERE, '..')
-const ASAR = process.env.DSH_ASAR || 'D:\\deepseek harnes\\resources\\app.asar'
+// 不写死任何本机路径：优先用 DSH_ASAR，其次按标准的 LOCALAPPDATA 安装位置推导。
+// 两者都拿不到时会自动跳过依赖 asar 内容的用例（而不是假装通过）。
+const ASAR = process.env.DSH_ASAR || (process.env.LOCALAPPDATA
+  ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Deepseek Harness EAC v2.0', 'resources', 'app.asar')
+  : '')
 
 /** 极简 asar 读取器：只要 header 与「按 offset 读一段字节」两件事。 */
 function openAsar(file) {

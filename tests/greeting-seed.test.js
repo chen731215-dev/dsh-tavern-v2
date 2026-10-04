@@ -13,7 +13,7 @@
  *   `system/message`**」建立，而播种在新会话第一轮就写 `assistant/message`，排在真正的
  *   `system/message` 之前 ⇒ 该会话第一次写 system/message 即抛
  *     `SessionFormatError: system/message requires a protected first surface head`
- *   ⇒ **会话永久打不开**（真事故：b6fe9f69、0ca0c5ea、1c9128b9、8478f900、ecfba613，
+ *   ⇒ **会话永久打不开**（真事故：**5 个会话**中招，会话 id 属本机数据故不列出，
  *   修法是删掉日志里那条抢跑消息）。旧注释里"网关实测接受 assistant 打头"只对**模型网关**
  *   成立，与会话日志层无关 —— 两层规则被混为一谈才出的这次事故。
  *
@@ -282,7 +282,7 @@ test('pickGreetingCard: 找不到卡返回明确错误（不含「失败」这�
 // ══════════════════════════════════════════════════════════
 // 2. 🔒 事故闸：绝不允许把 surface 事件写在首个 system/message 之前
 //
-//   5 个会话被写坏（b6fe9f69 / 0ca0c5ea / 1c9128b9 / 8478f900 / ecfba613）：报
+//   **5 个会话**被写坏：报
 //   `SessionFormatError: system/message requires a protected first surface head`，
 //   修法是删掉日志里那条抢跑消息。这一段把「永不再犯」钉在测试里。
 // ══════════════════════════════════════════════════════════
@@ -467,7 +467,7 @@ test('insertGreetingForSession: 找不到卡 / 会话不可用时仍返回明确
 // 5. settlement 字段 —— 2026-09-23 真事故：会话被写坏、整个打不开
 //   DSH 读会话时按 `assertAssistantSettlementShape` 校验每条 assistant/message：
 //   turn/step 必须是非负安全整数，且 **data.stream 必须是数组**。
-//   漏了 stream ⇒ 该会话直接打不开（session-38a8e296 实例）。
+//   漏了 stream ⇒ 该会话直接打不开（2026-09-23 实事故）。
 // ══════════════════════════════════════════════════════════
 
 /** DSH 校验规则的本地镜像（改动时两处必须同步）。 */
