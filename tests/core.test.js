@@ -909,38 +909,41 @@ test('P0-5 mode=global：行为与改动前一致（全放行；disabledCwds 黑
   assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\elsewhere')), 'global + 黑名单之外')
 })
 
-test('P0-5b NSFW 破限段已删除：装配结果里再也不该出现「成人模式」', () => {
-  // 历史：这段曾与主闸门语义劈叉（空名单时主闸门关了、破限段还在），后来统一走
-  // decideInjectionScope。**现在整段被用户删掉**（这类要求交给 ST 预设表达），
-  // 所以断言更强也更简单：段本身不该存在，装配结果里也不该再有那段文字。
-  assert.equal(scopeAssembleNsfw, null, '★ tavern:nsfw 段必须保持删除状态（段还在 = 用户要求没落实）')
+test('P0-6 成人向提示段：默认（关 + 空正文）装配结果里一个字节都不多', () => {
+  // 这一段现在的语义是「**用户自填正文**的注入槽」：插件只提供开关与槽位，
+  // 正文取自 state.nsfwPrompt —— 所以"默认零注入"是它最重要的性质。
+  assert.ok(scopeAssembleNsfw, '★ tavern:nsfw 槽位必须存在（它是用户自填正文的入口）')
+  const MARK = 'SENTINEL-成人段-7f3a'
   for (const st of [
-    { mode: 'global', nsfwEnabled: true },
-    { mode: 'allowlist', allowSessions: [SCOPE_S1], allowCwds: [], nsfwEnabled: true },
-    { mode: 'global', nsfwEnabled: false },
+    { mode: 'global', nsfwEnabled: false, nsfwPrompt: MARK },
+    { mode: 'global', nsfwEnabled: true, nsfwPrompt: '' },
+    { mode: 'global', nsfwEnabled: true, nsfwPrompt: '   \n ' },
+    { mode: 'allowlist', allowSessions: [], allowCwds: [], nsfwEnabled: true, nsfwPrompt: MARK },
   ]) {
     setScopeState(st)
-    const out = String(scopeAssemble(scopeCtx(SCOPE_S1)) || '')
-    assert.ok(!out.includes('成人模式'), '★ 破限段已删除，不该再注入：' + JSON.stringify(st))
-    assert.ok(!out.includes('CSAM'), '★ 破限段已删除，不该再注入（CSAM 行）')
+    const out = String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)) || '')
+    assert.equal(out, '', '★ 关着 / 正文空 / 未放行 ⇒ 一个字节都不注入：' + JSON.stringify(st))
   }
+  // 开着且有正文 ⇒ 原样注入（正文一律来自 state，插件不内置任何固定文案）
+  setScopeState({ mode: 'global', nsfwEnabled: true, nsfwPrompt: MARK })
+  assert.equal(String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)) || ''), MARK, '★ 注入的必须是 state 里的原文')
+  // 整段装配里也不该冒出任何"固定破限文案"
+  const full = String(scopeAssemble(scopeCtx(SCOPE_S1)) || '')
+  assert.ok(!full.includes('成人模式'), '装配结果里不许出现固定破限文案')
 })
 
-test('P0-5b NSFW 段真的不存在了：源码里不许再有 tavern:nsfw 段与 nsfwEnabled 写入', () => {
+test('P0-6 成人向提示段：源码里必须"有槽位、过闸门、默认空"', () => {
   const src = fs.readFileSync(path.join(fileURLToPath(new URL('..', import.meta.url)), 'lib', 'index.js'), 'utf8')
-  assert.equal(src.includes("name: 'tavern:nsfw'"), false, 'tavern:nsfw 段不许复活')
-  assert.equal(/if \(typeof body\.nsfwEnabled === 'boolean'\)/.test(src), false, '不许再接受 nsfwEnabled 开关')
-  assert.equal(/nsfwEnabled: state\.nsfwEnabled/.test(src), false, '响应里不许再回这个字段')
-  // 体积快照必须仍在（原由 nsfw 段负责落盘，删除后搬到 edits 段 —— 搬丢了面板统计就停了）
-  assert.ok(/flushPromptStats\(\);\s*return ''/.test(src), 'edits 段的提前 return 也要落盘体积快照')
-})
-
-test('P0-5b NSFW 段真的不存在了：源码里不许再有 tavern:nsfw 段与 nsfwEnabled 写入', () => {
-  const src = fs.readFileSync(path.join(fileURLToPath(new URL('..', import.meta.url)), 'lib', 'index.js'), 'utf8')
-  assert.equal(src.includes("name: 'tavern:nsfw'"), false, 'tavern:nsfw 段不许复活')
-  assert.equal(/if \(typeof body\.nsfwEnabled === 'boolean'\)/.test(src), false, '不许再接受 nsfwEnabled 开关')
-  assert.equal(/nsfwEnabled: state\.nsfwEnabled/.test(src), false, '响应里不许再回这个字段')
-  // 体积快照必须仍在（原由 nsfw 段负责落盘，删除后搬到 edits 段 —— 搬丢了面板统计就停了）
+  assert.ok(src.includes("name: 'tavern:nsfw'"), 'tavern:nsfw 槽位必须存在')
+  assert.ok(/if \(typeof body\.nsfwEnabled === 'boolean'\)/.test(src), 'state 路由要接受开关')
+  assert.ok(/nsfwEnabled: state\.nsfwEnabled/.test(src), '响应里要回这个字段（面板回填用）')
+  assert.ok(/nsfwEnabled: false, nsfwPrompt: ''/.test(src), '★ 默认必须是「关 + 空正文」')
+  // 槽位必须过两道判据（会话隔离 + 统一生效范围）
+  const start = src.indexOf("name: 'tavern:nsfw'")
+  const seg = src.slice(start, src.indexOf('  // 编辑过的消息注入', start))
+  assert.ok(seg.includes('isTavernSession('), '槽位必须过会话隔离判据')
+  assert.ok(seg.includes('decideInjectionScope('), '槽位必须过统一生效范围闸门')
+  // 体积快照必须仍在（原由 nsfw 段负责落盘，现在归 edits 段 —— 搬丢了面板统计就停了）
   assert.ok(/flushPromptStats\(\);\s*return ''/.test(src), 'edits 段的提前 return 也要落盘体积快照')
 })
 
