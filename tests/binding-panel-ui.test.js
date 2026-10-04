@@ -91,11 +91,11 @@ class FakeEl {
 }
 
 // ── 测试夹具 ──
-// 真实事故现场：name「团队测试」的预设，description 里写的却是 `_足控天堂2`
+// 真实事故现场：name「示例预设」的预设，description 里写的却是 `_示例卡2`
 const PRESET_FOOT = {
-  id: 'preset-fixture',
-  name: '团队测试',
-  description: '🎭 _足控天堂2 | 📚 2本世界书（142条）| ⚙️ 1个预设模块 | 最后更新: 2026/9/25 08:31:53',
+  id: 'preset-fixture-a3',
+  name: '示例预设',
+  description: '🎭 _示例卡2 | 📚 2本世界书（142条）| ⚙️ 1个预设模块 | 最后更新: 2026/9/25 08:31:53',
 }
 // description 是**不可信外部文本**：这里塞一段 XSS，断言它只能以文本形态出现
 const XSS = '<img src=x onerror=alert(1)>'
@@ -236,13 +236,13 @@ test('对照臂：把解绑请求的目标接口改掉后，同一断言必须�
 
 test('解绑：成功后立刻刷新为「未绑定」，并给出成功反馈', async () => {
   const { els, boundCalls } = await runPanel({ boundId: PRESET_FOOT.id, bindingMode: 'preset', bindingSource: 'panel' })
-  assert.match(els['#tavern-binding-current'].textContent, /团队测试/, '解绑前应显示已绑定的预设真名')
+  assert.match(els['#tavern-binding-current'].textContent, /示例预设/, '解绑前应显示已绑定的预设真名')
   // P0-3c：挂载时应已把会话权威值灌进缓存（且不带后端展平值 default）
   assert.equal(boundCalls[boundCalls.length - 1], PRESET_FOOT.id)
   els['#tavern-binding-unbind'].dispatch('click')
   await delay(60)
   assert.match(els['#tavern-binding-current'].textContent, /未绑定/, '解绑成功后必须刷新为未绑定')
-  assert.equal(/团队测试/.test(els['#tavern-binding-current'].textContent), false)
+  assert.equal(/示例预设/.test(els['#tavern-binding-current'].textContent), false)
   assert.match(els['#tavern-binding-status'].textContent, /✅|已解绑/)
   assert.equal(boundCalls[boundCalls.length - 1], '', '解绑后会话权威缓存必须清空')
 })
@@ -266,14 +266,14 @@ test('解绑：服务端返回 ok:false 时给出失败反馈，且不许把 UI 
   await delay(60)
   assert.match(els['#tavern-binding-status'].textContent, /❌|失败/, '必须有可见的失败反馈')
   assert.match(els['#tavern-binding-status'].textContent, /会话不存在/, '要带出服务端给的原因')
-  assert.match(els['#tavern-binding-current'].textContent, /团队测试/, '失败时不得把显示改成未绑定')
+  assert.match(els['#tavern-binding-current'].textContent, /示例预设/, '失败时不得把显示改成未绑定')
 })
 test('解绑：请求直接抛异常（网络断）时也要有失败反馈，不白屏', async () => {
   const { els } = await runPanel({ boundId: PRESET_FOOT.id, throwUnbind: true })
   els['#tavern-binding-unbind'].dispatch('click')
   await delay(60)
   assert.match(els['#tavern-binding-status'].textContent, /❌|失败/)
-  assert.match(els['#tavern-binding-current'].textContent, /团队测试/)
+  assert.match(els['#tavern-binding-current'].textContent, /示例预设/)
 })
 test('对照臂：删掉解绑失败的反馈后，同一断言必须失败', async () => {
   const src = mutate(fs.readFileSync(BUNDLE, 'utf8'), 
@@ -338,8 +338,8 @@ test('对照臂：把「应用到当前会话」的 presetId 换成写死后，�
 test('真名：绑定显示同时给出面板名 name 与真实内容线索 description', async () => {
   const { els } = await runPanel({ boundId: PRESET_FOOT.id, bindingMode: 'preset', bindingSource: 'panel' })
   const txt = els['#tavern-binding-current'].textContent
-  assert.match(txt, /团队测试/, 'name（面板显示名）必须出现')
-  assert.match(txt, /_足控天堂2/, 'description 里的真实身份线索必须出现 —— 否则用户还是看不出绑了什么')
+  assert.match(txt, /示例预设/, 'name（面板显示名）必须出现')
+  assert.match(txt, /_示例卡2/, 'description 里的真实身份线索必须出现 —— 否则用户还是看不出绑了什么')
   assert.match(txt, /142条/, 'description 的实质内容应保留')
 })
 test('对照臂：真名只显示 name（退化到改动前）时，同一断言必须失败', async () => {
@@ -347,7 +347,7 @@ test('对照臂：真名只显示 name（退化到改动前）时，同一断言
     "return clue ? name + '  ⚠️ ' + clue : name;", "return name;")
   await assert.rejects(async () => {
     const { els } = await runPanel({ src, boundId: PRESET_FOOT.id })
-    assert.match(els['#tavern-binding-current'].textContent, /_足控天堂2/)
+    assert.match(els['#tavern-binding-current'].textContent, /_示例卡2/)
   })
 })
 
