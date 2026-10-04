@@ -10,6 +10,25 @@
 
 🎴 **为 DeepSeek Harness 打造的角色卡 / 世界书管理插件，导入角色卡就能开始角色扮演。**
 
+## 🔴 v2.5.4 更新要点（建议尽快升级）
+
+> 完整说明见 [RELEASE_NOTES_v2.5.4.md](./RELEASE_NOTES_v2.5.4.md) 与 [CHANGELOG.md](./CHANGELOG.md)。
+
+- **v2.5.3（严重）**：修掉「开场白播种把会话日志写坏到**永久打不开**」——
+  报错特征是 `SessionFormatError: system/message requires a protected first surface head`。
+  根因：会话日志要求受保护 head 只能由「**还没有任何 surface 事件时出现的 `system/message`**」
+  建立，而旧版播种抢先写了 `assistant/message`。现在三处写入点共用闸门
+  `canAppendGreetingSurface()`：日志里已有 `system/message` 才允许再写。
+  **已损坏的会话可以救回**（删掉日志里那条抢跑消息即可，见 release notes）。
+- **v2.5.2**：修掉「点 🎓 技能 的按钮后聊天输入框点不动」——技能卡片不再反复触碰宿主工具注册表，
+  且内容没变时不再重写 `SKILL.md`；另加输入框遮挡守卫（下次会直接说出是谁挡住了输入框）。
+- **v2.5.4**：把已不可能生效的「自动播种开场白」整套机制删除（含状态位 `greetingSeedEnabled`）。
+
+**⚠️ 行为变化**：新会话不再自动出现角色卡开场白；请用面板
+**「📌 开场白 → ➕ 注入开场白到会话末尾」** 注入（要求该会话已经跑过至少一个回合）。
+
+**升级后请重启一次 DSH。**
+
 ## 🆕 v2.4.0 更新内容
 
 ### 渲染职责交割给 dsh-muv-engine
