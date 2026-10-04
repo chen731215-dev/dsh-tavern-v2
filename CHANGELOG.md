@@ -1,5 +1,56 @@
 # Changelog
 
+## v2.5.3 (2026-10-04)
+
+### 🔴 严重：开场白播种会把会话日志写坏到**永久打不开**（5 个会话中招）
+
+**症状**：打开旧会话直接报
+
+```
+历史加载失败：stored session "session-XXXX" is corrupt:
+  SessionFormatError: system/message requires a protected first surface head
+```
+
+会话不是"历史丢了"，而是**日志被写成了非法顺序**，只能删掉那条抢跑消息才救得回来。
+
+**根因**：DSH 加载 v4 日志时按顺序维护两条状态 ——
+`hasSurface`（出现过任一 surface 事件）与 `head`（**只有**在还没有任何 surface 事件时出现的
+`system/message` 才会被登记为受保护 head，实现在 `restoreReleasedV3Artifact` 与 v4 relationships
+两处）。于是「**先写了一条 assistant 消息、之后才出现 system/message**」的日志一定抛错。
+
+而 `seedGreetingMessage()` 正是这么干的：新会话第一轮就把角色卡开场白写成 `assistant/message`，
+排在真正的 `system/message` 之前。旧注释里那句"网关实测接受 assistant 打头"说的是**模型网关**
+（那一层确实接受 `deepseek-official` / `bailian`），**会话日志层从来不允许** —— 两层规则被混为一谈了。
+凡是「先被种了开场白、之后再跑带系统提示的回合」的会话，第二轮写 `system/message` 时必炸。
+
+已确认被它写坏的会话：`b6fe9f69`、`0ca0c5ea`、`1c9128b9`、`8478f900`、`ecfba613`
+（已用外部脚本删掉抢跑消息救回，现全部 `OK`）。
+
+**修法（fail-closed）**：三处 surface 写入点共用一道闸门
+`canAppendGreetingSurface(session)` —— **日志里已经有 `system/message` 才允许再写 surface 事件**，
+判据还要确认"首个 surface 事件就是 `system/message`"（已经坏掉的日志不再去动它）：
+
+| 写入点 | 旧行为 | 现在 |
+|---|---|---|
+| `seedGreetingMessage()` | 新会话第一轮写 `assistant/message` ⇒ 弄坏日志 | 没有 head 就**拒绝**，一个字节都不写 |
+| `appendGreetingPreamble()` | 撞 400 时补 `user/message`（同为 surface）⇒ 同样弄坏 | 同上，没有 head 就拒绝 |
+| `appendGreetingToSessionEnd()`（手动注入 API） | 对"还没跑过回合"的会话直接写 ⇒ 弄坏 | **抛明确错误**："这个会话还没跑过任何回合…请先发一句话起头" |
+
+**行为变化（必须知道）**：新会话在跑第一个回合之前，日志里**没有** `system/message`，
+所以「新会话自动开场白」在当前 DSH 版本下**不可能合法实现** —— 该功能实际上已退役
+（`greetingSeedEnabled` 开关变成"写不写一行 skip 日志"的区别）。
+开场白仍然可以拿回来：对**已经跑过回合**的会话用 `POST /api/tavern/greeting/insert` 手动注入。
+
+### ✅ 验证
+
+- `greeting-seed.test.js` 33 → **40 项**，新增：闸门真值表（5 种日志形态）、
+  「新会话 ⇒ 拒绝且一个字节都不写」、手动注入抛错、`no-system-head` 原因码、
+  **事故现场重演**（本地镜像 DSH 的 head 校验：旧行为必被判 corrupt，新行为通过）、
+  以及两条源码护栏（三处写入点都必须过闸门，删掉即变红）。
+- 全量回归 **420/420 通过**。
+- 用外部脚本体检本机会话：**11 个会话全部 `OK`**，且逐个确认"首个 surface 事件都是
+  `system/message`"、**不存在潜伏中（下次发消息才炸）的会话**。
+
 ## v2.5.2 (2026-10-03)
 
 ### 🐛 点「🎓 技能」的按钮后聊天输入框会点不动（用户实测）
