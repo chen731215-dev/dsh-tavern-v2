@@ -64,7 +64,7 @@ test('[2] agentPresetIdFor：注册表里的预设按 dir 换算；未知 id 原
     presets: [{ id: 'preset-abc', name: 'A', dir: 'preset-abc-dir', mode: 'roleplay' }],
   }, null, 2), 'utf8')
   assert.equal(agentPresetIdFor('preset-abc'), 'preset-abc-dir', '注册表 id → dir')
-  assert.equal(agentPresetIdFor('preset-fixture'), 'preset-fixture', '直接是 DSH 目录名或未注册')
+  assert.equal(agentPresetIdFor('preset-fixture-a2'), 'preset-fixture-a2', '直接是 DSH 目录名或未注册')
   assert.equal(agentPresetIdFor('standard'), 'standard', 'DSH 内置预设原样透传')
   assert.equal(agentPresetIdFor(''), '')
   assert.equal(agentPresetIdFor(null), '')

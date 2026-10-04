@@ -540,10 +540,10 @@ test('detectRefusal: 命中时会给出可读的证据片段', () => {
 // ── 预设 / 会话隔离的权威解析 ──
 // 回归自真实故障：用户在顶部把会话改成「标准模式」(standard)，
 // 但因为 standard 不是酒馆目录，旧实现会继续往前翻历史选择，翻到深渊并照旧注入。
-const isTavern = (id) => id === 'preset-mtyx98fa-pdsrh1' || id === 'tavern-lite'
+const isTavern = (id) => id === 'preset-fixture-a1' || id === 'tavern-lite'
 
 test('pickAuthoritativePreset: 最新显式选择是酒馆预设 → 用它', () => {
-  assert.equal(pickAuthoritativePreset('preset-mtyx98fa-pdsrh1', isTavern, 'preset-mtyx98fa-pdsrh1'), 'preset-mtyx98fa-pdsrh1')
+  assert.equal(pickAuthoritativePreset('preset-fixture-a1', isTavern, 'preset-fixture-a1'), 'preset-fixture-a1')
 })
 
 test('pickAuthoritativePreset: 最新显式选择是内置预设 → 判定不注入（关键回归）', () => {
@@ -553,11 +553,11 @@ test('pickAuthoritativePreset: 最新显式选择是内置预设 → 判定不�
 
 test('pickAuthoritativePreset: 显式选了内置预设时，过期的 bindings 不得翻盘（关键回归）', () => {
   // 用户选了 standard，但 bindings 里还记着深渊 —— 必须听用户的，不是听记账
-  assert.equal(pickAuthoritativePreset('standard', isTavern, 'preset-mtyx98fa-pdsrh1'), 'default')
+  assert.equal(pickAuthoritativePreset('standard', isTavern, 'preset-fixture-a1'), 'default')
 })
 
 test('pickAuthoritativePreset: 事件流没有预设记录时，才退回 bindings', () => {
-  assert.equal(pickAuthoritativePreset(null, isTavern, 'preset-mtyx98fa-pdsrh1'), 'preset-mtyx98fa-pdsrh1')
+  assert.equal(pickAuthoritativePreset(null, isTavern, 'preset-fixture-a1'), 'preset-fixture-a1')
 })
 
 test('pickAuthoritativePreset: 都没有 → default', () => {
@@ -574,8 +574,8 @@ test('extractAgentPresetFromLine: 从会话创建记录里取得到（关键回�
 })
 
 test('extractAgentPresetFromLine: agent-preset/selected 事件同样取得到', () => {
-  const line = '{"type":"agent-preset/selected","data":{"agentPreset":"preset-mtyx98fa-pdsrh1"}}'
-  assert.equal(extractAgentPresetFromLine(line), 'preset-mtyx98fa-pdsrh1')
+  const line = '{"type":"agent-preset/selected","data":{"agentPreset":"preset-fixture-a1"}}'
+  assert.equal(extractAgentPresetFromLine(line), 'preset-fixture-a1')
 })
 
 test('extractAgentPresetFromLine: 只出现词、没有键值对的行取不到（防自身输出污染）', () => {
@@ -602,8 +602,8 @@ test('extractAgentPresetFromLine: 无关行返回空串', () => {
 // `'<uuid>'.includes('session-<uuid>')` **方向也是反的** ⇒ 两个判据都不中 ⇒ 查不到日志
 // ⇒ `resolveAuthoritativePresetId()` 静默退回 bindings（多数会话没有记录）⇒ 返回 `default`。
 // 后果：**73%（189/260）的会话权威预设失效**。线上对照读数：
-//   ?sessionId=session-01c8609b-… → default        （错）
-//   ?sessionId=01c8609b-…         → preset-mt1vwaes-ieavdv（对）
+//   ?sessionId=session-0000bbbb-… → default        （错）
+//   ?sessionId=01c8609b-…         → preset-fixture-a5（对）
 test('sessionIdKeys: 两种形式互为候选（带前缀 / 裸 uuid）', () => {
   const u = '01c8609b-f904-4fd6-aff1-2fc52af2f0fe'
   assert.deepEqual(sessionIdKeys('session-' + u), ['session-' + u, u])
@@ -627,8 +627,8 @@ test('sessionDirMatches: 目录名与 id 的四种组合都匹配（关键回归
 
 // ── 出生默认值 vs 显式切换：面板选卡被静默推翻的那个洞 ──
 //
-// 真实故障（线上实测 session-fb2f7f9f-…）：用户在酒馆面板选了「足控天堂」
-// （preset-fixture，bindings 里有记账），新开对话后：
+// 真实故障（线上实测 session-0000aaaa-…）：用户在酒馆面板选了「示例卡」
+// （preset-fixture-a3，bindings 里有记账），新开对话后：
 //   - 会话日志 1046 行，创建记录 = {"agentPreset":"standard"}，**一条 agent-preset/selected 都没有**
 //   - /api/tavern/current-session 返回 default ⇒ 注入的是 tavern-lite（川上富江）那张卡
 // 根因不是 bindings 写丢了，而是 `standard` 这个**出生默认值**被当成了用户的显式选择。
@@ -643,15 +643,15 @@ test('classifySessionPresetLines: 创建记录与显式切换分别取出（关�
   const lines = [
     '{"type":"session","id":"session-x","agentPreset":"standard","cwd":"D:/x"}',
     '{"type":"permission/preset","data":{}}',
-    '{"type":"agent-preset/selected","seq":3,"data":{"agentPreset":"preset-mtyx98fa-pdsrh1"}}',
+    '{"type":"agent-preset/selected","seq":3,"data":{"agentPreset":"preset-fixture-a1"}}',
     '{"type":"user/message","data":{}}',
   ]
-  assert.deepEqual(classifySessionPresetLines(lines), { explicit: 'preset-mtyx98fa-pdsrh1', creation: 'standard' })
+  assert.deepEqual(classifySessionPresetLines(lines), { explicit: 'preset-fixture-a1', creation: 'standard' })
 })
 
 test('classifySessionPresetLines: 只有创建记录时 explicit 为 null（线上 1046 行那例）', () => {
   const lines = [
-    '{"type":"session","id":"session-fb2f7f9f","agentPreset":"standard","cwd":"C:/deepseek harness"}',
+    '{"type":"session","id":"session-0000aaaa","agentPreset":"standard","cwd":"C:/deepseek harness"}',
     '{"type":"user/message","data":{"content":[{"type":"text","text":"开始"}]}}',
   ]
   assert.deepEqual(classifySessionPresetLines(lines), { explicit: null, creation: 'standard' })
@@ -660,7 +660,7 @@ test('classifySessionPresetLines: 只有创建记录时 explicit 为 null（线�
 test('classifySessionPresetLines: 取最新一条显式切换，不受更早的切换影响', () => {
   const lines = [
     '{"type":"session","agentPreset":"standard"}',
-    '{"type":"agent-preset/selected","seq":3,"data":{"agentPreset":"preset-mtyx98fa-pdsrh1"}}',
+    '{"type":"agent-preset/selected","seq":3,"data":{"agentPreset":"preset-fixture-a1"}}',
     '{"type":"agent-preset/selected","seq":9,"data":{"agentPreset":"tavern-lite"}}',
   ]
   assert.deepEqual(classifySessionPresetLines(lines), { explicit: 'tavern-lite', creation: 'standard' })
@@ -676,30 +676,30 @@ test('classifySessionPresetLines: 非数组 / 脏行不炸', () => {
 //   解析时视为未绑定、不注入；「面板绑定」必须用新格式对象表达。
 //   下面两条因此改成新格式 —— 守的还是同一件事：用户显式选的卡不得被出生默认值推翻。
 test('pickAuthoritativePresetFromLog: 出生默认值不得推翻面板绑定（本次修复的要害）', () => {
-  // 场景 = 线上 session-fb2f7f9f…：创建记录 standard、无显式切换、面板绑了某张卡
+  // 场景 = 线上 session-0000aaaa…：创建记录 standard、无显式切换、面板绑了某张卡
   assert.equal(
     pickAuthoritativePresetFromLog(null, 'standard', isTavern,
-      { mode: 'preset', presetId: 'preset-mtyx98fa-pdsrh1', source: 'panel' }),
-    'preset-mtyx98fa-pdsrh1'
+      { mode: 'preset', presetId: 'preset-fixture-a1', source: 'panel' }),
+    'preset-fixture-a1'
   )
   // 对照臂（P0-4）：同一条绑定若是**旧字符串格式**（legacy），不得静默注入 ——
-  // 这正是「足控天堂」被永久注入的那条路径。
+  // 这正是「示例卡」被永久注入的那条路径。
   assert.equal(
-    pickAuthoritativePresetFromLog(null, 'standard', isTavern, 'preset-mtyx98fa-pdsrh1'),
+    pickAuthoritativePresetFromLog(null, 'standard', isTavern, 'preset-fixture-a1'),
     'default'
   )
 })
 
 test('pickAuthoritativePresetFromLog: 显式切回内置预设时，bindings 依旧不得翻盘（旧语义保留）', () => {
   assert.equal(
-    pickAuthoritativePresetFromLog('standard', 'standard', isTavern, 'preset-mtyx98fa-pdsrh1'),
+    pickAuthoritativePresetFromLog('standard', 'standard', isTavern, 'preset-fixture-a1'),
     'default'
   )
 })
 
 test('pickAuthoritativePresetFromLog: 显式切到酒馆预设 → 用它，且忽略 bindings', () => {
   assert.equal(
-    pickAuthoritativePresetFromLog('tavern-lite', 'standard', isTavern, 'preset-mtyx98fa-pdsrh1'),
+    pickAuthoritativePresetFromLog('tavern-lite', 'standard', isTavern, 'preset-fixture-a1'),
     'tavern-lite'
   )
 })
@@ -707,13 +707,13 @@ test('pickAuthoritativePresetFromLog: 显式切到酒馆预设 → 用它，且�
 // ⚠ P0-5 语义变更：出生默认值（creation）**不再是注入依据** —— 与 legacy 同等对待。
 //   旧断言是「无显式切换、无绑定 → 退回出生默认值」，那正是「用户从没选过却被注入」的通道。
 test('pickAuthoritativePresetFromLog: 无显式切换、无绑定 → 出生默认值也**不注入**（P0-5）', () => {
-  assert.equal(pickAuthoritativePresetFromLog(null, 'preset-mtyx98fa-pdsrh1', isTavern, ''), 'default')
+  assert.equal(pickAuthoritativePresetFromLog(null, 'preset-fixture-a1', isTavern, ''), 'default')
   // 反证：同一张卡走**显式选择 / 显式绑定**时照常注入（否则这条测试是空跑）
-  assert.equal(pickAuthoritativePresetFromLog('preset-mtyx98fa-pdsrh1', null, isTavern, ''), 'preset-mtyx98fa-pdsrh1')
+  assert.equal(pickAuthoritativePresetFromLog('preset-fixture-a1', null, isTavern, ''), 'preset-fixture-a1')
   assert.equal(
-    pickAuthoritativePresetFromLog(null, 'preset-mtyx98fa-pdsrh1', isTavern,
-      { mode: 'preset', presetId: 'preset-mtyx98fa-pdsrh1', source: 'panel' }),
-    'preset-mtyx98fa-pdsrh1'
+    pickAuthoritativePresetFromLog(null, 'preset-fixture-a1', isTavern,
+      { mode: 'preset', presetId: 'preset-fixture-a1', source: 'panel' }),
+    'preset-fixture-a1'
   )
 })
 
@@ -727,14 +727,14 @@ test('pickAuthoritativePresetFromLog: 绑定优先于出生默认值', () => {
   // 会话出生在某张酒馆卡上，之后用户在面板改选另一张 → 听面板的
   assert.equal(
     pickAuthoritativePresetFromLog(null, 'tavern-lite', isTavern,
-      { mode: 'preset', presetId: 'preset-mtyx98fa-pdsrh1', source: 'panel' }),
-    'preset-mtyx98fa-pdsrh1'
+      { mode: 'preset', presetId: 'preset-fixture-a1', source: 'panel' }),
+    'preset-fixture-a1'
   )
   // 对照臂：顶部选择器选的（top-select）同样优先于出生默认值
   assert.equal(
     pickAuthoritativePresetFromLog(null, 'tavern-lite', isTavern,
-      { mode: 'preset', presetId: 'preset-mtyx98fa-pdsrh1', source: 'top-select' }),
-    'preset-mtyx98fa-pdsrh1'
+      { mode: 'preset', presetId: 'preset-fixture-a1', source: 'top-select' }),
+    'preset-fixture-a1'
   )
 })
 

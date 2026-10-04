@@ -7,7 +7,7 @@
  *      夹具把 mode 设成 global 打开闸门，见 openGate）。
  *
  * 本套件守的验收矩阵（交接文档 P0）：
- *   1 新建会话从不选预设 → 零注入，产物里搜不到哨兵 `_足控天堂2` / `超天酱`
+ *   1 新建会话从不选预设 → 零注入，产物里搜不到哨兵 `_示例卡2` / `示例卡B`
  *   2 显式绑定预设 A → 注入 A
  *   3 旧会话（creation=standard + 遗留绑定）→ legacy 不静默注入
  *   4 顶部显式选回 standard → 立即停止注入，binding 不得翻盘
@@ -68,7 +68,7 @@ const {
 // ── 临时酒馆目录布局 ────────────────────────────────────
 //  · ROOT/preset-a/{preset.yml,agent.cordis.yml,characters.json,worldbook.json}
 //  · ROOT/preset-b/…                      干净的第二张卡（并发/串卡用）
-//  · ROOT/preset-foot/…                   「足控天堂」那张误绑定的卡，带真实哨兵
+//  · ROOT/preset-foot/…                   「示例卡」那张误绑定的卡，带真实哨兵
 //  · ROOT/session-bindings.json           绑定记账（新旧格式混放）
 //  · SESSIONS_ROOT/<proj>/<sid>/session.jsonl   zstd 压缩的会话事件流
 const PRESET_A = 'preset-a'
@@ -77,7 +77,7 @@ const PRESET_FOOT = 'preset-foot'
 const SENTINEL_A = 'SENTINEL-A-2c81f0'
 const SENTINEL_B = 'SENTINEL-B-7d4e19'
 // 用户报的那张卡里的真实字样 —— 验收要求：正常会话产物里**搜不到**它们
-const FOOT_SENTINELS = ['_足控天堂2', '超天酱']
+const FOOT_SENTINELS = ['_示例卡2', '示例卡B']
 
 function makePreset(id, sentinel, extra) {
   const dir = path.join(ROOT, id)
@@ -155,9 +155,9 @@ apply({
 const assemble = sections['tavern:card'].text
 const ctxOf = (sid) => ({ agent: { session: { id: sid, header: { id: sid } } } })
 
-/** 断言产物里**没有**任何一张不该出现的卡（尤其足控天堂的两个哨兵）。 */
+/** 断言产物里**没有**任何一张不该出现的卡（尤其示例卡的两个哨兵）。 */
 function assertNoInjection(out, why) {
-  for (const s of FOOT_SENTINELS) assert.ok(!String(out).includes(s), '★ 泄漏了足控天堂哨兵 ' + s + '（' + why + '）')
+  for (const s of FOOT_SENTINELS) assert.ok(!String(out).includes(s), '★ 泄漏了示例卡哨兵 ' + s + '（' + why + '）')
 }
 
 // ══════════════════════════════════════════════════════════
@@ -272,7 +272,7 @@ test('[6] 绑定被删除的预设 → fail closed：返回 default，**绝不�
 
 // 场景 1：新建会话，从不选预设
 writeSessionLog('sid-s1', [creationLine('sid-s1', 'standard')])
-// 场景 3：旧会话 creation=standard + 遗留（旧字符串）绑定指向足控天堂
+// 场景 3：旧会话 creation=standard + 遗留（旧字符串）绑定指向示例卡
 writeSessionLog('sid-s3', [creationLine('sid-s3', 'standard')])
 // 场景 4：同上，但用户之后在顶部显式选回 standard
 writeSessionLog('sid-s4', [creationLine('sid-s4', 'standard'), explicitLine('sid-s4', 'standard')])
@@ -291,14 +291,14 @@ writeSessionLog('sid-w1', [creationLine('sid-w1', PRESET_A)])
 // P0-2 仍写用例：顶部显式选了 A
 writeSessionLog('sid-w2', [creationLine('sid-w2', 'standard'), explicitLine('sid-w2', PRESET_A)])
 // ── P0-5 creation 通道（验收方挖出的场景）——─────────────
-// 「creation = 足控天堂」+ 各种绑定形态，全部必须零注入。
+// 「creation = 示例卡」+ 各种绑定形态，全部必须零注入。
 writeSessionLog('sid-cr1', [creationLine('sid-cr1', PRESET_FOOT)])                                     // 无绑定
 writeSessionLog('sid-cr2', [creationLine('sid-cr2', PRESET_FOOT)])                                     // + 同卡 legacy 绑定
 writeSessionLog('sid-cr3', [creationLine('sid-cr3', PRESET_FOOT)])                                     // + 无关 legacy 绑定（验收方原始复现）
 writeSessionLog('sid-cr4', [creationLine('sid-cr4', PRESET_FOOT), explicitLine('sid-cr4', PRESET_FOOT)]) // 反证：显式选了它
 
 // 场景 1
-test('[7] 场景1：新建会话、从不选预设 → 零注入，产物里搜不到足控天堂哨兵', () => {
+test('[7] 场景1：新建会话、从不选预设 → 零注入，产物里搜不到示例卡哨兵', () => {
   setBindings({})
   const out = assemble(ctxOf('sid-s1'))
   assert.equal(out, '', '★ 新建会话不该有任何注入')
@@ -306,7 +306,7 @@ test('[7] 场景1：新建会话、从不选预设 → 零注入，产物里搜�
 })
 
 // 场景 3 + 场景 1 的加严版：带遗留绑定的旧会话
-test('[8] 场景3：creation=standard + 遗留（旧字符串）绑定足控天堂 → legacy 不静默注入', () => {
+test('[8] 场景3：creation=standard + 遗留（旧字符串）绑定示例卡 → legacy 不静默注入', () => {
   setBindings({ 'sid-s3': PRESET_FOOT })   // 旧格式，正是线上那 9 条的形态
   const out = assemble(ctxOf('sid-s3'))
   assert.equal(out, '', '★ legacy 绑定被当成用户显式绑定注入了 —— P0-4 失守')
@@ -314,7 +314,7 @@ test('[8] 场景3：creation=standard + 遗留（旧字符串）绑定足控天�
   // 反证：同一张卡走**显式**绑定时确实能注入（否则这条测试是空跑）
   setBindings({ 'sid-s3': { mode: 'preset', presetId: PRESET_FOOT, source: 'panel', at: Date.now(), rev: 1 } })
   const out2 = assemble(ctxOf('sid-s3'))
-  assert.ok(out2.includes(FOOT_SENTINELS[0]), '反证失败：显式绑定足控天堂时本就该注入（哨兵没出现说明夹具坏了）')
+  assert.ok(out2.includes(FOOT_SENTINELS[0]), '反证失败：显式绑定示例卡时本就该注入（哨兵没出现说明夹具坏了）')
 })
 
 // 场景 2
@@ -700,11 +700,11 @@ test('[25] 路由接线：/api/tavern/sessions 真的把这三个字段挂到每
 const PRESET_DESC = 'preset-desc'   // 没进注册表 → description 走 preset.yml
 const PRESET_META = 'preset-meta'   // 进了 presets.json → description 走注册表（权威）
 const PRESET_NODESC = 'preset-nodesc' // 两处都没有 description → ''
-const META_DESC = '🎭 _足控天堂2 | 📚 2本世界书（142条）| 最后更新: 2026/9/25'
+const META_DESC = '🎭 _示例卡2 | 📚 2本世界书（142条）| 最后更新: 2026/9/25'
 for (const id of [PRESET_DESC, PRESET_META, PRESET_NODESC]) makePreset(id, 'X-' + id)
 fs.writeFileSync(path.join(ROOT, PRESET_DESC, 'preset.yml'), 'name: 面板显示名\ndescription: 🎭 真名线索-来自yml\n', 'utf8')
-// 注册表里的 description 才是权威 —— 正是「团队测试」看不穿「足控天堂」的那条
-fs.writeFileSync(path.join(ROOT, PRESET_META, 'preset.yml'), 'name: 团队测试\ndescription: 这个是yml兜底不该被用上\n', 'utf8')
+// 注册表里的 description 才是权威 —— 正是「示例预设」看不穿「示例卡」的那条
+fs.writeFileSync(path.join(ROOT, PRESET_META, 'preset.yml'), 'name: 示例预设\ndescription: 这个是yml兜底不该被用上\n', 'utf8')
 fs.writeFileSync(path.join(ROOT, PRESET_NODESC, 'preset.yml'), 'name: 无描述预设\n', 'utf8')
 
 const META_PATH = path.join(ROOT, 'presets.json')
@@ -723,15 +723,15 @@ function withMetaPresets(extra, fn) {
 }
 
 test('[26] listAgentPresets() 返回 description：注册表优先，且既有字段一个不少', () => {
-  withMetaPresets([{ id: 'preset-meta-id', dir: PRESET_META, name: '团队测试', description: META_DESC, mode: 'roleplay' }], () => {
+  withMetaPresets([{ id: 'preset-meta-id', dir: PRESET_META, name: '示例预设', description: META_DESC, mode: 'roleplay' }], () => {
     const all = listAgentPresets()
     const meta = all.find(p => p.id === PRESET_META)
     const yml = all.find(p => p.id === PRESET_DESC)
 
-    // ① 注册表的 description（真名线索）真的出来了 —— 面板靠它看穿「团队测试」
+    // ① 注册表的 description（真名线索）真的出来了 —— 面板靠它看穿「示例预设」
     assert.ok(meta, '夹具错了：注册表里的预设没被列出来')
     assert.equal(meta.description, META_DESC, '★ description 没透传出去')
-    assert.ok(meta.description.includes('_足控天堂2'), '★ 真名线索丢了 —— 用户还是看不穿这张卡')
+    assert.ok(meta.description.includes('_示例卡2'), '★ 真名线索丢了 —— 用户还是看不穿这张卡')
     assert.equal(meta.description.includes('yml兜底'), false, '★ 注册表优先失效，退到了 yml')
     // ② 未进注册表的目录退到 preset.yml（不许是 undefined）
     assert.ok(yml, '夹具错了：未注册预设没被列出来')
@@ -741,7 +741,7 @@ test('[26] listAgentPresets() 返回 description：注册表优先，且既有�
     assert.deepEqual(Object.keys(meta).sort(), ['description', 'dir', 'id', 'isBuiltin', 'isTavern', 'name', 'origin', 'presetId'])
     assert.equal(meta.id, PRESET_META)
     assert.equal(meta.dir, PRESET_META)
-    assert.equal(meta.name, '团队测试', '★ name 语义被改了')
+    assert.equal(meta.name, '示例预设', '★ name 语义被改了')
     assert.equal(meta.isTavern, true, '★ isTavern 语义被改了（注册表命中即酒馆预设）')
     assert.equal(meta.isBuiltin, false)
     assert.equal(meta.origin, 'tavern', '★ origin 语义被改了')
@@ -768,16 +768,16 @@ test('[27] description 为空 / 缺失 / 类型异常 → 返回空串，绝不�
   }
 
   // 注册表里 description 为空串 / 缺失 / 非字符串 → 一律不炸，且不把脏值放出去
-  withMetaPresets([{ id: 'preset-meta-empty', dir: PRESET_META, name: '团队测试', description: '', mode: 'roleplay' }], () => {
+  withMetaPresets([{ id: 'preset-meta-empty', dir: PRESET_META, name: '示例预设', description: '', mode: 'roleplay' }], () => {
     const p = listAgentPresets().find(x => x.id === PRESET_META)
     assert.equal(typeof p.description, 'string')
-    assert.ok(!p.description.includes('_足控天堂2'), '这次注册表里就没有真名线索')
+    assert.ok(!p.description.includes('_示例卡2'), '这次注册表里就没有真名线索')
   })
-  withMetaPresets([{ id: 'preset-meta-bad', dir: PRESET_META, name: '团队测试', description: 42, mode: 'roleplay' }], () => {
+  withMetaPresets([{ id: 'preset-meta-bad', dir: PRESET_META, name: '示例预设', description: 42, mode: 'roleplay' }], () => {
     const p = listAgentPresets().find(x => x.id === PRESET_META)
     assert.equal(p.description, '这个是yml兜底不该被用上', '★ 非字符串 description 应当退化到 yml，而不是把 42 放出去')
   })
-  withMetaPresets([{ id: 'preset-meta-node', dir: PRESET_META, name: '团队测试', mode: 'roleplay' }], () => {
+  withMetaPresets([{ id: 'preset-meta-node', dir: PRESET_META, name: '示例预设', mode: 'roleplay' }], () => {
     const p = listAgentPresets().find(x => x.id === PRESET_META)
     assert.equal(p.description, '这个是yml兜底不该被用上', '★ 注册表缺 description 时应当退化到 yml')
   })
@@ -800,7 +800,7 @@ test('[28] 回归护栏：加 description 之后，既有字段在**全部**预�
 // ══════════════════════════════════════════════════════════
 // 七、P0-5 creation（出生默认值）通道：不再静默注入
 //
-//   验收方（独立对抗验证）实测：`creation = 足控天堂` + 一条无关 legacy 绑定
+//   验收方（独立对抗验证）实测：`creation = 示例卡` + 一条无关 legacy 绑定
 //   ⇒ 注入 135,808 字，而用户从未选过这张卡。线上当前不触发（部署默认 standard），
 //   但部署默认值一变、或出现带 preset 的创建路径，原故障原样复发。
 //
@@ -812,20 +812,20 @@ test('[28] 回归护栏：加 description 之后，既有字段在**全部**预�
 //     所以这里的「零注入」只能来自 creation 不再注入，不是被闸门挡掉的。
 // ══════════════════════════════════════════════════════════
 
-test('[29] creation = 足控天堂 + 无绑定 → 零注入（验收方挖出的场景）', () => {
+test('[29] creation = 示例卡 + 无绑定 → 零注入（验收方挖出的场景）', () => {
   setBindings({})
   const r = resolveAuthoritativePreset('sid-cr1')
   assert.equal(r.presetId, 'default', '★ creation 仍被当成注入依据')
   const out = assemble(ctxOf('sid-cr1'))
-  assert.equal(out, '', '★ creation = 足控天堂，用户从没选过却在注入')
+  assert.equal(out, '', '★ creation = 示例卡，用户从没选过却在注入')
   assertNoInjection(out, 'creation 无绑定')
   // 反证：这张卡走**显式选择**时确实会注入（否则上面两条是空跑 —— 夹具没造好）
   const outExplicit = assemble(ctxOf('sid-cr4'))
-  assert.ok(outExplicit.includes(FOOT_SENTINELS[0]), '反证失败：显式选了足控天堂时本就该注入')
+  assert.ok(outExplicit.includes(FOOT_SENTINELS[0]), '反证失败：显式选了示例卡时本就该注入')
 })
 
-test('[30] creation = 足控天堂 + 一条 legacy 绑定 → 零注入（验收方原始复现场景）', () => {
-  // ① legacy 绑定就指向足控天堂本身（线上那 9 条的形态）
+test('[30] creation = 示例卡 + 一条 legacy 绑定 → 零注入（验收方原始复现场景）', () => {
+  // ① legacy 绑定就指向示例卡本身（线上那 9 条的形态）
   setBindings({ 'sid-cr2': PRESET_FOOT })
   assert.equal(resolveAuthoritativePreset('sid-cr2').presetId, 'default')
   const out2 = assemble(ctxOf('sid-cr2'))
