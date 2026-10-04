@@ -175,13 +175,13 @@ test('[1] 真 cordis 宿主：插件能 mount，且用自己的 ctx 解析出宿
   assert.deepEqual(h.lib.inject, ['webServer', 'systemPrompt', 'sessions'], 'inject 声明（变了就要重看本测试）')
   assert.ok(h.routes.length >= 30, '插件应当注册了自己的路由，实际 ' + h.routes.length)
   const names = h.sections.map((s) => s.name)
-  for (const name of ['tavern:card', 'tavern:edits']) {
+  for (const name of ['tavern:card', 'tavern:edits', 'tavern:nsfw']) {
     assert.ok(names.includes(name), '缺少 system prompt 段：' + name)
   }
-  // 通用增强层（tavern:enhance）与 NSFW 破限段（tavern:nsfw）都已按用户要求删除 —— 不许复活
+  // 通用增强层（tavern:enhance）已按用户要求删除，不许复活；
+  // tavern:nsfw 现在是「**用户自填正文**的成人向提示段」槽位（默认关 + 空正文 ⇒ 零注入）。
   assert.equal(names.includes('tavern:enhance'), false, 'tavern:enhance 段必须保持删除')
-  assert.equal(names.includes('tavern:nsfw'), false, 'tavern:nsfw 段必须保持删除（这类要求交给 ST 预设）')
-  assert.equal(names.length, 2, '目前应当只有 2 个注入段（card / edits），实际：' + names.join(', '))
+  assert.equal(names.length, 3, '目前应当有 3 个注入段（card / edits / nsfw），实际：' + names.join(', '))
 
   const declState = await h.call('/api/tavern/preset-declarations')
   assert.deepEqual(declState.roster, ['standard', 'tavern-lite'],

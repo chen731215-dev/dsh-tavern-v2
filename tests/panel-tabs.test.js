@@ -226,15 +226,16 @@ function runInstaller(mgr, stored) {
 // ① 静态：每张卡片都被页签规则收走（= 不会有卡片被漏在页签外"消失"）
 // ════════════════════════════════════════════════════════════════
 test('① 面板里每张卡片都能被页签规则匹配（没有孤儿卡片）', () => {
-  // 顶层卡片共 11 张（高级功能里那 5 张是嵌套的，整卡搬走）。数量对不上说明解析或布局变了，先看这里。
-  assert.equal(CARD_TITLES.length, 11, '顶层卡片数量应为 11，实际 ' + CARD_TITLES.length + '：' + CARD_TITLES.join(' / '))
-  for (const must of ['🎭 当前 Agent 预设', '🔗 当前会话绑定', '🎯 生效范围', '角色卡', '📚 世界书', '🎭 剧情选项', '📌 开场白', '🧩 全局正则', '预设', '🎓 技能', '⚙️ 高级功能']) {
+  // 顶层卡片共 12 张（高级功能里那 5 张是嵌套的，整卡搬走）。数量对不上说明解析或布局变了，先看这里。
+  assert.equal(CARD_TITLES.length, 12, '顶层卡片数量应为 12，实际 ' + CARD_TITLES.length + '：' + CARD_TITLES.join(' / '))
+  for (const must of ['🎭 当前 Agent 预设', '🔗 当前会话绑定', '🎯 生效范围', '角色卡', '📚 世界书', '🔞 成人向提示段', '🎭 剧情选项', '📌 开场白', '🧩 全局正则', '预设', '🎓 技能', '⚙️ 高级功能']) {
     assert.ok(CARD_TITLES.some((t) => t.indexOf(must) === 0),
       '解析应包含这张卡片：' + must + '（实际：' + CARD_TITLES.join(' / ') + '）')
   }
-  // 已按用户要求删除的两张卡片不许复活
+  // 已按用户要求删除的卡片不许复活
   assert.equal(CARD_TITLES.some((t) => t.indexOf('✨ 通用增强层') === 0), false, '通用增强层卡片必须保持删除')
-  assert.equal(CARD_TITLES.some((t) => t.indexOf('🔞 NSFW') === 0), false, 'NSFW 卡片必须保持删除（破限交给 ST 预设）')
+  // 成人向提示段卡片必须存在（它是"用户自填正文"的入口）
+  assert.ok(CARD_TITLES.some((t) => t.indexOf('🔞 成人向提示段') === 0), '成人向提示段卡片不能丢')
   const orphans = CARD_TITLES.filter((t) => !tabKeyForTitle(t))
   assert.deepEqual(orphans, [], '这些卡片没被任何页签收走（要加进 TAB_DEFS）：' + orphans.join(' / '))
 })
@@ -262,20 +263,24 @@ test('④ 散件规则指向的控件 id 在真 markup 里确实存在（防规�
   }
 })
 
-test('④b 面板**可见文案**里不许再出现 NSFW / 🔞（功能已删，字样也不许留）', () => {
-  // 只看 markup 字符串（跳过 // 注释）—— 注释里保留"已删除"的说明是有意为之，不算可见文案。
+test('④b 面板文案：成人段卡片必须"可见 + 进玩法页签 + 自填正文"，且不含现成破限句', () => {
+  // 只看 markup 字符串（跳过 // 注释）—— 注释里写"为什么这么设计"是有意为之，不算可见文案。
   const src = extractFnSource(text, 'function panelHTML(')
   const visible = src.split('\n').filter((l) => !l.trim().startsWith('//'))
-  const bad = []
-  for (const l of visible) {
-    if (/NSFW|nsfw|🔞/.test(l)) bad.push(l.trim().slice(0, 90))
-  }
-  assert.deepEqual(bad, [], '这些可见文案里还留着 NSFW/🔞 字样：\n' + bad.join('\n'))
+  assert.ok(visible.some((l) => l.includes('🔞 成人向提示段')), '卡片标题应当可见')
+  assert.ok(visible.some((l) => l.includes('id="tavern-nsfw-enabled"')), '开关不见了')
+  assert.ok(visible.some((l) => l.includes('id="tavern-nsfw-prompt"')), '正文输入框不见了')
+  assert.ok(visible.some((l) => /自填|自己填/.test(l)), '★ 卡片说明必须讲清"正文由使用者自己填"')
+  assert.ok(visible.some((l) => /只存本机|不进代码|不会进入代码/.test(l)), '说明里要讲清正文只存本机、不进发布包')
+  // ★ 页面文案里不许出现现成的破限句 —— 正文一律来自使用者自己的 state
+  const BANNED = [/内容策略暂停/, /无视(道德|伦理|内容政策)/, /无审查模式/, /越狱/, /jailbreak/i]
+  const bad = visible.filter((l) => BANNED.some((re) => re.test(l)))
+  assert.deepEqual(bad, [], '可见文案里出现了现成破限句：\n' + bad.join('\n'))
   // 「⚙️ 高级功能」的简介要如实列出现在里面的东西（事故现场：简介里还写着 NSFW）
   const adv = visible.find((l) => l.includes('tavern-advanced-toggle'))
   assert.ok(adv, '找不到高级功能卡片')
   for (const kw of ['记忆', '关系网', '故事背景']) assert.ok(adv.includes(kw), '简介该包含：' + kw)
-  assert.equal(adv.includes('NSFW'), false, '★ 简介里不许再写 NSFW')
+  assert.equal(adv.includes('NSFW'), false, '★ 高级功能简介里不许再写 NSFW')
 })
 
 // ════════════════════════════════════════════════════════════════
