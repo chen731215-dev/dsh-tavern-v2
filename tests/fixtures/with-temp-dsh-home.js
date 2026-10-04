@@ -20,7 +20,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** 与 greeting-seed.test.js 里断言语义保持一致：沿用原真卡的预设 id。 */
-export const FIXTURE_PRESET_ID = 'preset-fixture'
+export const FIXTURE_PRESET_ID = 'preset-fixture-a3'
 /** 最小开场白：形状对齐真卡 first_mes —— 以【主页】开头、带 <VariableInsert> 结构
  * （卡的「[0] 主页」正则按它做锚点），且长度 > 100 字符（测试断言"原文没被引导顶掉"）。
  * 真卡那句是 2921 字，这里用循环拼出等价长度的假文本，不搬任何真实卡内容。 */
@@ -49,7 +49,7 @@ try {
     fs.writeFileSync(
       charsPath,
       JSON.stringify([{
-        name: '_足控天堂2',
+        name: '_示例卡2',
         enabled: true,
         first: FIXTURE_GREETING,
         desc: '夹具卡：只为回归测试提供 first 字段',

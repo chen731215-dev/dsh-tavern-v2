@@ -1,7 +1,7 @@
 /**
  * P0-6 注入观测日志回归测试
  *
- * 背景：用户报「一个原生 `agentPreset = standard` 的会话，每轮都在注入足控天堂
+ * 背景：用户报「一个原生 `agentPreset = standard` 的会话，每轮都在注入示例卡
  *       角色卡 + 世界书」。根因链上三处嫌疑（陈旧自动绑定盖过出生默认 / 解析出
  *       酒馆预设就自动写绑定 / allowlist 双空等价全放行）都还没有**取证手段**：
  *       旧日志只有 `sid / presetId / presetName` 三列，看不出 presetId 是从哪条

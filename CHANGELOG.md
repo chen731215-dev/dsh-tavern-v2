@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.5.5 (2026-10-04)
+
+### 🔒 隐私：清洗仓库与发布包里的「本机标识」（无行为变更）
+
+仓库和发布包里残留了**开发机上真实的预设目录 id、预设显示名、角色卡名** —— 它们出现在历史
+故障的注释与回归夹具中。这些**不是聊天记录、也不含角色卡/世界书正文**，但属于使用者的私有标识，
+不应公开。
+
+已全部替换为虚构占位，并复查到 **0 残留**：
+
+| 类别 | 数量 | 替换为 |
+|---|---|---|
+| 预设目录 id（真实 slug） | 5 个 | `preset-fixture-a1` … `preset-fixture-a5` |
+| 预设显示名 | 1 个 | `示例预设` |
+| 角色卡名 | 3 个 | `示例卡` / `示例卡B` / `示例角色卡` |
+| 会话 id | 2 个 | `session-0000aaaa` / `session-0000bbbb` |
+
+- 涉及 **11 个文件**：`lib/index.js`、`lib/client.manager.bundle.js`、`CHANGELOG.md` 与 8 个测试文件；
+- 替换**自洽**（夹具值与其断言一起改）⇒ 语义不变，全量回归 **403/403 通过**、语法检查全过；
+- 已发布旧版本（≤ 2.5.4）无法回溯修改，npm 上仍带这些字符串；**2.5.5 起干净**。
+
+### ✅ 验证
+
+- 全量 **403/403 通过**；
+- 复查：仓库 + 已发布 tarball 里真实标识 **0 处**，且无 token、无本机绝对路径、包内不含 `tests/`。
+
 ## v2.5.4 (2026-10-04)
 
 ### 🧹 删除「自动播种开场白」整套退役机制
@@ -325,7 +351,7 @@ SillyTavern 的「世界书导出」也是 `.json`（形如 `{entries:{…}}`）
   注入判据不能因此失效）。
 
 真实数据 dry-run 验证（只读）：`default` → 声明成 `preset-tavern-lite`；
-`preset-fixture` 原样；目标 `~/.dsh/profiles/desktop/cordis.patch.yml`
+`preset-fixture-a2` 原样；目标 `~/.dsh/profiles/desktop/cordis.patch.yml`
 现有 1303 字节（含你手写的 providers/密钥）在合并后**原样保留在前**（合并后 10682 字节）。
 
 - `nativePresetRoster()`：读 DSH **原生名册**（`agentPresets.list()`）——顶部选择器里到底有什么。
@@ -341,7 +367,7 @@ SillyTavern 的「世界书导出」也是 `.json`（形如 `{entries:{…}}`）
 - `GET /api/tavern/preset-declarations` 增加名册字段，dry-run 就能看出「哪些酒馆预设 DSH 还没声明」。
 
 真实数据验证（只读）：两条路线都对 `default`→`preset-tavern-lite`、
-`preset-fixture` 渲染成功；路线 B 的 bundle 目录 `~/.dsh/tavern-data/preset-bundle/`
+`preset-fixture-a2` 渲染成功；路线 B 的 bundle 目录 `~/.dsh/tavern-data/preset-bundle/`
 在 dry-run 阶段**不存在**（没写盘）；你的 profile 补丁层哈希全程未变。
 
 ⚠️ **仍未写入你的配置** —— 写盘入口已经就绪且默认 dry-run，但要不要按下这个键、
@@ -663,7 +689,7 @@ TypeError"—— 复查发现整段在 `/* */` 块注释里（扫描只跳过 `/
 写盘位置与幂等、删除幂等、磁盘清单（目录式/扁平式/去重）、绑定读写与非法名过滤、开关生效、
 会话提示只给指针不给正文、以及**真 apply + 真路由**的端到端（列表→生成→绑定→删除）。
 另外用**从 `app.asar` 整包解出的 DSH 自带 `yaml` 解析器**校验了生成的 SKILL.md：
-三份真实预设（`tavern-lite` / `preset-fixture` / `preset-muoerasc-fzyxqg`）的 frontmatter
+三份真实预设（`tavern-lite` / `preset-fixture-a2` / `preset-fixture-a4`）的 frontmatter
 都能被正确读出，`name` 全部合规、`description` 非空且无裸换行。
 
 > 未做（留作后续）：用 `ctx.skills.register(...)` 在**会话作用域**注册 runtime skill
@@ -824,7 +850,7 @@ system prompt 顶部、和作为 skill 注入到末尾，模型照做的概率�
 - **B. 手动注入防重复**：`POST /api/tavern/greeting/insert` 若会话 log 里已有
   `source.model === 'character-card'` 的 assistant 楼（播种与手动注入打同一个标记），
   返回 `200 { ok:false, error:'greeting-already-present' }`，不再叠加第二条开场白
-  （用户截图里足控会话出现多条【主页】开场白就是这么来的）。
+  （用户截图里示例会话出现多条【主页】开场白就是这么来的）。
   ★ 判据按 `source.model`，**不比文本** —— 占位符会被卡正则换掉，比文本必然漏判。
 - **C. 面板提示**：「📌 开场白」卡收到 `greeting-already-present` 时显示
   「ℹ️ 本会话已有开场白，无需重复注入」（蓝色提示，不是报错）。
@@ -865,7 +891,7 @@ system prompt 顶部、和作为 skill 注入到末尾，模型照做的概率�
 `extractStatusBarHtml` 读的是 `regexScripts` / `data.extensions.regex_scripts`）。
 
 后果：明明能算出来的状态栏被客户端直接跳过，iframe 永远空白。实测同一张卡
-（足控天堂2）服务端返回 **210219 字节** 的状态栏 HTML，客户端 SKIPPED。
+（示例卡2）服务端返回 **210219 字节** 的状态栏 HTML，客户端 SKIPPED。
 由于真机上极少有卡把 Zod 脚本命名为 `zod`，`zodSource` 基本恒为空 ——
 **等于所有预设都渲染不出状态栏**。
 
@@ -1350,7 +1376,7 @@ state.storyBackground  = text / e.target.value / ''
 
   ```
   type=session                 agentPreset=standard               ← DSH 建会话时的内置预设
-  type=agent-preset/selected   agentPreset=preset-mtyx98fa-pdsrh1 ← 用户确实在顶部选了
+  type=agent-preset/selected   agentPreset=preset-fixture-a1 ← 用户确实在顶部选了
   ```
 
   > 附带说明：DSH 的会话文件是**追加写的多帧 zstd**，
