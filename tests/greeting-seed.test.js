@@ -22,6 +22,21 @@
  *     ⇒ { ok:false, error:'greeting-already-present' }（用户截图里足控会话出现多条
  *     【主页】开场白，就是这个按钮被点了多次叠加出来的）。
  *
+ * 修复四（2026-10-04 事故闸 —— 本文件最重要的一节）：
+ *   · 事故：开场白播种把 5 个会话写坏（b6fe9f69、0ca0c5ea、1c9128b9、8478f900、ecfba613），
+ *     报 `SessionFormatError: system/message requires a protected first surface head`，
+ *     会话**永久打不开**，只能删掉日志里那条抢跑消息才救回来。
+ *   · 根因：日志（v4）要求受保护 head 只能由「还没有任何 surface 事件时出现的
+ *     system/message」建立；而播种在第一个回合之前就写了 assistant/message ——
+ *     旧注释里的"网关实测接受 assistant 打头"只对**模型网关**成立，**会话日志层**从来不允许。
+ *   · 修法：三处 surface 写入点（seedGreetingMessage / appendGreetingPreamble /
+ *     appendGreetingToSessionEnd）共用闸门 `canAppendGreetingSurface(session)`：
+ *     日志里已经有 system/message 才允许写。新会话在第一个回合之前**没有** system/message
+ *     ⇒ 必然拒绝 —— 也就是说"新会话自动开场白"在当前 DSH 版本下不可实现，
+ *     开场白只能对**已经跑过回合**的会话用 POST /api/tavern/greeting/insert 手动注入。
+ *   · 因此本文件里所有"能播种成功"的夹具都必须先 `appendSystemHead()` 建立 head，
+ *     而"新会话"的真实形态由「事故闸」那几个用例专门覆盖（含"一个字节都不许写"的断言）。
+ *
  * 本文件单独存在，不动 tests/core.test.js。
  * 运行：node --test tests/greeting-seed.test.js
  */
@@ -50,6 +65,8 @@ const {
   pickGreetingCard,
   greetingIdsOf,
   GREETING_PREAMBLE,
+  canAppendGreetingSurface,
+  GREETING_SURFACE_TYPES,
 } = _test
 
 // ── 夹具卡（内容见文件顶部 FIXTURE_*）─────────────────────
@@ -212,6 +229,45 @@ function fakeAgent(session, phase = { kind: 'idle', lastTurn: 0 }) {
   return { session, phase }
 }
 
+// ── 2026-10-04 事故闸的夹具 ─────────────────────────────────
+// 硬规则：会话日志里**受保护 head 只能由「还没有任何 surface 事件时出现的 system/message」
+// 建立**。任何 user/assistant 消息抢在它前面写入 ⇒ 之后第一次 system/message 落盘即抛
+//   SessionFormatError: system/message requires a protected first surface head
+// ⇒ 该会话永久打不开。本插件的开场白播种正是这么写坏了 5 个会话
+// （b6fe9f69 / 0ca0c5ea / 1c9128b9 / 8478f900 / ecfba613）。
+// 所以三处写入点（seedGreetingMessage / appendGreetingPreamble / appendGreetingToSessionEnd）
+// 共用闸门 `canAppendGreetingSurface()`；下面两个夹具覆盖"闸门放行"与"闸门拦截"两种世界。
+
+/**
+ * 在日志头部落一条空的 `system/message`（= 建立受保护 head）。
+ * `content: []` 是刻意的：真实现里空 content 的 system 楼投影为空，不会污染
+ * 「消息面首条必须是开场白」这类断言。
+ */
+function appendSystemHead(session) {
+  session.append('system/message', {
+    turn: 0,
+    step: 0,
+    message: { id: 'sys-head', role: 'system', content: [] },
+  }, { surfaceOp: 'append' })
+  return session
+}
+
+/** 「head 已建立、但还没开过回合」的会话 —— 唯一能通过闸门去验证播种机制的形态。 */
+function fakeSessionWithHead(id) {
+  return appendSystemHead(new FakeSession(id))
+}
+
+/** 把 head 落在一个已打开的 step 里（真会话就是这样产生的：head 来自第一个回合）。 */
+function appendSystemHeadInStep(session, turn, step) {
+  session.append('system/message', {
+    turn,
+    step,
+    message: { id: 'sys-' + turn + '-' + step, role: 'system', content: [] },
+  }, { surfaceOp: 'append' })
+  return session
+}
+
+
 // ══════════════════════════════════════════════════════════
 // 1. 开场白提取
 // ══════════════════════════════════════════════════════════
@@ -231,11 +287,11 @@ test('greetingTextFor: 未知预设返回空串（不抛）', () => {
 // 2. 播种：新会话的首条消息必须是开场白（新时机判重）
 // ══════════════════════════════════════════════════════════
 
-test('seedGreetingMessage: 新会话消息面为 [assistant(开场白), user(开始)]，首条即开场白', () => {
+test('seedGreetingMessage: 已建立 head 的会话，消息面为 [assistant(开场白), user(开始)]，首条即开场白', () => {
   const greeting = greetingTextFor(REAL_PRESET_ID)
   assert.ok(greeting.length > 0, '前提：真卡有开场白')
 
-  const session = new FakeSession()
+  const session = fakeSessionWithHead()
   const lastTurn = seedGreetingMessage(session, greeting)
 
   assert.equal(lastTurn, 1, '应当回报 turn 1')
@@ -271,7 +327,7 @@ test('seedGreetingMessage: 新会话消息面为 [assistant(开场白), user(开
 //   实测网关接受 assistant 打头 ⇒ 这条引导白付代价，已移除。
 test('seedGreetingMessage: 播种后日志里**没有** user 引导消息（GREETING_PREAMBLE 不再落盘）', () => {
   const greeting = greetingTextFor(REAL_PRESET_ID)
-  const session = new FakeSession()
+  const session = fakeSessionWithHead()
   assert.equal(seedGreetingMessage(session, greeting), 1, '前提：播种成功')
 
   assert.equal(
@@ -292,7 +348,7 @@ test('seedGreetingMessage: 播种后日志里**没有** user 引导消息（GREE
 // 引导消息没有消失，只是挪到了「assistant 打头被拒」的兜底路径上。
 test('appendGreetingPreamble: 只有网关拒 assistant 打头时才补种一条 user 引导', () => {
   const greeting = greetingTextFor(REAL_PRESET_ID)
-  const session = new FakeSession()
+  const session = fakeSessionWithHead()
   seedGreetingMessage(session, greeting)
   assert.equal(session.log.filter((e) => e.type === 'user/message').length, 0, '前提：正常播种不带引导')
 
@@ -303,23 +359,27 @@ test('appendGreetingPreamble: 只有网关拒 assistant 打头时才补种一条
   assert.ok(textOf(session.deriveMessages()[0]).length > 100, '开场白原文没被引导顶掉')
 })
 
-// ★ 本次修复的对照臂（旧实现必红）：
-//   新会话的日志里允许有 agent-preset/selected 等前置事件 —— 旧判重
-//   `log.length === 0` 在这种会话上永远为假，播种从未触发。
-//   新判重是「日志里还没有 turn/assistant」，所以这里必须能种进去。
-test('对照臂（旧实现必红）：非空日志但没开过回合 ⇒ 照样播种成功', () => {
+// ★★ 2026-10-04 事故闸（本文件最重要的一条）：
+//   新会话的日志里一定有 agent-preset/selected 这类前置事件，但**没有 system/message**
+//   —— 它要等第一个回合开跑才落盘。旧实现正是在这里把开场白写成头一条 assistant/message，
+//   于是该回合的 system/message 一落盘就抛
+//   `SessionFormatError: system/message requires a protected first surface head`，
+//   会话永久打不开（真实事故：b6fe9f69 / 0ca0c5ea / 1c9128b9 / 8478f900 / ecfba613）。
+//   现在的期望：**拒绝，而且一个字节都不许写。**
+test('事故闸：非空日志但还没有 system/message（新会话的真实形态）⇒ 拒绝播种，且不写任何事件', () => {
   const greeting = greetingTextFor(REAL_PRESET_ID)
   const session = new FakeSession()
-  // 模拟新会话创建后的前置事件（不是回合、不是消息）
+  // 模拟新会话创建后的前置事件（不是回合、不是消息，也不是 surface 事件）
   session.log.push({ type: 'session/created', seq: session.log.length, time: Date.now(), data: {} })
   session.log.push({ type: 'agent-preset/selected', seq: session.log.length, time: Date.now(), data: { presetId: REAL_PRESET_ID } })
-  assert.equal(session.log.length > 0, true, '前提：日志非空（旧实现在这里就会拒绝）')
+  const before = session.log.length
+  assert.equal(session.log.length > 0, true, '前提：日志非空')
 
-  const lastTurn = seedGreetingMessage(session, greeting)
-  assert.equal(lastTurn, 1, '★ 非空日志的新会话必须照样能种（旧实现返回 -1）')
-  const messages = session.deriveMessages()
-  assert.equal(messages[0].role, 'assistant')
-  assert.equal(textOf(messages[0]), greeting)
+  assert.equal(seedGreetingMessage(session, greeting), -1, '★ 没有受保护 head 时不许播种')
+  assert.equal(session.log.length, before, '★ 一个事件都不许写（写下 assistant/message 就等于把会话写坏）')
+  assert.equal(session.log.filter((e) => e.type === 'turn/start').length, 0, '连回合骨架都不许开')
+  assert.equal(session.log.filter((e) => e.type === 'assistant/message').length, 0)
+  assert.equal(session.deriveMessages().length, 0, '消息面必须保持为空')
 })
 
 test('seedGreetingMessage: 开过回合的会话拒绝播种（第二轮、切预设都不会重复种）', () => {
@@ -340,10 +400,12 @@ test('seedGreetingMessage: 开过回合的会话拒绝播种（第二轮、切�
 
 test('seedGreetingMessage: 同一会话只种一次（种过第二次返回 -1）', () => {
   const greeting = greetingTextFor(REAL_PRESET_ID)
-  const session = new FakeSession()
+  const session = fakeSessionWithHead()
   assert.equal(seedGreetingMessage(session, greeting), 1)
-  // 即使把日志清空（模拟 spill/compaction 把早期事件挪走），greetingSeeds 也挡住重播
-  session.log.length = 0
+  // 模拟 spill/compaction 把早期事件挪走，但**保留 head** —— 这样闸门会放行，
+  // 唯一能挡住重播的就只剩 greetingSeeds 记账了，这条断言才真的在测它。
+  session.log = [session.log[0]]
+  assert.equal(canAppendGreetingSurface(session), true, '前提：head 还在 ⇒ 闸门放行（否则这条测不出 greetingSeeds）')
   assert.equal(seedGreetingMessage(session, greeting), -1, '同一会话不得重复种')
 })
 
@@ -379,7 +441,7 @@ test('安全阀：预设没有开场白时不种', () => {
 })
 
 test('成功路径：种进 turn 1 并把 phase.lastTurn 推到 1；同一会话第二次评估跳过', () => {
-  const session = new FakeSession()
+  const session = fakeSessionWithHead()
   const agent = fakeAgent(session)
   const r1 = seedGreetingForSession(agent, REAL_PRESET_ID, { greetingSeedEnabled: true }, 'test')
   assert.equal(r1.ok, true, '第一次评估应当成功：' + JSON.stringify(r1))
@@ -388,6 +450,120 @@ test('成功路径：种进 turn 1 并把 phase.lastTurn 推到 1；同一会话
   const r2 = seedGreetingForSession(agent, REAL_PRESET_ID, { greetingSeedEnabled: true }, 'test')
   assert.equal(r2.ok, false)
   assert.equal(r2.reason, 'not-fresh', '同一会话第二次评估必须跳过')
+})
+
+// ══════════════════════════════════════════════════════════
+// 2b-2. 🔒 2026-10-04 事故闸：绝不允许把 surface 事件写在首个 system/message 之前
+//
+//   5 个会话被写坏（b6fe9f69 / 0ca0c5ea / 1c9128b9 / 8478f900 / ecfba613），
+//   报错 `SessionFormatError: system/message requires a protected first surface head`，
+//   修法是删掉日志里那条抢跑的开场白。这一段把"永不再犯"钉在测试里。
+// ══════════════════════════════════════════════════════════
+
+test('闸门真值表：只有「首个 surface 事件是 system/message」才放行', () => {
+  // ① 全新会话：一个 surface 事件都没有 ⇒ 拦（现在写就抢在 system/message 前面）
+  assert.equal(canAppendGreetingSurface(new FakeSession()), false, '没有 head ⇒ 必须拦')
+  // ② head 已建立 ⇒ 放行
+  assert.equal(canAppendGreetingSurface(fakeSessionWithHead()), true, 'head 在 ⇒ 放行')
+  // ③ 首个 surface 事件是 user/assistant（模拟已经被写坏的日志）⇒ 拦，不许再动它
+  const poisonedByUser = new FakeSession()
+  poisonedByUser.append('user/message', { id: 'u', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] }, { surfaceOp: 'append' })
+  assert.equal(canAppendGreetingSurface(poisonedByUser), false, '首个 surface 不是 system/message ⇒ 拦')
+  const poisonedByAssistant = new FakeSession()
+  poisonedByAssistant.log.push({ type: 'assistant/message', seq: 0, time: Date.now(), data: { turn: 1, step: 1, stream: [], message: { role: 'assistant', content: [] } } })
+  assert.equal(canAppendGreetingSurface(poisonedByAssistant), false, 'assistant 抢跑（就是本插件的旧行为）⇒ 拦')
+  // ④ 非 surface 的前置事件不参与判定（真新会话就是这个形态）
+  const pre = new FakeSession()
+  pre.log.push({ type: 'session/created', seq: 0, time: Date.now(), data: {} })
+  pre.log.push({ type: 'agent-preset/selected', seq: 1, time: Date.now(), data: { presetId: 'x' } })
+  assert.equal(canAppendGreetingSurface(pre), false, '前置事件不算 surface ⇒ 仍然拦')
+  // ⑤ 判据用的类型集合必须与 DSH 的 SURFACE_TYPES 一致（少一个就会漏判）
+  assert.deepEqual(
+    [...GREETING_SURFACE_TYPES].sort(),
+    ['assistant/message', 'developer/message', 'system/message', 'tool/result', 'user/message'],
+    '★ 类型集合必须与 DSH 网关一致，否则闸门会漏',
+  )
+})
+
+test('事故闸：seedGreetingForSession 在新会话上报 no-system-head，且一个字节都不写', () => {
+  const session = new FakeSession()
+  session.log.push({ type: 'agent-preset/selected', seq: 0, time: Date.now(), data: { presetId: REAL_PRESET_ID } })
+  const before = session.log.length
+  const agent = fakeAgent(session)
+  const r = seedGreetingForSession(agent, REAL_PRESET_ID, { greetingSeedEnabled: true }, 'test')
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'no-system-head', '原因必须是"head 还没建立"，不是含糊的 not-fresh：' + JSON.stringify(r))
+  assert.equal(session.log.length, before, '★ 拒绝时不许写任何事件')
+  assert.equal(agent.phase.lastTurn, 0, '拒绝时不许推进 phase.lastTurn')
+})
+
+test('事故闸：手动注入到「还没跑过回合」的会话必须抛明确错误（不是静默写坏）', () => {
+  const session = new FakeSession()
+  const before = session.log.length
+  assert.throws(
+    () => appendGreetingToSessionEnd(session, '开场白'),
+    /还没跑过任何回合/,
+    '★ 必须明确拒绝并说清原因（旧实现会直接写下去，把会话写坏）',
+  )
+  assert.equal(session.log.length, before, '★ 抛错时同样不许留下半截回合')
+  // 同一个会话在建立 head 之后就能注入了
+  appendSystemHead(session)
+  const turn = appendGreetingToSessionEnd(session, '开场白')
+  assert.ok(turn > 0, 'head 建立后应当可以注入')
+})
+
+test('事故闸：appendGreetingPreamble 在新会话上返回 false 且不写', () => {
+  const session = new FakeSession()
+  const before = session.log.length
+  assert.equal(appendGreetingPreamble(session), false, '★ 补种 user 引导同样是 surface 事件，必须被拦')
+  assert.equal(session.log.length, before, '不许写任何事件')
+  assert.equal(session.log.filter((e) => e.type === 'user/message').length, 0)
+  // 建立 head 之后补种才被允许
+  appendSystemHead(session)
+  assert.equal(appendGreetingPreamble(session), true)
+})
+
+test('事故现场重演：旧行为写出的日志会被网关判 corrupt，新行为不会', () => {
+  // DSH 网关的受保护 head 校验（本地镜像；原文见 asar 的 restoreReleasedV3Artifact）：
+  //   system/message 到达时若「已有 surface 事件但 head 未建立」⇒ 抛错。
+  const gatewayHeadThrows = (events) => {
+    let hasSurface = false
+    let head
+    for (const e of events) {
+      if (e.type === 'system/message') {
+        if (hasSurface && head === undefined) return true
+        if (e.surfaceOp === 'append' && !hasSurface) head = e.seq
+      }
+      if (GREETING_SURFACE_TYPES.has(e.type)) hasSurface = true
+    }
+    return false
+  }
+
+  // ① 旧行为（修复前）：新会话里先写一条 assistant 开场白，用户随后发消息 ⇒ 真回合落 system/message
+  const bad = new FakeSession()
+  bad.append('turn/start', { turn: 1 })
+  bad.append('step/start', { turn: 1, step: 1 })
+  bad.append('assistant/message', {
+    turn: 1, step: 1, stream: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    message: { id: 'g', role: 'assistant', source: { kind: 'model', provider: 'tavern', model: 'character-card' }, content: [{ type: 'text', text: '开场白' }] },
+  }, { surfaceOp: 'append' })
+  bad.append('step/end', { turn: 1, step: 1 })
+  bad.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  bad.append('turn/start', { turn: 2 })
+  bad.append('step/start', { turn: 2, step: 1 })
+  bad.append('system/message', { turn: 2, step: 1, message: { id: 's2', role: 'system', content: [] } }, { surfaceOp: 'append' })
+  assert.equal(
+    gatewayHeadThrows(bad.log), true,
+    '★ 旧行为必须被判 corrupt —— 这就是那 5 个会话永久打不开的原因（SessionFormatError）',
+  )
+
+  // ② 新行为（现在）：同样场景下播种被闸门拒绝 ⇒ 日志里首个 surface 事件就是真回合的 system/message
+  const good = new FakeSession()
+  assert.equal(seedGreetingMessage(good, '开场白'), -1, '新行为：拒绝播种')
+  good.append('turn/start', { turn: 1 })
+  good.append('step/start', { turn: 1, step: 1 })
+  good.append('system/message', { turn: 1, step: 1, message: { id: 's1', role: 'system', content: [] } }, { surfaceOp: 'append' })
+  assert.equal(gatewayHeadThrows(good.log), false, '★ 新行为的日志必须能通过网关校验')
 })
 
 // ══════════════════════════════════════════════════════════
@@ -433,6 +609,41 @@ test('接线护栏：旧的「log.length === 0」判重必须彻底消失（本�
   )
 })
 
+test('接线护栏：三处 surface 写入点都必须过 canAppendGreetingSurface 闸门（删掉就变红）', () => {
+  const SLICES = [
+    ['seedGreetingMessage', 'function seedGreetingMessage(', 'function appendGreetingPreamble('],
+    ['appendGreetingPreamble', 'function appendGreetingPreamble(', 'function noteGreetingSeed('],
+    ['appendGreetingToSessionEnd', 'function appendGreetingToSessionEnd(', 'function insertGreetingForSession('],
+  ]
+  const slices = {}
+  for (const [name, from, to] of SLICES) {
+    const start = INDEX_SRC.indexOf(from)
+    const end = INDEX_SRC.indexOf(to, start)
+    assert.ok(start >= 0 && end > start, '切片范围异常：' + name)
+    const src = INDEX_SRC.slice(start, end)
+    slices[name] = src
+    assert.ok(
+      src.includes('canAppendGreetingSurface('),
+      '★ ' + name + ' 没过闸门 —— 它会在首个 system/message 之前写 surface 事件，把会话写坏到永久打不开（2026-10-04 事故重演）',
+    )
+  }
+  // 判据本身不能是永真的：把闸门调用从源码里挖掉，同一个断言必须失败
+  const mutated = slices.seedGreetingMessage.replace(/canAppendGreetingSurface\(session\)/g, 'true')
+  assert.ok(
+    !mutated.includes('canAppendGreetingSurface('),
+    '挖掉闸门调用后判据必须不再命中（否则这个护栏是空的）',
+  )
+})
+
+test('接线护栏：闸门函数本身按「首个 surface 事件」判定，且类型集合与 DSH 同步', () => {
+  const start = INDEX_SRC.indexOf('function canAppendGreetingSurface(')
+  assert.ok(start >= 0, '★ 闸门函数 canAppendGreetingSurface 不见了')
+  const end = INDEX_SRC.indexOf('\n}', start)
+  const src = INDEX_SRC.slice(start, end)
+  assert.ok(/GREETING_SURFACE_TYPES\.has\(event\.type\)/.test(src), '必须用类型集合筛出 surface 事件')
+  assert.ok(/return event\.type === 'system\/message'/.test(src), '必须要求首个 surface 事件是 system/message')
+})
+
 test('接线护栏：seedGreetingMessage 里不再 append user/message（引导消息已移除）', () => {
   const start = INDEX_SRC.indexOf('function seedGreetingMessage(')
   const end = INDEX_SRC.indexOf('function appendGreetingPreamble(', start)
@@ -476,6 +687,9 @@ test('appendGreetingToSessionEnd: 旧会话（已有两回合）注入到末尾�
   for (let i = 1; i <= 2; i++) {
     session.append('turn/start', { turn: i })
     session.append('step/start', { turn: i, step: 1 })
+    // ★ 真会话的第一个回合会先落一条 system/message —— 受保护 head 就是它建立的。
+    //   少了它，手动注入会被事故闸拦下（这正是闸门要防的形态）。
+    if (i === 1) appendSystemHeadInStep(session, i, 1)
     session.append('assistant/message', {
       turn: i, step: 1,
       message: { id: 'a' + i, role: 'assistant', source: { kind: 'model', provider: 'x', model: 'y' }, content: [{ type: 'text', text: '第' + i + '楼' }] },
@@ -504,6 +718,9 @@ test('appendGreetingToSessionEnd: 旧会话（已有两回合）注入到末尾�
 test('appendGreetingToSessionEnd: 有未闭合回合（正在生成中）时拒绝注入', () => {
   const session = new FakeSession()
   session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 1 })
+  // head 已建立 ⇒ 事故闸放行，才能测到「正在生成中」这条分支本身
+  appendSystemHeadInStep(session, 1, 1)
   assert.throws(() => appendGreetingToSessionEnd(session, '开场白'), /未闭合/, '正在生成中必须明确拒绝，不能埋不变量炸弹')
 })
 
@@ -528,6 +745,7 @@ test('hasCardGreeting: 只认 character-card 楼，模型自己的回复不算�
   assert.equal(hasCardGreeting(session), false, '空会话不算有开场白')
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 1 })
+  appendSystemHeadInStep(session, 1, 1)
   session.append('assistant/message', {
     turn: 1, step: 1,
     message: { id: 'a1', role: 'assistant', source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-chat' }, content: [{ type: 'text', text: '普通回复' }] },
@@ -541,7 +759,7 @@ test('hasCardGreeting: 只认 character-card 楼，模型自己的回复不算�
 
 // ★ 对照臂（改成按文本比较就红）：占位符会变，判重不能比文本。
 test('对照臂（按文本比较必红）：占位符换过之后，判重仍要认出这是同一条开场白', () => {
-  const session = new FakeSession()
+  const session = fakeSessionWithHead()
   seedGreetingMessage(session, '【主页】占位符=第一版')
   assert.equal(hasCardGreeting(session), true, '前提：播种后算已有开场白')
   // 模拟卡正则把占位符替换掉（落盘文本已经不是注入时的原文）
@@ -556,6 +774,7 @@ test('insertGreetingForSession: 第一次注入成功，第二次返回 greeting
   // 造一回合普通历史（旧会话场景：注入按钮本来就是给它的）
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 1 })
+  appendSystemHeadInStep(session, 1, 1)
   session.append('assistant/message', {
     turn: 1, step: 1,
     message: { id: 'a1', role: 'assistant', source: { kind: 'model', provider: 'x', model: 'y' }, content: [{ type: 'text', text: '第1楼' }] },
@@ -576,7 +795,7 @@ test('insertGreetingForSession: 第一次注入成功，第二次返回 greeting
 })
 
 test('insertGreetingForSession: 自动播种已种过的会话，手动注入同样拒绝', () => {
-  const session = new FakeSession()
+  const session = fakeSessionWithHead()
   assert.equal(seedGreetingMessage(session, greetingTextFor(REAL_PRESET_ID)), 1, '前提：自动播种成功')
   const r = insertGreetingForSession(session, REAL_PRESET_ID)
   assert.equal(r.ok, false)
@@ -716,7 +935,7 @@ function assertSettlementShape(ev, label) {
 }
 
 test('settlement：播种的 assistant 楼必须带 stream 数组', () => {
-  const session = new FakeSession()
+  const session = fakeSessionWithHead()
   const turn = seedGreetingMessage(session, greetingTextFor(REAL_PRESET_ID))
   assert.ok(turn > 0, '播种应成功')
   const am = session.log.filter((e) => e.type === 'assistant/message')
@@ -728,6 +947,7 @@ test('settlement：手动注入到会话末尾的 assistant 楼同样带 stream 
   const session = new FakeSession()
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 1 })
+  appendSystemHeadInStep(session, 1, 1)
   session.append('assistant/message', {
     turn: 1, step: 1, stream: [],
     message: { id: 'old', role: 'assistant', source: { kind: 'model', provider: 'x', model: 'y' }, content: [{ type: 'text', text: '旧楼' }] },
