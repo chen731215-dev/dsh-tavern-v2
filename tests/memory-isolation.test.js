@@ -98,12 +98,12 @@ test('行为：会话没有自己的记忆时，注入为空（预设记忆不�
     '全新会话不该拿到预设共享文件里的记忆')
 
   // 会话有了自己的记忆 → 只注入自己的
-  const own = '# 记忆总结 [2026/9/1 10:00:00]\n这条会话自己的剧情：主角在足控天堂点了一单。\n'
+  const own = '# 记忆总结 [2026/9/1 10:00:00]\n这条会话自己的剧情：主角在示例卡点了一单。\n'
   fs.mkdirSync(path.join(tmp, 'tavern-data', 'sessions', 'session-fresh-0000'), { recursive: true })
   fs.writeFileSync(path.join(tmp, 'tavern-data', 'sessions', 'session-fresh-0000', 'memory.md'), own, 'utf8')
 
   const out = mod.buildSummaryText('session-fresh-0000', 'preset-under-test')
-  assert.ok(out.includes('足控天堂点了一单'), '会话自己的记忆必须照常注入')
+  assert.ok(out.includes('示例卡点了一单'), '会话自己的记忆必须照常注入')
   assert.ok(!out.includes('安柏'), '别的卡的剧情不得出现')
 
   fs.rmSync(tmp, { recursive: true, force: true })

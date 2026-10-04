@@ -85,13 +85,13 @@ function makePreset(id, opts = {}) {
 // ① skill 名字：必须合规（否则 DSH 整条丢弃）
 // ════════════════════════════════════════════════════════════════
 test('① skill 名字一律合规（DSH 的 SKILL_NAME：小写字母数字 + 单短横线）', () => {
-  const ids = ['preset-fixture', 'default', 'tavern-lite', '有中文的预设', 'UPPER Case', '  spaced  ', '--x--', '']
+  const ids = ['preset-fixture-a2', 'default', 'tavern-lite', '有中文的预设', 'UPPER Case', '  spaced  ', '--x--', '']
   for (const id of ids) {
     const n = skillNameForPreset(id)
     assert.ok(SKILL_NAME_RE.test(n), `预设 ${JSON.stringify(id)} → 生成的名字 ${JSON.stringify(n)} 不合规`)
     assert.ok(n.startsWith('tavern-'), '统一前缀 tavern-，避免和其它 skill 撞名')
   }
-  assert.equal(skillNameForPreset('preset-fixture'), 'tavern-preset-fixture')
+  assert.equal(skillNameForPreset('preset-fixture-a2'), 'tavern-preset-fixture-a2')
   assert.equal(skillNameForPreset('UPPER Case'), 'tavern-upper-case')
   // ★ 目录名本身叫 tavern-xxx 时不许叠成 tavern-tavern-xxx（默认预设就是这个目录名）
   assert.equal(skillNameForPreset('tavern-lite'), 'tavern-lite')
