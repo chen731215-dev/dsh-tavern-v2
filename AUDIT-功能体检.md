@@ -21,7 +21,7 @@
 | 🎭 剧情选项 | `plotOptions` 进注入（5417-5418） |
 | ✨ 通用增强层 | 独立段 `tavern:enhance`（5515-5528），`enhanceRuntimeEnabled` 为假就整段不注入 |
 | 🎯 生效范围 | `mode` / `allowCwds` / `allowSessions` / `disabledCwds` / `cwdPresets` 真参与 `decideInjectionScope`，注入区里被读（5176-5181、5385-5386） |
-| 📌 开场白 | 不是"注入"而是把 `first_mes` **播种成一条会话消息** —— 这是正确做法 |
+| 📌 开场白 | 面板按钮 → `POST /api/tavern/greeting/insert` → `appendGreetingToSessionEnd` 把 `first_mes` 注入会话**末尾**（★ 2026-10-04：新会话的「自动播种」会把会话日志写坏到永久打不开，已整体删除；现在只有手动注入，且要求会话已跑过一个回合 —— 过闸门 `canAppendGreetingSurface`） |
 | 📖 故事背景 | 客户端折进预设 yml 的 `# 故事背景` 段（`client.manager.bundle.js:393-394`，截断 6000 字）→ 由 DSH 当作预设内容注入 |
 | ✍️ 写作辅助 | `bannedWords` 进注入；「上下文压缩」= 带 `rounds` 的 `/api/tavern/summarize` |
 | 🔧 AI 工具 / 🌐 联网 / 🚫 反八股 | `toolsEnabled`（5272）、`networkEnabled`（5275、5319，另 2053 控制 `dsh-tool-web`）、`antiCliche`（5290）都在注入区被读 |
