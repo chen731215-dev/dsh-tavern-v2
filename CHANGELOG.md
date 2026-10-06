@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.5.6 (未发布)
+
+### 安全：修复关系网 / 世界书渲染的 HTML 注入
+
+客户端两处渲染把数据直接拼进 `innerHTML`，而数据来源是**用户导入的 SillyTavern 角色卡与世界书**。
+
+| 位置 | 问题 |
+|---|---|
+| 关系网图谱（两个渲染函数，约 806 行） | 该区间内 `esc(` 命中 **0 次**；`e.source` / `e.target` / `label` 直接拼接 |
+| 世界书条目正文 | `(entry.content \|\| '')` 直接拼进 `<textarea>`。同一段渲染里 `comment` 与 `keys` 至少替换了双引号，**只有正文完全没做** |
+
+**复现**：构造角色卡，`name` 写 `</div><img src=x onerror=alert(1)>`，导入后打开关系网面板即弹窗。
+世界书条目的 `content` 写 `</textarea><img src=x onerror=alert(1)>` 可突破标签、破坏整张卡片的表单结构。
+
+**修复**：
+
+- 两处渲染的插值全部改经 `esc()`；
+- `esc()` 补上单引号（原来只转义 `& < > "`）。原 `escAttr` 的实现
+  `esc(s).replace(/"/g, '&quot;')` 是一行**空操作**——`"` 早被 `esc` 换掉了，
+  名字叫 `escAttr` 却没有额外保护，会让调用方误以为它更安全；
+- 顺带修正「删除预设成功后却报网络错误」：`#tavern-session-preset` 已随选择器改版移除，
+  `sessionPresetSelect` 恒为 `null`，取 `.options` 抛出的异常被外层 `.catch` 当成网络故障。
+  实际预设**已经删掉了**，用户看到失败会重复点击，且自动切绑不执行，会话可能指向已删除的预设。
+
+### 验证
+
+- `lib/index.js` / `lib/utils.js` / `lib/client.manager.bundle.js` 三个模块 `node --check` 通过；
+- 逐个运行 19 个测试文件（不用 `&&` 串联，避免首个失败掩盖后续）：
+  **18 通过 / 1 失败** —— `greeting-seed.test.js`，**该用例在 v2.5.5 上本来就失败**，本次未引入新的失败。
+
 ## v2.5.5 (2026-10-04)
 
 ### 🔒 隐私：清洗仓库与发布包里的「本机标识」（无行为变更）
