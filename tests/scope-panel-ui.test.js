@@ -152,9 +152,9 @@ test('面板 HTML：生效范围卡的关键元素齐全（三按钮 + 状态行
   const html = fs.readFileSync(BUNDLE, 'utf8')
   assert.match(html, /🎯 生效范围/)
   assert.match(html, /id="tavern-scope2-status"/)
-  assert.match(html, /id="tavern-scope-global"[^>]*>🌍 所有会话生效</)
-  assert.match(html, /id="tavern-scope-session"[^>]*>💬 仅当前会话</)
-  assert.match(html, /id="tavern-scope-cwd"[^>]*>📁 当前工作区</)
+  assert.match(html, /id="tavern-scope-global"[^>]*>所有会话生效</)
+  assert.match(html, /id="tavern-scope-session"[^>]*>仅当前会话</)
+  assert.match(html, /id="tavern-scope-cwd"[^>]*>当前工作区</)
   assert.match(html, /id="tavern-scope-allow-chips"/)
   assert.match(html, /id="tavern-scope-disable-chips"/)
 })
@@ -165,7 +165,7 @@ test('挂载：三个按钮各挂且只挂一个 click handler，初次加载即
   assert.equal((els['#tavern-scope-session'].listeners.click || []).length, 1)
   assert.equal((els['#tavern-scope-cwd'].listeners.click || []).length, 1)
   assert.ok(fetchLog.some((f) => f.url === '/api/tavern/state' && (!f.opts || !f.opts.method)), '初次加载应 GET state')
-  assert.match(els['#tavern-scope2-status'].textContent, /🌍/)
+  assert.match(els['#tavern-scope2-status'].textContent, /所有会话生效/)
 })
 
 // ════════════════════════════════════════════════════════════════
@@ -307,9 +307,9 @@ test('对照臂：chips × 被改坏（把剩余数组发成空数组）后，�
 // ════════════════════════════════════════════════════════════════
 test('状态行：global → 🌍（含排除数）；allowlist 非空 → 📁 M 个会话 / K 个工作区', async () => {
   const a = await runPanel({ state: { mode: 'global', disabledCwds: ['C:/1', 'C:/2'] } })
-  assert.match(a.els['#tavern-scope2-status'].textContent, /🌍 所有会话生效中（已排除 2 个目录）/)
+  assert.match(a.els['#tavern-scope2-status'].textContent, /所有会话生效中（已排除 2 个目录）/)
   const b = await runPanel({ state: { mode: 'allowlist', allowCwds: ['C:/a'], allowSessions: ['s1', 's2'] } })
-  assert.match(b.els['#tavern-scope2-status'].textContent, /📁 白名单模式：2 个会话 \/ 1 个工作区/)
+  assert.match(b.els['#tavern-scope2-status'].textContent, /白名单模式：2 个会话 \/ 1 个工作区/)
 })
 test('状态行：allowlist 两名单皆空 → 红色警示 + 一键开启指引', async () => {
   const { els } = await runPanel({ state: { mode: 'allowlist', allowCwds: [], allowSessions: [] } })

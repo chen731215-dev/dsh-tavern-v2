@@ -1,0 +1,16 @@
+{
+  "bareHexDirect": 164,
+  "bareHexFallback": 204,
+  "bareRgbaDirect": 123,
+  "darkAssumption": 63,
+  "inlineStyleAttr": 276,
+  "cssTextAssign": 70,
+  "paddingVariants": 59,
+  "fontSizeVariants": 10,
+  "radiusVariants": 11,
+  "zIndexValues": 11,
+  "zIndexInt32Max": 6,
+  "important": 0,
+  "globalSelectors": 4,
+  "focusVisible": 3
+}

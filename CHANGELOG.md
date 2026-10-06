@@ -29,6 +29,117 @@
 - `lib/index.js` / `lib/utils.js` / `lib/client.manager.bundle.js` 三个模块 `node --check` 通过；
 - 逐个运行 19 个测试文件（不用 `&&` 串联，避免首个失败掩盖后续）：
   **18 通过 / 1 失败** —— `greeting-seed.test.js`，**该用例在 v2.5.5 上本来就失败**，本次未引入新的失败。
+## v2.6.0 (未发布)
+
+### 面板信息架构重做
+
+原页签 `会话 / 内容 / 玩法 / 增强` **不在同一维度**（作用域 / 素材类型 / 功能 / 兜底），
+「增强」是个没有归类逻辑的兜底筐，页签名本身也不自释。按**用户意图**重切为 5 个页签，
+每个页签带一行说明：
+
+| 页签 | 放什么 |
+|---|---|
+| 设定库 | 预设 · 当前会话绑定 · 角色卡 · 世界书 · 开场白 · 故事背景 |
+| 行为逻辑 | 生效范围 · 剧情选项 · 全局正则 · 违禁词 |
+| 记忆与关系 | 记忆与总结 · 上下文压缩 · 角色关系网 |
+| 诊断与高级 | 回复体检 |
+| 其他 | 技能（Skill） |
+
+**拆除了「高级功能」折叠容器**：它把 5 张互不相干的卡装在一个 `display:none` 的容器里，
+其中「记忆与总结」是这类插件的核心功能，却默认不可见。
+
+**归属判定方式换了**：原先靠卡片标题的**字符串前缀**匹配（`if (t.indexOf(ts[j]) === 0)`），
+改一个标题文案，卡片就**静默掉出页签**、变成「永远可见」，不报错、无测试守护。
+现改为在 markup 上显式声明 `data-tv-tab="…"`，并加运行时自检——未被任何页签收纳的卡片会在控制台点名。
+
+### 视觉：改为宿主同款的平铺分组
+
+原先 15 张卡各是一个盒子，而 DSH 官方设置界面（`dsh-client-ui-primitives/settings-form/fields.module.css`）是：
+
+```css
+.field          { display:flex; flex-direction:column; gap:6px; padding:12px 0 }
+.field + .field { border-top: 0.5px solid var(--dsw-alias-border-l2) }
+```
+
+即**竖直平铺 + 细线分隔**，全程没有卡片盒子。这是「插件观感与宿主不一致」的结构性原因。
+
+- 卡片从「盒子」降级为「分组」；
+- **去掉 6 张卡各自硬编码的彩色边框**（蓝 / 橙 / 绿 / 红 / 蓝 / 紫）——它们与主题无关，是自选配色；
+- 描边改为官方的 `0.5px`（原来全用 `1px`，高 DPI 屏上明显更粗）；
+- 新增第 2 层语义令牌 `--tv-*`（只映射官方令牌，不引入新颜色）与 5 个组件基元
+  `.tv-btn` / `.tv-field` / `.tv-card` / `.tv-item` / `.tv-status`，数值对齐官方 primitives 实测值；
+- 补齐间距阶梯 `--tv-sp-1..8` 与层级阶梯 `--tv-z-*`（官方没有这两类令牌，是本插件自建的尺度）。
+
+### 修复：不存在的主题令牌
+
+插件用到的 21 种 `--dsw-*` 令牌里，有 **7 种在主题中并未定义**（共 35 处）。
+`var()` 取不到值 → 该声明被丢弃 → **永远回退到硬编码颜色**，这正是「改主题后插件配色不跟随」的根因。
+
+| 误用（不存在） | 出现 | 改为 |
+|---|---:|---|
+| `--dsw-alias-border-default` | 14 | `border-l1` |
+| `--dsw-alias-label-accent` | 10 | `brand-primary` |
+| `--dsw-alias-text-primary` | 3 | `label-primary` |
+| `--dsw-alias-bg-raised` | 3 | `bg-layer-1` |
+| `--dsw-alias-bg-elevated` | 2 | `bg-overlay` |
+| `--dsw-alias-text-secondary` | 2 | `label-secondary` |
+| `--dsw-alias-bg-accent` | 1 | `brand-primary` |
+
+### 清理：装饰性 emoji 与类名
+
+- 移除 **36 种装饰性 emoji**，客户端 emoji 字符数 **544 → 348**；保留语义性标记（成功 / 失败 / 警告）；
+- 类名前缀统一：原先一个插件的 UI 用了 **9 套前缀**
+  （`tavern-` / `t-` / `dsh-tv-` / `dz-` / `dsh-pb-` / `ts-` / `tsit-` / `tw-` / 无前缀），
+  收编范围内统一为 `tv-*` / `tv-*__element` / `tv-*--modifier`；
+- 删除 **5 条无任何引用的死 CSS**（`t-btn-toggle` / `t-divider` / `t-mode-group` / `t-status-ok` / `t-status-err`）。
+  其中 `t-status-ok` / `t-status-err` 值得记一笔：这两个状态色类**早就定义好了却从未被引用过**，
+  状态颜色一律靠 JS 内联 `style.color` 现写——这反证了「有规范却被系统性绕过」；
+- 重写 12 条卡片描述：去掉实现细节（「开关即时写入服务端」）、
+  位置引用（「由上方…决定」，页签重排后已失效）、未展开的简称（「ST」→「SillyTavern」）。
+
+### 新增：样式预算断言（执行机制）
+
+新增 `tools/assert-style-budget.mjs` + `tools/style-budget.json`（`npm run check:style`）。
+
+理由：本插件**曾经已经有规范却被绕过**——`.t-status-ok` / `.t-card` / `.t-btn-sm` 早就写好了，
+JS 里仍有 74 处 `style.color=` / `style.background*=` 直接写死颜色。
+**没有执行机制的规范等于没有规范。**
+
+14 个指标，**只降不升**（唯一例外 `:focus-visible` 越高越好）。指标刻意区分
+「裸值」与 `var()` 回退值——用令牌绝不能算成违规；且统计前先剔除注释
+（本仓库注释里大量引用官方 CSS，不剔除会出现「越写文档越超预算」）。
+
+### 修复：两个崩溃
+
+- **`#tavern-preset-batch` 批量删除路径**：按钮常驻 `display:none`（用户从来看不见），
+  其处理器引用 `#tavern-agent-preset-list`（markup 里没有）与 `sessionPresetSelect`（恒为 `null`），
+  点下去必抛 `TypeError`。整条路径已删除，保留可用的那套；
+- **卡片折叠失效**：卡片类名判定写作 `String(el.className).indexOf('t-card') >= 0`，
+  而 `'tv-card'.indexOf('t-card') === -1` —— 改名后的卡片会**静默掉出页签体系**。
+  已改为整词匹配 `/(?:^|\s)(?:t|tv)-card(?:\s|$)/`。此问题由 `tests/panel-tabs.test.js` 抓出。
+
+### 验证
+
+- 四个模块 `node --check` 通过；
+- 逐个运行 19 个测试文件：**18 通过 / 1 失败** —— `greeting-seed.test.js`
+  （**该用例在 v2.5.5 上本来就失败**），未引入新的失败；
+- `tools/assert-style-budget.mjs` 全部指标达标；
+- 结构自检：`panelHTML` 标签配平（309 个标签栈式配对）、15 张卡片深度全为 1、无重复 id。
+
+**指标实测变化**（`main` → 本版本，均剔除注释）：
+
+| 指标 | 之前 | 之后 | 变化 |
+|---|---:|---:|---:|
+| 内联 `style="` | 305 | 227 | −78 |
+| 裸 `rgba()` | 139 | 121 | −18 |
+| 裸 hex | 168 | 158 | −10 |
+| 深色假设 `rgba(255\|0,…)` | 70 | 62 | −8 |
+| `cssText=` | 72 | 70 | −2 |
+| `font-size` 裸值种数 | 11 | 10 | −1 |
+| `padding` 裸值种数 | 50 | 59 | **+9** |
+
+> `padding` 是唯一上升的指标：新增组件基元引入了设计标尺取值，而 5 个页签目前只收编了 1 个。
+> 随其余页签收编完成，旧的零散取值应被替换、该数字回落。预算已把上限锁定，不允许继续上升。
 
 ## v2.5.5 (2026-10-04)
 

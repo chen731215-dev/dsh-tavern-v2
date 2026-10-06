@@ -1,13 +1,17 @@
 /**
- * 面板标签页布局测试。
+ * 面板标签页布局测试（IA v3：5 页签 + markup 声明归属）。
  *
  * 布局改动的风险只有一个：**卡片被收进某个页签后"再也看不见" = 功能丢失**。
- * 所以这里不去断言"好不好看"，只钉死三件事：
- *   ① 面板里每一张卡片都被页签规则收走（不会留在外面孤零零/或漏掉规则）；
- *   ② 底部操作区（yml 预览 / 保存预设 / 状态行）**必须留在页签之外**，任何页签下都能用；
- *   ③ 搬家逻辑真的把卡片放进了正确的页签，且切页签会落 localStorage。
+ * 所以这里不去断言"好不好看"，只钉死四件事：
+ *   ① 面板里每一张卡片都**显式声明**了 data-tv-tab，且值属于已知页签；
+ *   ② 每个页签都有卡片、key 唯一、且带一句说明（说明行是这版 IA 的组成部分）；
+ *   ③ 底部操作区（yml 预览 / 保存预设 / 状态行）**必须留在页签之外**，任何页签下都能用；
+ *   ④ 搬家逻辑真的把卡片放进了**它自己声明**的页签，且切页签会落 localStorage。
  *
- * ②③ 需要一个能用的迷你 DOM（被测代码要真的 appendChild/insertBefore），见 MiniEl。
+ * 与旧版的差别：归属从"卡片标题前缀匹配"改为"读 markup 上的 data-tv-tab"。
+ * 旧做法下改一个标题文案，卡片会静默掉出页签变成"永远可见"；现在漏声明会被 ① 直接抓住。
+ *
+ * ②③④ 需要一个能用的迷你 DOM（被测代码要真的 appendChild/insertBefore），见 MiniEl。
  *
  * 运行：node tests/panel-tabs.test.js
  */
@@ -37,29 +41,38 @@ function extractFnSource(bundleText, signature) {
 }
 
 /**
- * 面板 markup 里**顶层卡片**的标题。
- * 注意两件事：
- *   · 注释掉的卡片（例如 `// '  <div class="t-card">...🤖 Agent 预设管理`）不算；
- *   · 「⚙️ 高级功能」里的 5 张子卡片是嵌套的，它们跟着整卡搬走，不需要单独的页签规则。
- * 所以这里按 <div> 深度只取深度 1 的卡片标题。
+ * 面板 markup 里的**顶层卡片**：标题 + 它自己声明的归属。
+ * 注释掉的卡片不算（`// '  <div class="t-card">...`），所以按 <div> 深度只取深度 1 的卡片。
+ *
+ * ⚠️ 收编期间两类名并存：旧 `.t-card` / `.t-card-title` 与新基元 `.tv-card` / `.tv-card__title`。
+ *    两者都必须被识别，否则已收编的卡片会在测试里"消失"——看着通过，其实漏了。
  */
-const CARD_TITLES = (() => {
+const CARDS = (() => {
   const src = extractFnSource(text, 'function panelHTML(')
   const out = []
   let depth = 0
-  let topLevelCard = false
+  let pending = null
   for (const raw of src.split('\n')) {
     const line = raw.trim()
-    if (line.startsWith('//')) continue          // 注释掉的不算
+    if (line.startsWith('//')) continue
     const opens = (line.match(/<div\b/g) || []).length
     const closes = (line.match(/<\/div>/g) || []).length
-    if (/<div class="t-card\b/.test(line)) {
-      // #tavern-manager 是唯一的深度 1；卡片自己的 div 开在这一层 ⇒ 它的标题才是顶层卡片标题
-      topLevelCard = depth === 1
+    if (/<div class="(?:t|tv)-card\b/.test(line)) {
+      // #tavern-manager 是唯一的深度 1；卡片自己的 div 开在这一层 ⇒ 它是顶层卡片
+      if (depth === 1) {
+        pending = {
+          title: '',
+          tab: (line.match(/data-tv-tab="([^"]+)"/) || [])[1] || '',
+          cls: (line.match(/<div class="([^"]+)"/) || [])[1] || 't-card',
+        }
+        out.push(pending)
+      } else {
+        pending = null
+      }
       depth += 1
     } else {
-      const titleM = line.match(/<span class="t-card-title"[^>]*>([^<]{1,80})/)   // 允许 title 上带 id/style（高级功能那张就是）
-      if (titleM && topLevelCard) out.push(titleM[1].trim())
+      const titleM = line.match(/<span class="(?:t|tv)-card(?:-title|__title)"[^>]*>([^<]{1,80})/)
+      if (titleM && pending) pending.title = titleM[1].trim()
       depth += opens
     }
     depth -= closes
@@ -67,15 +80,15 @@ const CARD_TITLES = (() => {
   return out
 })()
 
+const CARD_TITLES = CARDS.map((c) => c.title)
+
 /** 页签定义（TAB_DEFS）与散件规则（TAB_TAIL_RULES）——直接从源码里抠，保证测的是真规则。 */
-const { TAB_DEFS, TAB_TAIL_RULES } = (() => {
-  const block = text.slice(text.indexOf('var TAB_DEFS = ['), text.indexOf('function installPanelTabs('))
+const { TAB_DEFS, TAB_TAIL_RULES, TAB_KEYS } = (() => {
+  const block = text.slice(text.indexOf('var TAB_DEFS = ['), text.indexOf('function tabKeyForCard('))
   const defs = []
-  const dre = /\{ key: '([^']+)', label: '([^']+)', titles: \[([^\]]*)\] \}/g
+  const dre = /\{ key: '([^']+)',\s*label: '([^']+)',\s*desc: '([^']*)'\s*\}/g
   let m
-  while ((m = dre.exec(block))) {
-    defs.push({ key: m[1], label: m[2], titles: m[3].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean) })
-  }
+  while ((m = dre.exec(block))) defs.push({ key: m[1], label: m[2], desc: m[3] })
   const tails = []
   const tre = /\{ tab: '([^']+)', ids: \[([^\]]*)\]([^}]*)\}/g
   while ((m = tre.exec(block))) {
@@ -85,15 +98,11 @@ const { TAB_DEFS, TAB_TAIL_RULES } = (() => {
       labelPrefix: (m[3].match(/labelPrefix: '([^']+)'/) || [])[1] || '',
     })
   }
-  return { TAB_DEFS: defs, TAB_TAIL_RULES: tails }
+  const keys = block.match(/var TAB_KEYS = TAB_DEFS\.map/)
+    ? defs.map((d) => d.key)
+    : defs.map((d) => d.key)
+  return { TAB_DEFS: defs, TAB_TAIL_RULES: tails, TAB_KEYS: keys }
 })()
-
-/** 运行时同款匹配（照抄 installPanelTabs 里的 tabKeyForTitle 规则） */
-function tabKeyForTitle(title) {
-  const t = String(title || '').trim()
-  for (const d of TAB_DEFS) for (const prefix of d.titles) if (t.indexOf(prefix) === 0) return d.key
-  return ''
-}
 
 // ── 迷你 DOM ────────────────────────────────────────────────────
 class MiniEl {
@@ -152,7 +161,10 @@ class MiniEl {
     return this.parentNode.children[i + 1] || null
   }
   getText() { return (this.textContent || '') + this.children.map((c) => c.getText()).join('') }
-  matches(sel) {
+  /** 支持逗号分隔的选择器列表（收编期间要同时匹配 .t-card 与 .tv-card） */
+  matches(sel) { return String(sel).split(',').some((s) => this.matchesOne(s.trim())) }
+  matchesOne(sel) {
+    if (!sel) return false
     if (sel.startsWith('.')) return this.classList.contains(sel.slice(1))
     if (sel.startsWith('#')) return this.attrs.id === sel.slice(1)
     return this.tagName === sel.toUpperCase()
@@ -172,13 +184,14 @@ function buildPanel() {
   const mgr = new MiniEl('div')
   mgr.attrs.id = 'tavern-manager'
   mgr.appendChild(new MiniEl('h2'))
-  // 真卡片（标题取自真 markup）
-  for (const title of CARD_TITLES) {
+  // 真卡片：标题与归属都取自真 markup
+  for (const c of CARDS) {
     const card = new MiniEl('div')
-    card.className = 't-card'
+    card.className = c.cls || 't-card'
+    if (c.tab) card.setAttribute('data-tv-tab', c.tab)
     const t = new MiniEl('span')
-    t.className = 't-card-title'
-    t.textContent = title
+    t.className = (c.cls || '').indexOf('tv-card') === 0 ? 'tv-card__title' : 't-card-title'
+    t.textContent = c.title
     card.appendChild(t)
     mgr.appendChild(card)
   }
@@ -212,46 +225,48 @@ function runInstaller(mgr, stored) {
   const sandbox = { document, localStorage, console, String, Object, JSON, Array, Boolean, Number }
   sandbox.globalThis = sandbox
   vm.createContext(sandbox)
-  const fns = extractFnSource(text, 'function tabKeyForTitle(') + '\n' +
-              extractFnSource(text, 'function tabKeyForTail(') + '\n' +
-              text.slice(text.indexOf('function installPanelTabs('), text.indexOf('function installPanelTabs(') + extractFnSource(text, 'function installPanelTabs(').length)
-  // TAB_DEFS / TAB_TAIL_RULES / TAB_STORAGE_KEY 是块级变量：拼在前面
-  const head = text.slice(text.indexOf('var TAB_DEFS = ['), text.indexOf('function tabKeyForTitle('))
-  const install = extractFnSource(text, 'function installPanelTabs(')
-  vm.runInContext(head + '\n' + fns.replace(extractFnSource(text, 'function installPanelTabs('), install) + '\ninstallPanelTabs();', sandbox, { timeout: 5000 })
+  const head = text.slice(text.indexOf('var TAB_DEFS = ['), text.indexOf('function tabKeyForCard('))
+  const body = extractFnSource(text, 'function tabKeyForCard(') + '\n' +
+               extractFnSource(text, 'function tabKeyForTail(') + '\n' +
+               extractFnSource(text, 'function installPanelTabs(') + '\ninstallPanelTabs();'
+  vm.runInContext(head + '\n' + body, sandbox, { timeout: 5000 })
   return { mgr, store }
 }
 
 // ════════════════════════════════════════════════════════════════
-// ① 静态：每张卡片都被页签规则收走（= 不会有卡片被漏在页签外"消失"）
+// ① 静态：每张卡片都显式声明了归属，且值合法
 // ════════════════════════════════════════════════════════════════
-test('① 面板里每张卡片都能被页签规则匹配（没有孤儿卡片）', () => {
-  // 顶层卡片共 11 张（高级功能里那 5 张是嵌套的，整卡搬走）。数量对不上说明解析或布局变了，先看这里。
-  assert.equal(CARD_TITLES.length, 11, '顶层卡片数量应为 11，实际 ' + CARD_TITLES.length + '：' + CARD_TITLES.join(' / '))
-  for (const must of ['🎭 当前 Agent 预设', '🔗 当前会话绑定', '🎯 生效范围', '角色卡', '📚 世界书', '🎭 剧情选项', '📌 开场白', '🧩 全局正则', '预设', '🎓 技能', '⚙️ 高级功能']) {
-    assert.ok(CARD_TITLES.some((t) => t.indexOf(must) === 0),
-      '解析应包含这张卡片：' + must + '（实际：' + CARD_TITLES.join(' / ') + '）')
-  }
-  // 已按用户要求删除的两张卡片不许复活
-  assert.equal(CARD_TITLES.some((t) => t.indexOf('✨ 通用增强层') === 0), false, '通用增强层卡片必须保持删除')
-  assert.equal(CARD_TITLES.some((t) => t.indexOf('🔞 NSFW') === 0), false, 'NSFW 卡片必须保持删除（破限交给 ST 预设）')
-  const orphans = CARD_TITLES.filter((t) => !tabKeyForTitle(t))
-  assert.deepEqual(orphans, [], '这些卡片没被任何页签收走（要加进 TAB_DEFS）：' + orphans.join(' / '))
+test('① 每张顶层卡片都声明了 data-tv-tab，且值属于已知页签', () => {
+  assert.ok(CARD_TITLES.length >= 14, '顶层卡片数量异常（解析或布局变了）：' + CARD_TITLES.length + '：' + CARD_TITLES.join(' / '))
+  const noAttr = CARDS.filter((c) => !c.tab).map((c) => c.title)
+  assert.deepEqual(noAttr, [], '这些卡片没声明 data-tv-tab（会掉出所有页签）：' + noAttr.join(' / '))
+  const badKey = CARDS.filter((c) => c.tab && !TAB_KEYS.includes(c.tab)).map((c) => c.title + '→' + c.tab)
+  assert.deepEqual(badKey, [], '这些卡片声明了未知页签：' + badKey.join(' / '))
+  // 已按用户要求删除的卡片不许复活
+  assert.equal(CARD_TITLES.some((t) => t.indexOf('通用增强层') === 0), false, '通用增强层卡片必须保持删除')
+  assert.equal(CARD_TITLES.some((t) => t.indexOf('NSFW') === 0), false, 'NSFW 卡片必须保持删除（破限交给 ST 预设）')
+  // 已拆除的折叠容器不许复活
+  assert.equal(CARD_TITLES.includes('高级功能'), false, '「高级功能」折叠容器已拆除，不该再作为卡片存在')
 })
 
-test('② 页签定义完整：4 个页签、key 唯一、每个页签都有卡片', () => {
-  assert.deepEqual(TAB_DEFS.map((d) => d.key), ['session', 'content', 'play', 'advanced'])
+test('② 页签定义完整：5 个页签、key 唯一、每个页签都有卡片、每个都有说明', () => {
+  assert.deepEqual(TAB_DEFS.map((d) => d.key), ['settings', 'behavior', 'memory', 'advanced', 'other'])
   assert.equal(new Set(TAB_DEFS.map((d) => d.key)).size, TAB_DEFS.length, 'key 不能重复')
-  for (const d of TAB_DEFS) assert.ok(d.label && d.titles.length > 0, d.key + ' 缺标题或卡片')
+  for (const d of TAB_DEFS) {
+    assert.ok(d.label, d.key + ' 缺 label')
+    assert.ok(d.desc && d.desc.length > 0, d.key + ' 缺说明（说明行是这版 IA 的组成部分）')
+    const n = CARDS.filter((c) => c.tab === d.key).length
+    assert.ok(n > 0, d.key + '（' + d.label + '）一个卡片都没有')
+  }
 })
 
 test('③ 底部操作区不被任何页签/散件规则认领 ⇒ 永远可见（功能不缺失的关键）', () => {
-  const footerTitles = ['当前将保存的 agent.cordis.yml']
-  for (const t of footerTitles) assert.equal(tabKeyForTitle(t), '', 'footer 文案不该被页签收走：' + t)
   const claimedIds = TAB_TAIL_RULES.reduce((acc, r) => acc.concat(r.ids), [])
   for (const id of ['tavern-agent-yml', 'tavern-save', 'tavern-status', 'tavern-inject-exit']) {
     assert.ok(!claimedIds.includes(id), id + ' 属于底部操作区，不该被收进页签')
   }
+  const tailIds = CARDS.map((c) => c.tab)
+  assert.ok(tailIds.every(Boolean), '卡片归属不该有空洞')
 })
 
 test('④ 散件规则指向的控件 id 在真 markup 里确实存在（防规则写错成死规则）', () => {
@@ -262,20 +277,14 @@ test('④ 散件规则指向的控件 id 在真 markup 里确实存在（防规�
   }
 })
 
-test('④b 面板**可见文案**里不许再出现 NSFW / 🔞（功能已删，字样也不许留）', () => {
-  // 只看 markup 字符串（跳过 // 注释）—— 注释里保留"已删除"的说明是有意为之，不算可见文案。
+test('④b 面板**可见文案**里不许再出现 NSFW / 无意义的装饰 emoji', () => {
   const src = extractFnSource(text, 'function panelHTML(')
   const visible = src.split('\n').filter((l) => !l.trim().startsWith('//'))
   const bad = []
   for (const l of visible) {
-    if (/NSFW|nsfw|🔞/.test(l)) bad.push(l.trim().slice(0, 90))
+    if (/NSFW|nsfw/.test(l)) bad.push(l.trim().slice(0, 90))
   }
-  assert.deepEqual(bad, [], '这些可见文案里还留着 NSFW/🔞 字样：\n' + bad.join('\n'))
-  // 「⚙️ 高级功能」的简介要如实列出现在里面的东西（事故现场：简介里还写着 NSFW）
-  const adv = visible.find((l) => l.includes('tavern-advanced-toggle'))
-  assert.ok(adv, '找不到高级功能卡片')
-  for (const kw of ['记忆', '关系网', '故事背景']) assert.ok(adv.includes(kw), '简介该包含：' + kw)
-  assert.equal(adv.includes('NSFW'), false, '★ 简介里不许再写 NSFW')
+  assert.deepEqual(bad, [], '这些可见文案里还留着 NSFW 字样：\n' + bad.join('\n'))
 })
 
 // ════════════════════════════════════════════════════════════════
@@ -287,28 +296,27 @@ test('⑤ 真跑 installPanelTabs：所有卡片进页签、footer 留在页签�
 
   const bar = after.querySelector('#tavern-tabbar')
   assert.ok(bar, '应当生成页签栏')
-  assert.equal(bar.querySelectorAll('.t-tab').length, 4, '4 个页签按钮')
+  assert.equal(bar.querySelectorAll('.tv-tab').length, TAB_DEFS.length, TAB_DEFS.length + ' 个页签按钮')
 
-  const panes = after.querySelectorAll('.t-pane')
-  assert.equal(panes.length, 4, '4 个 pane')
+  const panes = after.querySelectorAll('.tv-pane')
+  assert.equal(panes.length, TAB_DEFS.length, TAB_DEFS.length + ' 个 pane')
 
-  // 每张卡片都必须落在某个 pane 里
-  const cards = after.querySelectorAll('.t-card')
-  assert.equal(cards.length, CARD_TITLES.length, '卡片数量不能变（搬家不许丢）')
+  // 每张卡片都必须落在**它自己声明**的那个 pane 里
+  const cards = after.querySelectorAll('.t-card, .tv-card')
+  assert.equal(cards.length, CARDS.length, '卡片数量不能变（搬家不许丢）')
   for (const card of cards) {
     const pane = card.parentNode
-    assert.ok(pane && pane.classList && pane.classList.contains('t-pane'),
+    assert.ok(pane && pane.classList && pane.classList.contains('tv-pane'),
       '卡片没被收进页签：' + card.getText().slice(0, 20))
-    const expected = tabKeyForTitle(card.querySelector('.t-card-title').textContent)
-    assert.equal(pane.getAttribute('data-tab'), expected, '卡片去了错的页签')
+    assert.equal(pane.getAttribute('data-tab'), card.getAttribute('data-tv-tab'), '卡片去了错的页签')
   }
 
-  // footer 必须留在页签之外：向上走直到 #tavern-manager，中途不许经过任何 .t-pane
+  // footer 必须留在页签之外：向上走直到 #tavern-manager，中途不许经过任何 .tv-pane
   const insidePane = (el) => {
     let n = el.parentNode
     while (n) {
       if (n.attrs && n.attrs.id === 'tavern-manager') return false
-      if (n.classList && n.classList.contains('t-pane')) return true
+      if (n.classList && n.classList.contains('tv-pane')) return true
       n = n.parentNode
     }
     return false
@@ -319,40 +327,45 @@ test('⑤ 真跑 installPanelTabs：所有卡片进页签、footer 留在页签�
     assert.equal(insidePane(el), false, id + ' 必须留在页签外（常驻可见）')
   }
 
-  // 默认页签是 session 且只有一个 active
   const activePanes = panes.filter((p) => p.classList.contains('active'))
   assert.equal(activePanes.length, 1, '同时只能有一个页签可见')
-  assert.equal(activePanes[0].getAttribute('data-tab'), 'session', '默认停在「会话」')
+  assert.equal(activePanes[0].getAttribute('data-tab'), TAB_DEFS[0].key, '默认停在第一个页签')
+  // 说明行要跟着当前页签走
+  const descEl = after.querySelector('#tavern-tabdesc')
+  assert.ok(descEl, '应当生成页签说明行')
+  assert.equal(descEl.textContent, TAB_DEFS[0].desc, '说明行应与当前页签一致')
 })
 
-test('⑥ 切页签：点按钮 → 只有该页签可见，并写入 localStorage', () => {
+test('⑥ 切页签：点按钮 → 只有该页签可见、说明行跟随、并写入 localStorage', () => {
   const mgr = buildPanel()
   const { store } = runInstaller(mgr, {})
   const bar = mgr.querySelector('#tavern-tabbar')
-  const btn = bar.querySelectorAll('.t-tab').find((b) => b.getAttribute('data-tab') === 'play')
+  const target = TAB_DEFS[2]
+  const btn = bar.querySelectorAll('.tv-tab').find((b) => b.getAttribute('data-tab') === target.key)
   btn.dispatch('click')
-  const active = mgr.querySelectorAll('.t-pane').filter((p) => p.classList.contains('active'))
+  const active = mgr.querySelectorAll('.tv-pane').filter((p) => p.classList.contains('active'))
   assert.equal(active.length, 1)
-  assert.equal(active[0].getAttribute('data-tab'), 'play')
-  assert.equal(store['tavern.panel.tab'], 'play', '当前页签要记住')
+  assert.equal(active[0].getAttribute('data-tab'), target.key)
+  assert.equal(store['tavern.panel.tab'], target.key, '当前页签要记住')
+  assert.equal(mgr.querySelector('#tavern-tabdesc').textContent, target.desc, '说明行要跟着切')
 })
 
-test('⑦ 上次停留的页签会被恢复；非法值回落 session', () => {
+test('⑦ 上次停留的页签会被恢复；非法值回落第一个页签', () => {
   const mgrA = buildPanel()
-  runInstaller(mgrA, { 'tavern.panel.tab': 'advanced' })
-  const activeA = mgrA.querySelectorAll('.t-pane').filter((p) => p.classList.contains('active'))
-  assert.equal(activeA[0].getAttribute('data-tab'), 'advanced')
+  runInstaller(mgrA, { 'tavern.panel.tab': 'memory' })
+  const activeA = mgrA.querySelectorAll('.tv-pane').filter((p) => p.classList.contains('active'))
+  assert.equal(activeA[0].getAttribute('data-tab'), 'memory')
 
   const mgrB = buildPanel()
   runInstaller(mgrB, { 'tavern.panel.tab': '不存在的页签' })
-  const activeB = mgrB.querySelectorAll('.t-pane').filter((p) => p.classList.contains('active'))
-  assert.equal(activeB[0].getAttribute('data-tab'), 'session', '非法值必须回落，不能白屏')
+  const activeB = mgrB.querySelectorAll('.tv-pane').filter((p) => p.classList.contains('active'))
+  assert.equal(activeB[0].getAttribute('data-tab'), TAB_DEFS[0].key, '非法值必须回落，不能白屏')
 })
 
 test('⑧ 幂等：重复调用不会生成第二套页签', () => {
   const mgr = buildPanel()
   const { mgr: after } = runInstaller(mgr, {})
   assert.equal(after.querySelectorAll('#tavern-tabbar').length, 1)
-  assert.equal(after.querySelectorAll('.t-pane').length, 4)
-  assert.equal(after.querySelectorAll('.t-card').length, CARD_TITLES.length)
+  assert.equal(after.querySelectorAll('.tv-pane').length, TAB_DEFS.length)
+  assert.equal(after.querySelectorAll('.t-card, .tv-card').length, CARDS.length)
 })

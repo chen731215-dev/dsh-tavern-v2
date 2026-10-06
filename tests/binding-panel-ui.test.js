@@ -83,6 +83,23 @@ class FakeEl {
   }
   getAttribute(k) { return this.attrs[k] != null ? this.attrs[k] : null }
   setAttribute(k, v) { this.attrs[k] = String(v) }
+  // 显隐/配色改走类名后，stub 必须支持 classList（与真 DOM 同形）
+  get classList() {
+    const self = this
+    const list = () => String(self.attrs.class || '').split(/\s+/).filter(Boolean)
+    const set = (arr) => { self.attrs.class = arr.join(' ') }
+    return {
+      contains: (c) => list().includes(c),
+      add: (c) => { if (!list().includes(c)) set(list().concat(c)) },
+      remove: (c) => set(list().filter((x) => x !== c)),
+      toggle: (c, on) => {
+        const has = list().includes(c)
+        const want = on === undefined ? !has : !!on
+        if (want && !has) set(list().concat(c))
+        if (!want && has) set(list().filter((x) => x !== c))
+      },
+    }
+  }
   addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn) }
   dispatch(type, ev) { ev = ev || {}; ev.target = ev.target || this; (this.listeners[type] || []).forEach((fn) => fn(ev)) }
   appendChild() {}
@@ -116,7 +133,7 @@ async function runPanel(o = {}) {
   const els = {
     '#tavern-binding-current': new FakeEl({ value: '' }),
     '#tavern-binding-source': new FakeEl(),
-    '#tavern-binding-legacy': new FakeEl(),
+    '#tavern-binding-legacy': new FakeEl({ class: 'tv-alert tv-hidden' }),
     '#tavern-binding-unbind': new FakeEl(),
     '#tavern-binding-apply-current': new FakeEl(),
     '#tavern-binding-new-session': new FakeEl(),
@@ -129,7 +146,7 @@ async function runPanel(o = {}) {
     '#tavern-declare-bundle': new FakeEl(),
     '#tavern-declare-off': new FakeEl(),
   }
-  els['#tavern-binding-legacy'].style.display = 'none'
+  // （初值由 markup 的 tv-hidden 类提供，不再用 style.display）
   const container = { querySelector: (sel) => els[sel] || null }
   const presets = o.presets || [PRESET_FOOT, PRESET_XSS, PRESET_PLAIN]
   const session = o.session === undefined ? SESSION : o.session
@@ -377,24 +394,26 @@ test('对照臂：去掉下拉的 esc() 后，转义断言必须失败', async (
 test('legacy：bindingMode=legacy 时红色提示出现，要求用户确认或解绑', async () => {
   const { els } = await runPanel({ boundId: PRESET_FOOT.id, bindingMode: 'legacy', bindingSource: 'legacy' })
   const legacy = els['#tavern-binding-legacy']
-  assert.notEqual(legacy.style.display, 'none', '遗留绑定必须显示红条')
+  // 显隐与配色都改走类名（.tv-alert 提供红色、.tv-hidden 提供隐藏），
+  // 不再内联 style.display / style.color —— 所以断言也改为查类。
+  assert.equal(legacy.classList.contains('tv-hidden'), false, '遗留绑定必须显示红条')
   assert.match(legacy.textContent, /遗留绑定/, '文案要说明这是遗留绑定')
   assert.match(legacy.textContent, /确认|解绑/)
-  assert.equal(legacy.style.color, '#e74c3c', '必须是红色警示')
+  assert.ok(legacy.classList.contains('tv-alert'), '红色警示由 .tv-alert 提供，不再内联写死 #e74c3c')
   assert.match(els['#tavern-binding-source'].textContent, /遗留\(待确认\)/)
 })
 test('对照臂：把 legacy 分支条件改恒假后，红条断言必须失败', async () => {
   const src = mutate(fs.readFileSync(BUNDLE, 'utf8'), "if (bound.mode === 'legacy') {", "if (false) {")
   await assert.rejects(async () => {
     const { els } = await runPanel({ src, boundId: PRESET_FOOT.id, bindingMode: 'legacy' })
-    assert.notEqual(els['#tavern-binding-legacy'].style.display, 'none')
+    assert.equal(els['#tavern-binding-legacy'].classList.contains('tv-hidden'), false)
   })
 })
 
 test('未绑定：boundPreset=default（后端展平值）显示未绑定，不显示遗留红条', async () => {
   const { els } = await runPanel({ boundId: 'default' })
   assert.match(els['#tavern-binding-current'].textContent, /未绑定/)
-  assert.equal(els['#tavern-binding-legacy'].style.display, 'none')
+  assert.equal(els['#tavern-binding-legacy'].classList.contains('tv-hidden'), true, '未绑定时不该显示遗留红条')
 })
 
 // ════════════════════════════════════════════════════════════════
@@ -634,7 +653,7 @@ test('对照臂：不注入 helper（等价于它在别的作用域里）⇒ 状
 })
 test('面板 HTML：三个 UI 概念的按钮文案齐全且互不相同', () => {
   const html = fs.readFileSync(BUNDLE, 'utf8')
-  assert.match(html, /id="tavern-binding-unbind"[^>]*>🔓 解绑本会话</)
+  assert.match(html, /id="tavern-binding-unbind"[^>]*>解绑本会话</)
   assert.match(html, /id="tavern-binding-apply-current"[^>]*>✅ 应用到当前会话</)
   assert.match(html, /id="tavern-binding-new-session"[^>]*>🆕 换绑并仅对新会话生效</)
   assert.match(html, /id="tavern-binding-next-select"/)
