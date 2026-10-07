@@ -10,5 +10,6 @@
   "distinctRadii": 8,
   "distinctPaddings": 42,
   "distinctZIndex": 8,
-  "styleTags": 0
+  "styleTags": 0,
+  "inlineHandlerAttrServer": 0
 }
