@@ -409,6 +409,12 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
   （历史踩过两次假阴性、两次脚本损坏）。**一律写 Node 脚本**执行。
 - **不要按行号做锚点**：行号会漂。用**唯一子串 + 命中次数校验**（`split(a).length - 1 === 1` 才改），
   并让脚本在写盘前后做自检。
+- **不同 node 的测试摘要格式不一样**：较新的输出 `# pass N`，spec 报告器是 `ℹ pass N`。
+  只解析一种的脚本会把**所有**文件读成 `pass=0` —— 而「全 0」在「只看 `fail===0`」的判据下等于**全绿**。
+  两种都要认（`tools/run-each-test.mjs` 已如此），并且 `skipped>0` 不算空跑。
+- **别用「字符窗口」定位代码**（`{0,220}` 这类）：窗口会被 `\r` 撑破 —— 本机工作树是 LF 时不报，
+  干净 clone / CI（`core.autocrlf=true` ⇒ CRLF）上就假红。匹配前先 `.replace(/\r\n/g, '\n')`。
+  ⇒ 同理：**验证要在「干净 checkout」里做**（`git worktree add --detach`），别只信本机工作树。
 - **GitHub 推送**：`github.com:443` 不稳定时走 `api.github.com`（blob → tree → commit → PATCH ref），
   **每次都要比对本地 tree 与远端返回 tree**；多提交一起推时 `LOCAL_BASE` 必须是远端已存在的那个提交。
 - **npm 发布后有 CDN 传播期**（约 35 秒 ~ 2.5 分钟）：抓包先验证 gzip 魔数 `1f 8b` 再 `gunzip`，
