@@ -632,10 +632,12 @@ test('对照臂：不注入 helper（等价于它在别的作用域里）⇒ 状
   assert.match(presetStatus.textContent, /加载预设失败/,
     '看不见 helper 时必须复现「❌ 加载预设失败，请刷新页面」')
 })
-test('面板 HTML：三个 UI 概念的按钮文案齐全且互不相同', () => {
+test('面板 HTML：三个 UI 概念的按钮齐全且互不相同', () => {
   const html = fs.readFileSync(BUNDLE, 'utf8')
-  assert.match(html, /id="tavern-binding-unbind"[^>]*>🔓 解绑本会话</)
-  assert.match(html, /id="tavern-binding-apply-current"[^>]*>✅ 应用到当前会话</)
-  assert.match(html, /id="tavern-binding-new-session"[^>]*>🆕 换绑并仅对新会话生效</)
+  // ★ 断言稳定标识（id / data-*），不绑 UI 文案 —— 文案里的 emoji 一改测试就红，
+  //   而「按钮真的存在且各是各的」才是判据。
+  assert.match(html, /id="tavern-binding-unbind"[^>]*data-action="unbind"/)
+  assert.match(html, /id="tavern-binding-apply-current"/)
+  assert.match(html, /id="tavern-binding-new-session"/)
   assert.match(html, /id="tavern-binding-next-select"/)
 })

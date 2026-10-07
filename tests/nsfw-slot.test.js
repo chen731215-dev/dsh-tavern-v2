@@ -7,7 +7,8 @@
  *   · 默认 `nsfwEnabled !== true` + 空正文 ⇒ 升级到本版**零行为变化**；
  *   · 与会话隔离/生效范围**同一判据**（isTavernSession + decideInjectionScope），
  *     不允许出现「绑了 A 卡却在 B 会话被注入」；
- *   · order = -1（排在 tavern:edits(order=0) 之前）：体积快照仍由 edits 落盘。
+ *   · order = -1：本段先于 tavern:card 组装；体积快照 flushPromptStats() 由本段负责落盘
+ *     （原由已删除的「历史事实修正」段负责，逻辑搬了过来）。
  *
  * 本套件守四件事：
  *   ① 开关与正文两个键的**真假两态**（关 / 开但空正文 / 开且有正文）；
@@ -211,10 +212,10 @@ test('⑫ 源码护栏：段落注册必须带闸门（把闸门删掉就变红�
   const src = fs.readFileSync(path.join(REPO, 'lib', 'index.js'), 'utf8')
   const start = src.indexOf("name: 'tavern:nsfw'")
   assert.ok(start >= 0, '找不到 tavern:nsfw 段')
-  const seg = src.slice(start, src.indexOf('  // 编辑过的消息注入', start))
+  const seg = src.slice(start, src.indexOf("'tavern.nsfw.section()'", start))
   assert.ok(seg.includes('isTavernSession('), '★ 必须过会话隔离判据')
   assert.ok(seg.includes('decideInjectionScope('), '★ 必须过统一生效范围闸门')
-  assert.ok(/order:\s*-1/.test(seg), 'order 必须是 -1（把最后组装的位置留给 tavern:edits，体积快照在那儿落盘）')
+  assert.ok(/order:\s*-1/.test(seg), 'order 必须是 -1（先于 tavern:card 组装，体积快照由本段落盘）')
   const mutated = seg.replace(/decideInjectionScope\(/g, 'noGate(')
   assert.ok(!mutated.includes('decideInjectionScope('), '对照：挖掉后判据必须不再命中（证明不是永真）')
 })
