@@ -1,0 +1,113 @@
+{
+  "note": "innerHTML 裸拼基线：只许减不许增。每条都经人工过目（判据见 tools/check-innerhtml-escape.mjs 头注释）。",
+  "entries": [
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "if (st) st.innerHTML = '✅ 已导入预设「' + esc(pname) + '」，自动清理了 <b>' + cleanedTotal + '</b> 个不兼容 DSH 的模块内容（<thinking>/HTML注释/{{变量}}等已剥离）';",
+      "lineNo": 1448,
+      "parts": [
+        "cleanedTotal"
+      ],
+      "kind": "numeric",
+      "why": "预设导入的清理计数（数字）",
+      "mustContain": [
+        "var cleanedTotal = 0"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "presetStatus.innerHTML = '✅ 当前预设：' + esc(presetLabelText) + '<br><span style=\"font-size:11px;color:var(--dsw-alias-label-tertiary,#999)\">🎭 角色卡：' + charCount + ' 个 | 📚 世界书：' + wbCount + ' 本（' + wbEntries + ' 条，启用 ' + wbEnabledEntries + ' 条）| ⚙️ 预设：' + presetCount + ' 个（启用 ' + presetEnabledEntries + ' 条）</span>';",
+      "lineNo": 1790,
+      "parts": [
+        "charCount",
+        "wbCount",
+        "wbEntries",
+        "wbEnabledEntries",
+        "presetCount",
+        "presetEnabledEntries"
+      ],
+      "kind": "numeric",
+      "why": "角色卡/世界书/预设条目计数（.length · reduce）",
+      "mustContain": [
+        "var charCount = ",
+        "var presetEnabledEntries = "
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "tags.innerHTML = bannedWords.slice(0, 20).map(function(w) {",
+      "lineNo": 2318,
+      "parts": [
+        "(bannedWords.length > 20 ? '<span style=\"color:var(--dsw-alias-label-secondary);font-size:11px;padding:2px 4px\">+' + (bannedWords.length - 20) + ' 更多</span>' : '')"
+      ],
+      "kind": "ternary-literals",
+      "why": "map 体已 esc(w)；尾部三元两支都是字面量 + 纯数字算术",
+      "mustContain": [
+        "+ esc(w) + '</span>'",
+        "(bannedWords.length - 20)"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "info.innerHTML = '<span><strong style=\"color:var(--dsw-alias-label-accent,#ffb464)\">' + nodes.length + '</strong> 个角色，<strong style=\"color:var(--dsw-alias-brand-primary,#78a0ff)\">' + edges.length + '</strong> 条关系</span><span style=\"font-size:12px\">悬停看完整关系 · 标签显示' + (labelLen || 15) + '字</span>';",
+      "lineNo": 3642,
+      "parts": [
+        "(labelLen || 15)"
+      ],
+      "kind": "numeric",
+      "why": "renderLargeGraph 的 labelLen 形参（像素宽度）",
+      "mustContain": [
+        "function renderLargeGraph(container, relations, labelLen)"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "item.innerHTML = '<div style=\"display:flex;align-items:center;gap:6px\"><span style=\"width:16px;flex:0 0 auto;text-align:center\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">' + pName + '</span></div>' + (pMeta ? '<div style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#999);padding-left:22px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">' + pMeta + '</div>' : '');",
+      "lineNo": 4165,
+      "parts": [
+        "pName",
+        "(pMeta ? '<div style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#999);padding-left:22px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">' + pMeta + '</div>' : '')"
+      ],
+      "kind": "upstream-escaped",
+      "why": "pName 与 pMeta 都在上游转过义",
+      "mustContain": [
+        "var pName = esc(p.name || '')",
+        "pMeta += '🎭' + esc("
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "presetStatus.innerHTML = '✅ 当前编辑：' + esc(currentPreset ? currentPreset.name : '默认预设') + ' | 共 ' + (data.presets || []).length + ' 个预设可选<br><span style=\"font-size:11px;color:var(--dsw-alias-label-tertiary,#999)\">🎭 角色卡：' + charCount2 + ' 个 | 📚 世界书：' + wbCount2 + ' 本（' + wbEntries2 + ' 条，启用 ' + wbEnabled2 + ' 条）| ⚙️ 预设：' + presetCount2 + ' 个（启用 ' + presetEnabled2 + ' 条）</span>';",
+      "lineNo": 4199,
+      "parts": [
+        "charCount2",
+        "wbCount2",
+        "wbEntries2",
+        "wbEnabled2",
+        "presetCount2",
+        "presetEnabled2"
+      ],
+      "kind": "numeric",
+      "why": "同上，第二个面板",
+      "mustContain": [
+        "var charCount2 = ",
+        "var presetEnabled2 = "
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "item.innerHTML = '<span style=\"width:12px;flex:0 0 auto;text-align:center;\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;margin:0;display:flex;flex-direction:column;align-items:flex-start;line-height:1.3\"><span style=\"max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + escapeHtml(p.name) + '</span><span style=\"font-size:9px;color:var(--dsw-alias-label-tertiary,#888);font-weight:400;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + pMeta2 + '</span></span><span style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#888);flex:0 0 auto;\">' + (p.cardChars ? (p.cardChars + '字') : '') + '</span>';",
+      "lineNo": 7259,
+      "parts": [
+        "pMeta2",
+        "(p.cardChars ? (p.cardChars + '字') : '')"
+      ],
+      "kind": "upstream-escaped",
+      "why": "pMeta2 由 escapeHtml（≡ esc）与数字拼成",
+      "mustContain": [
+        "pMeta2 += '🎭' + escapeHtml(",
+        "p.cardChars"
+      ]
+    }
+  ]
+}
