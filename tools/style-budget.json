@@ -1,0 +1,14 @@
+{
+  "inlineStyleAttr": 312,
+  "inlineHandlerAttr": 5,
+  "bareHex": 352,
+  "bareRgba": 160,
+  "cssTextAssign": 72,
+  "important": 0,
+  "distinctColorLiterals": 58,
+  "distinctFontSizes": 12,
+  "distinctRadii": 8,
+  "distinctPaddings": 46,
+  "distinctZIndex": 11,
+  "styleTags": 0
+}
