@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { measure, compare, readBudget, codeLines, CLIENT, BUDGET_FILE, HARD_ZERO } from '../tools/assert-style-budget.mjs'
+import { measure, compare, readBudget, codeLines, CLIENT, BUDGET_FILE, HARD_ZERO, SERVER_FILE, measureServer } from '../tools/assert-style-budget.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const REPO = path.resolve(HERE, '..')
@@ -90,6 +90,13 @@ test('③ 硬规则 `!important` 必须恒为 0', () => {
   const actual = measure(fs.readFileSync(CLIENT, 'utf8'))
   assert.equal(actual.important, 0, '★ 界面代码里不许出现 !important')
   assert.ok(HARD_ZERO.includes('important'), 'important 必须在硬规则清单里')
+})
+
+test('③-b 服务端自渲染页也必须零内联事件（以前只量客户端，"保存"按钮漏了）', () => {
+  const m = measureServer(fs.readFileSync(SERVER_FILE, 'utf8'))
+  assert.equal(m.inlineHandlerAttrServer, 0, '★ lib/index.js 里不许有 on<event>="…"（应改为 addEventListener 绑定）')
+  assert.ok(HARD_ZERO.includes('inlineHandlerAttrServer'), '该指标应列入硬 0 规则')
+  assert.equal(measureServer('x onclick="save()" y').inlineHandlerAttrServer, 1, '对照：合成样本必须命中 1 次（判据非空跑）')
 })
 
 test('④ 内联事件属性已清零 ⇒ 升级为硬规则：恒为 0', () => {
