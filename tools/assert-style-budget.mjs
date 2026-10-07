@@ -1,0 +1,142 @@
+#!/usr/bin/env node
+/**
+ * 样式预算棘轮（style budget ratchet）
+ *
+ * 为什么需要它：`lib/client.manager.bundle.js` 是**单文件直发**的界面代码（没有构建步骤，
+ * 这个 bundle 就是源码）。在这种约束下，"UI 越来越脏"没法靠重构一次解决，只能靠**可测量的棘轮**：
+ * 把当前的"溃烂指标"记进 `tools/style-budget.json`，以后任何一次提交**只许降不许升**。
+ * 想加新颜色/新内联样式？那就在同一个 PR 里显式上调预算 —— 让 review 看见，而不是无声堆积。
+ *
+ * 用法：
+ *   node tools/assert-style-budget.mjs            # 校验（超出即退出码 1）
+ *   node tools/assert-style-budget.mjs --update   # 用当前实测值更新预算（谨慎，应在 PR 里说明理由）
+ *   node tools/assert-style-budget.mjs --json     # 只打印实测值
+ *
+ * 指标定义（都在**非注释行**上统计，注释里写示例不算）：
+ *   inlineStyleAttr         markup 字符串里的 `style="` 内联样式数
+ *   inlineHandlerAttr       markup 字符串里的 `on<event>="` 内联事件属性数（硬规则：必须为 0）
+ *   bareHex                 裸十六进制颜色字面量（#rgb / #rrggbb / #rrggbbaa）
+ *   bareRgba                rgb()/rgba() 字面量
+ *   cssTextAssign           `.cssText =` 赋值次数
+ *   important               `!important` 次数（硬规则：必须为 0）
+ *   distinctColorLiterals   不同颜色字面量**种类**（颜色漂移指标）
+ *   distinctFontSizes       不同 `font-size` 取值种类
+ *   distinctRadii           不同 `border-radius` 取值种类
+ *   distinctPaddings        不同 `padding` 取值种类
+ *   distinctZIndex          不同 `z-index` 取值种类
+ *   styleTags               注入 `<style>` 块的地方数（全局样式泄漏面）
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+export const REPO = path.resolve(HERE, '..')
+export const CLIENT = path.join(REPO, 'lib', 'client.manager.bundle.js')
+export const BUDGET_FILE = path.join(HERE, 'style-budget.json')
+
+/** 去掉纯注释行（`//` 或块注释续行），让指标不被说明文字污染。 */
+export function codeLines(src) {
+  return String(src).split('\n').filter((l) => {
+    const t = l.trim()
+    return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*'))
+  })
+}
+
+const uniq = (arr) => [...new Set(arr)].length
+const count = (lines, re) => lines.reduce((n, l) => n + (l.match(re) || []).length, 0)
+
+/** 对一段源码测出全部指标（导出让测试直接喂合成样本，证明判据不是空跑）。 */
+export function measure(src) {
+  const lines = codeLines(src)
+  const hexes = lines.flatMap((l) => l.match(/#[0-9a-fA-F]{3,8}\b/g) || [])
+  const rgbas = lines.flatMap((l) => l.match(/\brgba?\(/g) || [])
+  const pick = (re) => {
+    const out = []
+    for (const l of lines) {
+      const m = l.match(re)
+      if (m) out.push(m[1].trim())
+    }
+    return out
+  }
+  return {
+    inlineStyleAttr: count(lines, /style="/g),
+    inlineHandlerAttr: count(lines, /\son[a-z]+\s*=\s*"/g),
+    bareHex: hexes.length,
+    bareRgba: rgbas.length,
+    cssTextAssign: count(lines, /\.cssText\s*=/g),
+    important: count(lines, /!important/g),
+    distinctColorLiterals: uniq([...hexes, ...rgbas]),
+    distinctFontSizes: uniq(pick(/font-size:\s*([^;"']+)/)),
+    distinctRadii: uniq(pick(/border-radius:\s*([^;"']+)/)),
+    distinctPaddings: uniq(pick(/(?:^|[^-])padding:\s*([^;"']+)/)),
+    distinctZIndex: uniq(pick(/z-index:\s*(-?\d+)/)),
+    styleTags: count(lines, /<style/g),
+  }
+}
+
+/**
+ * 硬规则：这些指标任何情况下都不允许 > 0。
+ * `inlineHandlerAttr`（markup 里的 on<event>="…"）暂不列入：当前有 5 处历史遗留
+ * （世界书条目的 stopPropagation / 勾选、关系网模态里的两处），改写它们需要浏览器里
+ * 交互验证，属于独立任务。它们改为**棘轮**：只许降不许升，新代码不得再添。
+ */
+export const HARD_ZERO = ['important']
+
+export function readBudget() {
+  return JSON.parse(fs.readFileSync(BUDGET_FILE, 'utf8'))
+}
+
+/**
+ * 比较实测值与预算。
+ * @returns {{ increased: Array, decreased: Array, hardZeroViolations: Array }}
+ */
+export function compare(actual, budget) {
+  const increased = []
+  const decreased = []
+  for (const k of Object.keys(budget)) {
+    if (typeof budget[k] !== 'number' || !(k in actual)) continue
+    if (actual[k] > budget[k]) increased.push({ key: k, budget: budget[k], actual: actual[k] })
+    else if (actual[k] < budget[k]) decreased.push({ key: k, budget: budget[k], actual: actual[k] })
+  }
+  const hardZeroViolations = HARD_ZERO.filter((k) => (actual[k] || 0) > 0).map((k) => ({ key: k, actual: actual[k] }))
+  return { increased, decreased, hardZeroViolations }
+}
+
+// ── CLI ────────────────────────────────────────────────────────────
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+if (isMain) {
+  const src = fs.readFileSync(CLIENT, 'utf8')
+  const actual = measure(src)
+  if (process.argv.includes('--json')) { console.log(JSON.stringify(actual, null, 2)); process.exit(0) }
+  if (process.argv.includes('--update')) {
+    fs.writeFileSync(BUDGET_FILE, JSON.stringify(actual, null, 2) + '\n', 'utf8')
+    console.log('已更新预算 ' + path.relative(REPO, BUDGET_FILE))
+    for (const [k, v] of Object.entries(actual)) console.log('  ' + k.padEnd(22) + v)
+    process.exit(0)
+  }
+  const budget = readBudget()
+  const { increased, decreased, hardZeroViolations } = compare(actual, budget)
+  console.log('样式预算校验（实测 / 预算）')
+  for (const k of Object.keys(budget)) {
+    const a = actual[k]
+    const b = budget[k]
+    const flag = a > b ? '❌ 超标' : a < b ? '↓ 可下调' : '  ok'
+    console.log('  ' + k.padEnd(22) + String(a).padStart(6) + ' / ' + String(b).padStart(6) + '   ' + flag)
+  }
+  let fail = false
+  if (hardZeroViolations.length) {
+    fail = true
+    for (const v of hardZeroViolations) console.error('❌ 硬规则被打破：' + v.key + ' = ' + v.actual + '（必须为 0）')
+  }
+  if (increased.length) {
+    fail = true
+    console.error('\n❌ 以下指标超出预算（要么改回，要么在同一次提交里解释理由并 --update）：')
+    for (const i of increased) console.error('   ' + i.key + '：预算 ' + i.budget + ' → 实测 ' + i.actual)
+  }
+  if (decreased.length) {
+    console.log('\n↓ 这些指标比预算更低了，可以顺手下调预算（跑 --update）：')
+    for (const d of decreased) console.log('   ' + d.key + '：' + d.budget + ' → ' + d.actual)
+  }
+  process.exit(fail ? 1 : 0)
+}
