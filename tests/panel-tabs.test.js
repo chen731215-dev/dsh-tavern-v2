@@ -43,11 +43,11 @@ function extractFnSource(bundleText, signature) {
  *   · 「⚙️ 高级功能」里的 5 张子卡片是嵌套的，它们跟着整卡搬走，不需要单独的页签规则。
  * 所以这里按 <div> 深度只取深度 1 的卡片标题。
  */
-const CARD_TITLES = (() => {
+const CARDS = (() => {
   const src = extractFnSource(text, 'function panelHTML(')
   const out = []
   let depth = 0
-  let topLevelCard = false
+  let pending = null            // 顶层卡片开标签时记下它的 data-tv-tab
   for (const raw of src.split('\n')) {
     const line = raw.trim()
     if (line.startsWith('//')) continue          // 注释掉的不算
@@ -55,17 +55,20 @@ const CARD_TITLES = (() => {
     const closes = (line.match(/<\/div>/g) || []).length
     if (/<div class="t-card\b/.test(line)) {
       // #tavern-manager 是唯一的深度 1；卡片自己的 div 开在这一层 ⇒ 它的标题才是顶层卡片标题
-      topLevelCard = depth === 1
+      const isTop = depth === 1
+      const tabM = line.match(/data-tv-tab="([^"]*)"/)
+      pending = isTop ? { tab: tabM ? tabM[1] : '' } : null
       depth += 1
     } else {
       const titleM = line.match(/<span class="t-card-title"[^>]*>([^<]{1,80})/)   // 允许 title 上带 id/style（高级功能那张就是）
-      if (titleM && topLevelCard) out.push(titleM[1].trim())
+      if (titleM && pending) { out.push({ title: titleM[1].trim(), tab: pending.tab }); pending = null }
       depth += opens
     }
     depth -= closes
   }
   return out
 })()
+const CARD_TITLES = CARDS.map((c) => c.title)
 
 /** 页签定义（TAB_DEFS）与散件规则（TAB_TAIL_RULES）——直接从源码里抠，保证测的是真规则。 */
 const { TAB_DEFS, TAB_TAIL_RULES } = (() => {
@@ -123,6 +126,7 @@ class MiniEl {
   }
   getAttribute(k) { return this.attrs[k] !== undefined ? this.attrs[k] : null }
   setAttribute(k, v) { this.attrs[k] = String(v) }
+  removeAttribute(k) { delete this.attrs[k] }
   addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn) }
   dispatch(t) { (this.listeners[t] || []).forEach((fn) => fn({ target: this, closest: () => null })) }
   appendChild(child) {
@@ -173,12 +177,13 @@ function buildPanel() {
   mgr.attrs.id = 'tavern-manager'
   mgr.appendChild(new MiniEl('h2'))
   // 真卡片（标题取自真 markup）
-  for (const title of CARD_TITLES) {
+  for (const c of CARDS) {
     const card = new MiniEl('div')
     card.className = 't-card'
+      if (c.tab) card.setAttribute('data-tv-tab', c.tab)   // ★ 声明式归属：卡片自己说归哪个页签
     const t = new MiniEl('span')
     t.className = 't-card-title'
-    t.textContent = title
+    t.textContent = c.title
     card.appendChild(t)
     mgr.appendChild(card)
   }
@@ -236,6 +241,17 @@ test('① 面板里每张卡片都能被页签规则匹配（没有孤儿卡片�
   assert.equal(CARD_TITLES.some((t) => t.indexOf('✨ 通用增强层') === 0), false, '通用增强层卡片必须保持删除')
   // 成人向提示段卡片必须存在（它是"用户自填正文"的入口）
   assert.ok(CARD_TITLES.some((t) => t.indexOf('🔞 成人向提示段') === 0), '成人向提示段卡片不能丢')
+  // ★ 声明式归属（2026-10-07）：每张一级卡片都必须自己声明 data-tv-tab
+  const noDecl = CARDS.filter((c) => !c.tab).map((c) => c.title)
+  assert.deepEqual(noDecl, [], '★ 这些卡片缺 data-tv-tab 声明（会退化成标题前缀匹配、并被自检点名）：' + noDecl.join(' / '))
+  const keys = new Set(TAB_DEFS.map((d) => d.key))
+  const badKeys = CARDS.filter((c) => c.tab && !keys.has(c.tab)).map((c) => c.title + '→' + c.tab)
+  assert.deepEqual(badKeys, [], '★ 声明了不存在的页签 key：' + badKeys.join(' / '))
+  // ★ 一致性强约束：声明必须与标题前缀映射指向**同一个页签**（迁移期最容易被漏掉的漂移）
+  const mismatched = CARDS.map((c) => ({ ...c, legacy: tabKeyForTitle(c.title) }))
+    .filter((c) => c.legacy && c.legacy !== c.tab)
+    .map((c) => c.title + '：声明 ' + c.tab + ' ≠ 前缀 ' + c.legacy)
+  assert.deepEqual(mismatched, [], '★ data-tv-tab 与标题前缀指向了不同页签：' + mismatched.join(' / '))
   const orphans = CARD_TITLES.filter((t) => !tabKeyForTitle(t))
   assert.deepEqual(orphans, [], '这些卡片没被任何页签收走（要加进 TAB_DEFS）：' + orphans.join(' / '))
 })
@@ -284,7 +300,45 @@ test('④b 面板文案：成人段卡片必须"可见 + 进玩法页签 + 自�
 })
 
 // ════════════════════════════════════════════════════════════════
-// ⑤ 运行时（迷你 DOM）：搬家结果正确 + 切页签 + 记住上次
+// ════════════════════════════════════════════════════════════════
+  // ④c/④d 声明式归属的运行时不变量
+  // ════════════════════════════════════════════════════════════════
+  test('④c 声明优先于标题：标题改成映射不出来的，卡片仍按 data-tv-tab 归位', () => {
+    const mgr = buildPanel()
+    const card = mgr.children.find((el) => {
+      const t = el.querySelector && el.querySelector('.t-card-title')
+      return el.className === 't-card' && t && t.textContent === '角色卡'
+    })
+    assert.ok(card, '找不到「角色卡」卡片')
+    card.querySelector('.t-card-title').textContent = 'ZZZ-标题全改了'
+    const { mgr: after } = runInstaller(mgr)
+    const content = after.querySelectorAll('.t-pane').find((p) => p.getAttribute('data-tab') === 'content')
+    assert.ok(content.children.includes(card), '★ 声明还在就必须照样进「内容」——纯标题前缀机制在这种改名下会掉出去')
+    assert.equal(after.getAttribute('data-tab-unclaimed'), null, '有合法声明就不该被点名')
+  })
+
+  test('④d 自检点名：声明非法且标题也认不出 ⇒ 写进 data-tab-unclaimed 且保持可见', () => {
+    const mgr = buildPanel()
+    const rogue = new MiniEl('div')
+    rogue.className = 't-card'
+    rogue.setAttribute('data-tv-tab', 'no-such-tab')
+    const rt = new MiniEl('span')
+    rt.className = 't-card-title'
+    rt.textContent = '🆕 忘了登记的卡片'
+    rogue.appendChild(rt)
+    mgr.appendChild(rogue)
+
+    const { mgr: after } = runInstaller(mgr)
+    const flagged = after.getAttribute('data-tab-unclaimed')
+    assert.ok(flagged && flagged.indexOf('忘了登记的卡片') >= 0, '★ 自检必须点名这张卡：' + flagged)
+    assert.ok(flagged.indexOf('no-such-tab') >= 0, '点名要带上那个非法 key，方便定位')
+    assert.equal(rogue.parentNode, after, '★ 未归类的卡片必须留在面板里（宁可多显示，不可丢功能）')
+    const inPane = after.querySelectorAll('.t-pane').some((p) => p.children.includes(rogue))
+    assert.equal(inPane, false, '未归类 ≠ 可以随便塞进某个页签')
+  })
+
+  // ════════════════════════════════════════════════════════════════
+  // ⑤ 运行时（迷你 DOM）：搬家结果正确 + 切页签 + 记住上次
 // ════════════════════════════════════════════════════════════════
 test('⑤ 真跑 installPanelTabs：所有卡片进页签、footer 留在页签外', () => {
   const mgr = buildPanel()
@@ -293,6 +347,9 @@ test('⑤ 真跑 installPanelTabs：所有卡片进页签、footer 留在页签�
   const bar = after.querySelector('#tavern-tabbar')
   assert.ok(bar, '应当生成页签栏')
   assert.equal(bar.querySelectorAll('.t-tab').length, 4, '4 个页签按钮')
+    // ★ 自检必须干净：所有卡片都有合法声明 ⇒ 不该留下 data-tab-unclaimed
+    assert.equal(after.getAttribute('data-tab-unclaimed'), null,
+      '★ 有卡片没被页签收走（自检点名）：' + after.getAttribute('data-tab-unclaimed'))
 
   const panes = after.querySelectorAll('.t-pane')
   assert.equal(panes.length, 4, '4 个 pane')
