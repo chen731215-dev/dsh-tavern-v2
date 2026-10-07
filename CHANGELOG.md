@@ -65,7 +65,7 @@ hover 改走 `--dsw-alias-interactive-bg-hover`（浅一档），active 保持 l
 
 ### ✅ 验证
 
-- 全量 **433/433 通过**（22 个文件；改前 432/22，净 +1 = 新增 panel-tabs ⑤b ——
+- 全量 **434/434 通过**（22 个文件；434/434，净 +1 = 新增 panel-tabs ⑤b ——
   删除的是**断言行**而非测试项，所以每个文件的项数不变）；
 - `node --check` 全过（4 个 lib 文件 + 22 个 tests + 2 个 tools）；
 - 样式预算通过，并**全线下调**：内联事件属性 **5 → 0**、内联样式 312→301、裸 hex 352→331、
@@ -73,14 +73,22 @@ hover 改走 `--dsw-alias-interactive-bg-hover`（浅一档），active 保持 l
 - 残留 grep（`lib/`）：`saveEdition|loadEditions|editedCache|startEdit|tavern:edits|edited-messages|edit-history` 全部 **0**
   （`tavern-preset-batch` 仅剩保留项 `#tavern-preset-batch-del2` 的 2 处命中，属正常）。
 
-### 🔍 顺手发现（未在本版处理，已记账）
+### 🔍 顺手发现 → 本版已一并处理
 
-- `lib/index.js` 里服务端**自渲染的设置页**仍有 2 处内联 `onclick="saveWin()"` / `onclick="save()"`。
-  它不在 `tools/assert-style-budget.mjs` 的统计范围内（该脚本只量 `lib/client.manager.bundle.js`），
-  所以硬规则不会因此变红；如要彻底清零内联事件属性，需一并把这两处改成 `addEventListener`。
-- `lib/index.js` 的 `writeSessionLines()` 随 `editHistoryMessage()` 一起失去了唯一调用者，
-  现在是**未使用的死函数**（保留：它是"重写整份 zstd 会话"的唯一实现，
-  注释里还引用它警示"不要改写会话日志"）。若确认永久不用，可另行删除。
+- **服务端自渲染设置页的内联事件全部清零**：设置页原有 8 处 `on<event>="…"`
+  （`saveWin()` / `save()` / `plotOptions` 等 3 个开关 / 2 个世界书模式单选），
+  全部改为 `addEventListener` 绑定；`writeSessionLines()`（改写整份 zstd 会话日志的死函数）
+  已删除，只在注释里留下"**不要再引入这种写法**"的警示。
+- **样式预算新增两项硬 0 规则**：`inlineHandlerAttr`（客户端，5→0）与
+  `inlineHandlerAttrServer`（服务端 `lib/index.js` 自渲染 HTML，8→0）——
+  后者是 v2.7.1 前**完全漏检**的一类（预算脚本只量客户端 bundle）。
+  新增 `tests/style-budget.test.js` 的 ③-b 断言把这条钉死，并配"合成样本必须命中"的非空跑对照。
+
+### ✅ 本版验证（2.7.1）
+
+- 全量 **434/434 通过**（22 个文件）；
+- `npm run check:style`：`inlineHandlerAttr = 0`、`inlineHandlerAttrServer = 0`、`!important = 0`，exit 0。
+
 
 ## v2.7.0 (2026-10-07) — 🧭 声明式页签归属 + 📏 样式预算棘轮
 
