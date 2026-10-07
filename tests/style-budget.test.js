@@ -9,7 +9,7 @@
  *   ① 指标函数真的在测东西（喂合成样本 → 数字必须对得上，防止判据空跑）；
  *   ② 当前 bundle 不超预算；
  *   ③ 硬规则 `!important` 必须为 0；
- *   ④ `inlineHandlerAttr` 作为棘轮不得增长（历史遗留 5 处，只能降）。
+ *   ④ `inlineHandlerAttr` 作为硬规则必须恒为 0（v2.7.1 把历史遗留的 5 处清零后升级）。
  *
  * 运行：node --test tests/style-budget.test.js
  */
@@ -92,14 +92,16 @@ test('③ 硬规则 `!important` 必须恒为 0', () => {
   assert.ok(HARD_ZERO.includes('important'), 'important 必须在硬规则清单里')
 })
 
-test('④ 内联事件属性是棘轮：不得增长（历史遗留 5 处，只许降）', () => {
+test('④ 内联事件属性已清零 ⇒ 升级为硬规则：恒为 0', () => {
   const actual = measure(fs.readFileSync(CLIENT, 'utf8'))
   const budget = readBudget()
+  assert.equal(actual.inlineHandlerAttr, 0,
+    '★ markup 里不许再有内联事件属性（要做点击就在容器上做事件委托）：实测 ' + actual.inlineHandlerAttr)
   assert.ok(actual.inlineHandlerAttr <= budget.inlineHandlerAttr,
     '★ 内联事件属性不得增加：预算 ' + budget.inlineHandlerAttr + ' → 实测 ' + actual.inlineHandlerAttr)
-  // 反向护栏：HARD_ZERO 里暂时不含 inlineHandlerAttr（有历史遗留），但必须记录在预算里当棘轮
-  assert.equal(HARD_ZERO.includes('inlineHandlerAttr'), false, '当前有遗留，不该当硬 0 规则（改了这条要同步改脚本注释）')
-  assert.ok('inlineHandlerAttr' in budget, '遗留项必须留在预算里，否则它就没被棘轮管住')
+  // v2.7.1：5 处历史遗留（世界书 stopPropagation / 勾选、关系网模态两处）已改委托 ⇒ 收进硬规则
+  assert.ok(HARD_ZERO.includes('inlineHandlerAttr'), '清零后必须当硬 0 规则（改了这条要同步改脚本注释）')
+  assert.ok('inlineHandlerAttr' in budget, '它仍留在预算里，方便一眼看到当前值')
 })
 
 test('⑤ 判据非空跑：拿一份"超预算"的样本必须被判出来', () => {

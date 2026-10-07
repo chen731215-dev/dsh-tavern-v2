@@ -1,5 +1,87 @@
 # Changelog
 
+## v2.7.1 (2026-10-07) — 🧹 删除「编辑 AI 回复」整条功能 + 5 处内联事件属性清零
+
+### 1. 删除「编辑 AI 回复」（整条功能下线，含服务端事实修正段与历史改写路由）
+
+**为什么删**：用户反馈「编辑 AI 回复后 AI 并不遵守」。它靠两件本就不可靠的事：
+① 直接改写 DSH 会话日志（自己提示"保存后需重启 dsh 生效"）；② 往系统提示里塞一段
+「对话历史事实修正」。两者都不是真的在改模型看到的那条历史 —— 于是**删掉**，不留半截。
+
+- 客户端 `lib/client.manager.bundle.js`：
+  - `startEdit()`（编辑层 overlay / 保存 / 取消 / 恢复原文）整块删除；
+  - 消息右下角的 ✏️ 按钮与其 hover 显隐、`tavernEditIndex` / `tavernEditApplied` 标记删除；
+  - 「✏️ 已修正（影响后续生成）」徽章删除；
+  - `editedCache` / `loadEditions` / `saveEdition`（含 `/api/tavern/edited-messages` 与
+    `/api/tavern/edit-history` 两处 fetch）及其全部调用点删除；
+  - `getMessageContentEl()` 随编辑覆盖一起失去了唯一调用者，一并删除；
+  - `initMessageEditor()` 更名 `initMessageBeautifier()` —— 它现在只负责美化，不再"编辑"。
+- 服务端 `lib/index.js`：
+  - `tavern:edits`（order=0）注入段整块删除（`【最高优先级 — 对话历史事实修正】` 构造）；
+  - 路由 `/api/tavern/edited-messages`、`/api/tavern/edit-history` 删除；
+  - `readEditedMessages` / `writeEditedMessages` / `editHistoryMessage`、
+    `EDITED_MESSAGES_FILE`（两处赋值）删除；
+  - 卡组装处的 `editsText` 及其拼接项删除（`memoryText`/`styleText`/`netText` 等相邻项未动）；
+  - `sectionSizes.edits` 与 prompt-stats 输出的 `edits` 字段删除，`total` 口径同步改；
+  - 服务端统计页与客户端体积面板里的「事实修正」字段删除显示。
+- **注**：`~/.dsh/.agent-presets/edited-messages.json` 是**用户数据**，未触碰；代码已不再引用它。
+- 体积快照落盘**没有丢**：原先由 `tavern:edits` 段负责调用的 `flushPromptStats()`，
+  改由 `tavern:nsfw` 段（order 仍为 -1）在每条返回路径上调用，行为不变。
+
+### 2. 修 `tabKeyForTail` 漏「元素自身」（真 bug）
+
+散件规则里 `#tavern-extra` 写的是**那个 textarea 自身**，而旧实现只 `el.querySelector('#id')`
+查后代 ⇒ 这个控件永远搬不进「内容」页签，被留在页签外。现在同时认「自身命中」与「后代命中」。
+`tests/panel-tabs.test.js` 新增 ⑤b：真跑 `installPanelTabs`，断言 `#tavern-extra`
+**必须**落进 `content` 页签、且仍留在面板根下 = 判据失败。
+
+### 3. 页签 hover / 选中不再长得一样 + 焦点环
+
+`.t-tab:hover` 与 `.t-tab.active` 原先同用 `--dsw-alias-bg-layer-2`，肉眼分不出"鼠标划过"和"当前页签"。
+hover 改走 `--dsw-alias-interactive-bg-hover`（浅一档），active 保持 layer-2 + 边框 + 加粗；
+并补 `.t-tab:focus-visible` 焦点环（`outline: 2px solid var(--dsw-alias-brand-primary)` + `outline-offset: 2px`）。
+
+### 4. 删除坏掉的批量删除路径（死代码 + 点击必抛异常）
+
+`#tavern-preset-batch`（常驻 `display:none`）与 `#tavern-batch-box` 面板的 markup + 处理器整块删除。
+它们读的 `#tavern-batch-box` / `#tavern-batch-del` / `sessionPresetSelect.options`
+早已不存在 —— 这段代码一旦被触发**必抛 TypeError**。
+可用的那套（每行复选框 + `#tavern-preset-batch-del2`）**未动**。
+顺带修掉同区域的连带引用：删除预设后"自动绑定到第一个预设"原先读那个已不存在的下拉框，
+改用面板自己的 `state.presets` / `getActivePresetId()` 取同一个值。
+
+### 5. 5 处内联事件属性 → 事件委托（`inlineHandlerAttr` 5 → 0）
+
+世界书列表的删除本/删除条目/勾选框 + 关系网详情面板的两处「点击空白处关闭」，
+全部改为容器上的**事件委托**（`closest('[data-wb-group-action="delete"]')` 等）。
+行为等价：删除按钮的点击**不冒泡**到条目行，因此不会顺带触发展开/折叠。
+`inlineHandlerAttr` 从棘轮**升级为硬规则**（恒为 0）。
+
+### 6. 测试与 UI 文案解耦 emoji
+
+`tests/scope-panel-ui.test.js` 原先断言 `>🌍 所有会话生效<` 这类**可见文案 + emoji**（16 处断言/测试名），
+文案一改测试就红。改为断言稳定标识：给三个范围按钮加 `data-scope-mode="global|session|cwd"`、
+解绑按钮加 `data-action="unbind"`，测试断言 `data-*`（**未改任何可见文案**）。
+
+### ✅ 验证
+
+- 全量 **433/433 通过**（22 个文件；改前 432/22，净 +1 = 新增 panel-tabs ⑤b ——
+  删除的是**断言行**而非测试项，所以每个文件的项数不变）；
+- `node --check` 全过（4 个 lib 文件 + 22 个 tests + 2 个 tools）；
+- 样式预算通过，并**全线下调**：内联事件属性 **5 → 0**、内联样式 312→301、裸 hex 352→331、
+  rgba 160→150、`cssText` 赋值 72→59、颜色字面量 58→53 种、padding 变体 46→42、z-index 11→8；
+- 残留 grep（`lib/`）：`saveEdition|loadEditions|editedCache|startEdit|tavern:edits|edited-messages|edit-history` 全部 **0**
+  （`tavern-preset-batch` 仅剩保留项 `#tavern-preset-batch-del2` 的 2 处命中，属正常）。
+
+### 🔍 顺手发现（未在本版处理，已记账）
+
+- `lib/index.js` 里服务端**自渲染的设置页**仍有 2 处内联 `onclick="saveWin()"` / `onclick="save()"`。
+  它不在 `tools/assert-style-budget.mjs` 的统计范围内（该脚本只量 `lib/client.manager.bundle.js`），
+  所以硬规则不会因此变红；如要彻底清零内联事件属性，需一并把这两处改成 `addEventListener`。
+- `lib/index.js` 的 `writeSessionLines()` 随 `editHistoryMessage()` 一起失去了唯一调用者，
+  现在是**未使用的死函数**（保留：它是"重写整份 zstd 会话"的唯一实现，
+  注释里还引用它警示"不要改写会话日志"）。若确认永久不用，可另行删除。
+
 ## v2.7.0 (2026-10-07) — 🧭 声明式页签归属 + 📏 样式预算棘轮
 
 ### 1. 卡片的页签归属改为**声明式**（\data-tv-tab\）

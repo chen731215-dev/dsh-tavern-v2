@@ -399,6 +399,25 @@ test('⑥ 切页签：点按钮 → 只有该页签可见，并写入 localStora
   assert.equal(store['tavern.panel.tab'], 'play', '当前页签要记住')
 })
 
+// ════════════════════════════════════════════════════════════════
+// ⑤b ★ 散件规则必须认「元素自身」—— `#tavern-extra` 就是那个 textarea 本身
+//    （曾经的 bug：tabKeyForTail 只 el.querySelector('#id') 查后代 ⇒ 控件自身
+//      永远搬不进「内容」页签，被留在页签外。留个断言钉死它。）
+// ════════════════════════════════════════════════════════════════
+test('⑤b 散件规则认元素自身：#tavern-extra 这个 textarea 本身会进「内容」页签', () => {
+  // 注意：tabKeyForTail 只活在 installPanelTabs 所在的 vm 沙箱里，测试里拿不到它的引用，
+  //   所以这里**只做行为断言**（真跑 installPanelTabs，看那个 textarea 落到哪个 pane）。
+  const mgr = buildPanel()
+  const ta = mgr.querySelector('#tavern-extra')
+  assert.ok(ta, '夹具里应当有 #tavern-extra')
+  const { mgr: after } = runInstaller(mgr, {})
+  const content = after.querySelectorAll('.t-pane').find((p) => p.getAttribute('data-tab') === 'content')
+  const session = after.querySelectorAll('.t-pane').find((p) => p.getAttribute('data-tab') === 'session')
+  assert.ok(content.children.includes(ta), '★ #tavern-extra 必须被搬进「内容」页签（不是留在页签外）')
+  assert.equal(after.children.includes(ta), false, '★ 它不该还留在面板根下（= 没被任何页签收走）')
+  assert.equal(session.children.includes(ta), false, '也不该进别的页签')
+})
+
 test('⑦ 上次停留的页签会被恢复；非法值回落 session', () => {
   const mgrA = buildPanel()
   runInstaller(mgrA, { 'tavern.panel.tab': 'advanced' })

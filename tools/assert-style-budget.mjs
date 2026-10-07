@@ -77,11 +77,11 @@ export function measure(src) {
 
 /**
  * 硬规则：这些指标任何情况下都不允许 > 0。
- * `inlineHandlerAttr`（markup 里的 on<event>="…"）暂不列入：当前有 5 处历史遗留
- * （世界书条目的 stopPropagation / 勾选、关系网模态里的两处），改写它们需要浏览器里
- * 交互验证，属于独立任务。它们改为**棘轮**：只许降不许升，新代码不得再添。
+ * `inlineHandlerAttr`（markup 里的 on<event>="…"）已于 v2.7.1 清零（5 处 →
+ * 统一改为容器上的事件委托），因此**升级为硬规则**：内联事件属性不许再出现，
+ * 新代码要做点击行为就在容器上做委托。
  */
-export const HARD_ZERO = ['important']
+export const HARD_ZERO = ['important', 'inlineHandlerAttr']
 
 export function readBudget() {
   return JSON.parse(fs.readFileSync(BUDGET_FILE, 'utf8'))
