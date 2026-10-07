@@ -77,6 +77,24 @@ push / PR 自动跑 `check` / `test` / `check:style` / `check:integrity` / `chec
 
 ---
 
+### 8. 验证期间又抓出两处「本机绿、干净 clone 红」的坑（同日补掉）
+
+这两个都不是新功能的问题，而是**护栏自己的问题** —— 是靠「把每个提交单独 checkout 出来、
+在 CRLF 检出态下跑一遍」量出来的；本机工作树因为文件恰好是 LF，一直看不出来。
+
+- **`tests/innerhtml-escape-ratchet.test.js` ⑦ 的字符窗口**：它用 `{0,220}` 定位函数体，
+  而本仓在 Windows 检出（`core.autocrlf=true`）下 bundle 是 CRLF，CRLF 会把窗口撑破 ⇒ 干净 clone / CI 假红。
+  现在先做行尾归一化再匹配。
+- **`tools/run-each-test.mjs` 的摘要解析**：原来只认 `ℹ pass N`，而较新的 node 输出 `# pass N`
+  ⇒ 所有文件都解析成 `pass=0`。而「全 0」在「只看 `fail===0`」的旧判据下等于**全绿** ——
+  这是最危险的一档。现在两种格式都认；同时把 `skipped>0` 从「空跑」里排除
+  （`cordis-mount` 在没有 DSH 的环境会整批 skip，那是合法跳过）。
+
+> 顺带量到一处历史遗留：`lib/index.js` **入库时就是混合换行**（blob 里 7168 CRLF + 6 裸 LF），
+> 任何一次干净 checkout 拿到的都是混合文件。已随服务端分层提交统一为 CRLF（内容逐字不变）。
+
+---
+
 ## v2.7.10 (2026-10-08) — 🧹 三套转义实现收敛成一套 + 基线不许"不明所以"
 
 > 全量 **468/468 通过**（25 文件，护栏由 5 项扩到 7 项），`check:style` / `check:integrity` /
