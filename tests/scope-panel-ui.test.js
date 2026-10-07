@@ -152,9 +152,11 @@ test('面板 HTML：生效范围卡的关键元素齐全（三按钮 + 状态行
   const html = fs.readFileSync(BUNDLE, 'utf8')
   assert.match(html, /🎯 生效范围/)
   assert.match(html, /id="tavern-scope2-status"/)
-  assert.match(html, /id="tavern-scope-global"[^>]*>🌍 所有会话生效</)
-  assert.match(html, /id="tavern-scope-session"[^>]*>💬 仅当前会话</)
-  assert.match(html, /id="tavern-scope-cwd"[^>]*>📁 当前工作区</)
+  // ★ 断言 data-scope-mode（稳定标识），不绑可见文案 —— emoji/措辞一改测试就红，
+  //   「按钮真的存在、且三个各代表一种范围」才是判据。
+  assert.match(html, /id="tavern-scope-global"[^>]*data-scope-mode="global"/)
+  assert.match(html, /id="tavern-scope-session"[^>]*data-scope-mode="session"/)
+  assert.match(html, /id="tavern-scope-cwd"[^>]*data-scope-mode="cwd"/)
   assert.match(html, /id="tavern-scope-allow-chips"/)
   assert.match(html, /id="tavern-scope-disable-chips"/)
 })
@@ -171,7 +173,7 @@ test('挂载：三个按钮各挂且只挂一个 click handler，初次加载即
 // ════════════════════════════════════════════════════════════════
 // 三个按钮 → 请求体
 // ════════════════════════════════════════════════════════════════
-test('「🌍 所有会话生效」：点击 → POST {mode:"global"}，不碰任何名单', async () => {
+test('「所有会话生效」按钮：点击 → POST {mode:"global"}，不碰任何名单', async () => {
   const { els, fetchLog } = await runPanel({ state: { disabledCwds: ['C:/a'] } })
   els['#tavern-scope-global'].dispatch('click')
   await delay(40)
@@ -189,7 +191,7 @@ test('对照臂：global 按钮被改成发 allowlist 后，同一断言必须�
   })
 })
 
-test('「💬 仅当前会话」：自动检测 currentSessionId，去重追加进 allowSessions', async () => {
+test('「仅当前会话」按钮：自动检测 currentSessionId，去重追加进 allowSessions', async () => {
   const { els, fetchLog } = await runPanel({ state: { mode: 'global', allowSessions: ['s1'] } })
   els['#tavern-scope-session'].dispatch('click')
   await delay(60) // handler 内先 GET 再 POST
@@ -197,7 +199,7 @@ test('「💬 仅当前会话」：自动检测 currentSessionId，去重追加�
   assert.equal(p.length, 1)
   assert.deepEqual(p[0], { mode: 'allowlist', allowSessions: ['s1', SID] })
 })
-test('「💬 仅当前会话」：会话已在名单里时去重（不重复追加）', async () => {
+test('「仅当前会话」按钮：会话已在名单里时去重（不重复追加）', async () => {
   const { els, fetchLog } = await runPanel({ state: { allowSessions: ['s1', SID] } })
   els['#tavern-scope-session'].dispatch('click')
   await delay(60)
@@ -215,7 +217,7 @@ test('对照臂：去重追加被改坏（直接 push 不去重）后，同一�
   })
 })
 
-test('「💬 仅当前会话」：currentSessionId 缺失 → showPrompt 手输兜底，输入后照常 POST', async () => {
+test('「仅当前会话」按钮：currentSessionId 缺失 → showPrompt 手输兜底，输入后照常 POST', async () => {
   const { els, fetchLog, promptCalls } = await runPanel({
     state: { currentSessionId: '' },
     promptValue: 'manual-sid',
@@ -227,14 +229,14 @@ test('「💬 仅当前会话」：currentSessionId 缺失 → showPrompt 手输
   assert.equal(p.length, 1)
   assert.deepEqual(p[0], { mode: 'allowlist', allowSessions: ['manual-sid'] })
 })
-test('「💬 仅当前会话」：手输框被取消（null/空白）时不发任何请求', async () => {
+test('「仅当前会话」按钮：手输框被取消（null/空白）时不发任何请求', async () => {
   const { els, fetchLog, promptCalls } = await runPanel({ state: { currentSessionId: '' } })
   els['#tavern-scope-session'].dispatch('click')
   await delay(60)
   assert.equal(promptCalls.length, 1)
   assert.equal(posts(fetchLog).length, 0)
 })
-test('「💬 仅当前会话」：GET state 抛异常（网络断）也走 showPrompt 兜底，不白屏', async () => {
+test('「仅当前会话」按钮：GET state 抛异常（网络断）也走 showPrompt 兜底，不白屏', async () => {
   const { els, fetchLog, promptCalls } = await runPanel({ failState: true, promptValue: 'retry-sid' })
   els['#tavern-scope-session'].dispatch('click')
   await delay(60)
@@ -242,14 +244,14 @@ test('「💬 仅当前会话」：GET state 抛异常（网络断）也走 show
   assert.deepEqual(posts(fetchLog)[0], { mode: 'allowlist', allowSessions: ['retry-sid'] })
 })
 
-test('「📁 当前工作区」：自动检测 currentCwd，去重追加进 allowCwds（绝不一上来就让人填路径）', async () => {
+test('「当前工作区」按钮：自动检测 currentCwd，去重追加进 allowCwds（绝不一上来就让人填路径）', async () => {
   const { els, fetchLog, promptCalls } = await runPanel({ state: { mode: 'global', allowCwds: ['C:/old'] } })
   els['#tavern-scope-cwd'].dispatch('click')
   await delay(60)
   assert.equal(promptCalls.length, 0, '自动检测成功时不得弹手输框')
   assert.deepEqual(posts(fetchLog)[0], { mode: 'allowlist', allowCwds: ['C:/old', WS] })
 })
-test('「📁 当前工作区」：currentCwd 缺失 → showPrompt 手输兜底', async () => {
+test('「当前工作区」按钮：currentCwd 缺失 → showPrompt 手输兜底', async () => {
   const { els, fetchLog, promptCalls } = await runPanel({ state: { currentCwd: '' }, promptValue: 'D:/manual/ws' })
   els['#tavern-scope-cwd'].dispatch('click')
   await delay(60)
@@ -305,7 +307,7 @@ test('对照臂：chips × 被改坏（把剩余数组发成空数组）后，�
 // ════════════════════════════════════════════════════════════════
 // 状态行三形态
 // ════════════════════════════════════════════════════════════════
-test('状态行：global → 🌍（含排除数）；allowlist 非空 → 📁 M 个会话 / K 个工作区', async () => {
+test('状态行：global → 所有会话生效中（含排除数）；allowlist 非空 → 名单计数', async () => {
   const a = await runPanel({ state: { mode: 'global', disabledCwds: ['C:/1', 'C:/2'] } })
   assert.match(a.els['#tavern-scope2-status'].textContent, /🌍 所有会话生效中（已排除 2 个目录）/)
   const b = await runPanel({ state: { mode: 'allowlist', allowCwds: ['C:/a'], allowSessions: ['s1', 's2'] } })

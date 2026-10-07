@@ -940,11 +940,12 @@ test('P0-6 成人向提示段：源码里必须"有槽位、过闸门、默认�
   assert.ok(/nsfwEnabled: false, nsfwPrompt: ''/.test(src), '★ 默认必须是「关 + 空正文」')
   // 槽位必须过两道判据（会话隔离 + 统一生效范围）
   const start = src.indexOf("name: 'tavern:nsfw'")
-  const seg = src.slice(start, src.indexOf('  // 编辑过的消息注入', start))
+  const seg = src.slice(start, src.indexOf("'tavern.nsfw.section()'", start))
   assert.ok(seg.includes('isTavernSession('), '槽位必须过会话隔离判据')
   assert.ok(seg.includes('decideInjectionScope('), '槽位必须过统一生效范围闸门')
-  // 体积快照必须仍在（原由 nsfw 段负责落盘，现在归 edits 段 —— 搬丢了面板统计就停了）
-  assert.ok(/flushPromptStats\(\);\s*return ''/.test(src), 'edits 段的提前 return 也要落盘体积快照')
+  // 体积快照必须仍在（原由「历史事实修正」段负责落盘，该段已删 ⇒ 改由 nsfw 段落盘）
+  assert.ok(/flushPromptStats\(\);\s*return ''/.test(src), 'nsfw 段的提前 return 也要落盘体积快照')
+  assert.ok(/sectionSizes\.nsfw = body\.length\r?\n\s*flushPromptStats\(\)/.test(src), '正常返回路径同样要落盘体积快照')
 })
 
 test('P0-5 闸门纯函数：四种名单组合的判定表（空 / 会话命中 / 目录命中 / 都不命中）', () => {

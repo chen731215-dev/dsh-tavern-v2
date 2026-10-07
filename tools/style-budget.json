@@ -1,14 +1,14 @@
 {
-  "inlineStyleAttr": 312,
-  "inlineHandlerAttr": 5,
-  "bareHex": 352,
-  "bareRgba": 160,
-  "cssTextAssign": 72,
+  "inlineStyleAttr": 301,
+  "inlineHandlerAttr": 0,
+  "bareHex": 331,
+  "bareRgba": 150,
+  "cssTextAssign": 59,
   "important": 0,
-  "distinctColorLiterals": 58,
+  "distinctColorLiterals": 53,
   "distinctFontSizes": 12,
   "distinctRadii": 8,
-  "distinctPaddings": 46,
-  "distinctZIndex": 11,
+  "distinctPaddings": 42,
+  "distinctZIndex": 8,
   "styleTags": 0
 }
