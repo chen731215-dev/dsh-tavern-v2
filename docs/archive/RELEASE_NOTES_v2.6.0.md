@@ -43,4 +43,4 @@
   `cordis-mount.test.js`（注入段 2 → 3）；
 * 全量回归 **416/416 通过**，语法检查全过。
 
-完整改动见 [CHANGELOG.md](./CHANGELOG.md)。
+完整改动见 [CHANGELOG.md](../CHANGELOG.md)。

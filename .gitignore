@@ -17,3 +17,6 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 本地临时脚本目录（含「从会话日志提取 token」性质的脚本，绝不能入库）
+_scratch/
