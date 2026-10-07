@@ -15,6 +15,7 @@
  * 指标定义（都在**非注释行**上统计，注释里写示例不算）：
  *   inlineStyleAttr         markup 字符串里的 `style="` 内联样式数
  *   inlineHandlerAttr       markup 字符串里的 `on<event>="` 内联事件属性数（硬规则：必须为 0）
+ *   inlineHandlerAttrServer **服务端** lib/index.js 自渲染 HTML 的内联事件数（硬规则：必须为 0）
  *   bareHex                 裸十六进制颜色字面量（#rgb / #rrggbb / #rrggbbaa）
  *   bareRgba                rgb()/rgba() 字面量
  *   cssTextAssign           `.cssText =` 赋值次数
@@ -81,7 +82,16 @@ export function measure(src) {
  * 统一改为容器上的事件委托），因此**升级为硬规则**：内联事件属性不许再出现，
  * 新代码要做点击行为就在容器上做委托。
  */
-export const HARD_ZERO = ['important', 'inlineHandlerAttr']
+export const HARD_ZERO = ['important', 'inlineHandlerAttr', 'inlineHandlerAttrServer']
+
+/**
+ * 服务端自渲染页（lib/index.js 里的 HTML 字符串）也必须零内联事件 —— v2.7.1 前这条漏检：
+ * 设置页曾有 `onclick="saveWin()"` / `onclick="save()"` / `onchange="toggle(...)"` 三处。
+ */
+export const SERVER_FILE = path.join(REPO, 'lib', 'index.js')
+export function measureServer(src) {
+  return { inlineHandlerAttrServer: count(codeLines(src), /\son[a-z]+\s*=\s*"/g) }
+}
 
 export function readBudget() {
   return JSON.parse(fs.readFileSync(BUDGET_FILE, 'utf8'))
@@ -108,6 +118,7 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve
 if (isMain) {
   const src = fs.readFileSync(CLIENT, 'utf8')
   const actual = measure(src)
+  actual.inlineHandlerAttrServer = measureServer(fs.readFileSync(SERVER_FILE, 'utf8')).inlineHandlerAttrServer
   if (process.argv.includes('--json')) { console.log(JSON.stringify(actual, null, 2)); process.exit(0) }
   if (process.argv.includes('--update')) {
     fs.writeFileSync(BUDGET_FILE, JSON.stringify(actual, null, 2) + '\n', 'utf8')
@@ -115,6 +126,7 @@ if (isMain) {
     for (const [k, v] of Object.entries(actual)) console.log('  ' + k.padEnd(22) + v)
     process.exit(0)
   }
+  actual.inlineHandlerAttrServer = measureServer(fs.readFileSync(SERVER_FILE, 'utf8')).inlineHandlerAttrServer
   const budget = readBudget()
   const { increased, decreased, hardZeroViolations } = compare(actual, budget)
   console.log('样式预算校验（实测 / 预算）')
