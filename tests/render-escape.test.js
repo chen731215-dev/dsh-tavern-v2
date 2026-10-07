@@ -165,3 +165,38 @@ test('⑤ 面板里那段「能拿到就危险」的说明不含现成注入载�
   const BAD = [/onerror\s*=\s*alert/i, /<script>fetch\(/i]
   for (const re of BAD) assert.ok(!re.test(BUNDLE), '★ bundle 里出现了可复制的注入载荷：' + re)
 })
+
+// ════════════════════════════════════════════════════════════════
+// ⑥⑦ 2.7.6：issue #14 的同类残留 —— 预设名裸拼进 innerHTML
+//    数据源是用户/服务端填的预设名（不是模型输出），严重度低于 #14，
+//    但「导入预设」这条路径能由外部文件把名字带进来，所以一并堵上。
+// ════════════════════════════════════════════════════════════════
+test('⑥ 预设名一律 esc(...)：导入提示 / 当前预设 / 当前编辑', () => {
+  const SPOTS = [
+    // 只钉「导入提示」那一行：别处还有 '+ pname +'，但那是 showConfirm() 弹窗（走 textContent，不是 innerHTML）
+    ["已导入预设「' + esc(pname) + '」", "已导入预设「' + pname + '」"],
+    ["'✅ 当前预设：' + esc(presetLabelText) + '<br>", "'✅ 当前预设：' + (data.presetName || '默认预设') + '<br>"],
+    ["'✅ 当前编辑：' + esc(currentPreset ? currentPreset.name : '默认预设')", "'✅ 当前编辑：' + (currentPreset ? currentPreset.name : '默认预设')"],
+  ]
+  const bad = []
+  for (const [fixed, raw] of SPOTS) {
+    if (!BUNDLE.includes(fixed)) bad.push('缺转义写法：' + fixed)
+    if (BUNDLE.includes(raw)) bad.push('★ 仍在裸拼：' + raw)
+  }
+  assert.deepEqual(bad, [], bad.join(String.fromCharCode(10)))
+  // 反证：判据不是永真 —— 修复前的写法必须能被同一组判据认出来
+  const before = "st.innerHTML = '✅ 已导入预设「' + pname + '」，自动清理了 <b>'"
+  assert.ok(before.includes("+ pname +"), '对照：旧写法必须能被判据识别（否则这条护栏是空的）')
+})
+
+test('⑦ 「修正绿字」不许再从 innerHTML 里字符串反查', () => {
+  // 为什么单列一条：原代码写进去再从 innerHTML 反查替换。若只在写入端加 esc()，
+  // 读回来的 & " ' 已被浏览器解码，反查串（未解码）对不上 ⇒ 名字含引号时修正静默失效。
+  // 所以正确姿势是「先定好最终文本 → 转义 → 写一次」。
+  assert.ok(!BUNDLE.includes("presetStatus.innerHTML.replace('当前预设：'"),
+    '★ 还在用 innerHTML 反查：esc 写进去、读回来已被解码，名字含引号时替换会失配')
+  assert.ok(BUNDLE.includes("var presetLabelText = String(data.presetName || '默认预设');"),
+    '应当先把最终文本定好，再转义写一次')
+  assert.ok(BUNDLE.includes('if (presetLabelEl2 && presetLabelEl2.textContent) presetLabelText = presetLabelEl2.textContent;'),
+    '★ 「以下拉框为准」的修正行为必须保留 —— 不能因为加转义就把功能弄丢')
+})
