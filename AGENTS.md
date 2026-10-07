@@ -1,126 +1,384 @@
 # dsh-tavern 项目规范（给 AI 助手看）
 
-> 本文件是给 AI 编程助手（Doubao、Cursor、Copilot 等）看的项目规范。
-> 修改代码前请先读完本文件，确保符合项目规范。
+> 本文件是给 AI 编程助手看的**唯一规范源**。修改代码前请先读完。
+>
+> ⚠️ **如果你是从别处（IDE 规则、交接文档、旧记忆）得到的规矩，以本文件为准。**
+> 曾经的「服务端逻辑全部集中在 `lib/index.js`，不要新建拆分子模块文件」**已于 2.7.3 作废** ——
+> 见 §5「服务端分层」。那条规矩正是把 index.js 堆到 7000 行的原因。
 
-## 项目概述
-
-dsh-tavern 是 DeepSeek Harness（DSH）的酒馆管理插件，提供角色扮演、角色卡/世界书/预设管理、多会话隔离、记忆总结、关系网、剧情选项等功能。
-
-- **包名**：`dsh-tavern`
-- **版本**：1.9.2
-- **模块系统**：ES Modules（`import`/`export`，不用 `require`）
-- **入口文件**：`lib/index.js`
+- **包名**：`dsh-tavern`（**不是** `@local/dsh-tavern`）
+- **版本**：2.7.11
+- **模块系统**：ES Modules（`import` / `export`，禁止 `require` / `module.exports`）
+- **服务端入口**：`lib/index.js`（分层进度见 §1 结构图 / §5；**行数与模块数一律不写进文档**，手抄必漂）
 - **客户端入口**：`lib/client.manager.bundle.js`
+- **直接 Install 方式**：npm `dsh-tavern`（用户已在使用，市场有收录）
 
-## 项目结构
+> 📌 **规范只有这一份真源。** `CLAUDE.md` 与 `.cursorrules` 现在只是指向本文件的短指针。
+> 历史上三者是同一份内容的三份拷贝，结果两处漂移成了过期版本号，教训在此：**不要再把规则复制到第二个文件**。
+
+---
+
+## 1. 项目结构（2026-10-07 实测）
 
 ```
 dsh-tavern/
 ├── lib/
-│   ├── index.js              # 服务端入口（全部逻辑自包含：启动、API 路由、注入、记忆/关系网）
-│   ├── utils.js              # 纯函数工具（供单元测试使用）
-│   └── client.manager.bundle.js  # 客户端代码（Web 面板，平台注入）
-├── tests/
-│   └── core.test.js          # 单元测试（npm test）
-├── .github/
-│   └── ISSUE_TEMPLATE/       # Issue 模板
-│   └── workflows/check.yml   # CI：语法检查（npm run check / check:client）
-├── README.md
-├── CHANGELOG.md
-├── TUTORIAL.md
-├── CONTRIBUTING.md
-├── AGENTS.md                 # 本文件
-├── LICENSE
+│   ├── index.js                     # 服务端入口 ★ 仍在分层中，见 §5
+│   ├── server/                      # ★ 已从 index.js 整块搬出的服务端模块（2.7.4 起）
+│   │   ├── state.js                 #   ★ 可变运行时状态 S + 路径镜像 P / syncPaths()，见 §5.3
+│   │   ├── constants.js             #   跨模块共享常量
+│   │   ├── util.js                  #   无状态纯工具
+│   │   ├── zstd.js                  #   zstd 多帧解压垫片
+│   │   ├── text.js                  #   文本清洗 / 角色卡正文提取
+│   │   ├── prompt.js                #   注入闸门 + 体积预算
+│   │   ├── worldbook.js             #   世界书 v2 格式 + 条目选择
+│   │   ├── preset-decl.js           #   预设声明块渲染与修补
+│   │   ├── presets.js               #   预设组合判据（S2-C 继续扩充）
+│   │   ├── bindings.js              #   绑定来源分类 / 活动会话探测
+│   │   ├── skills.js                #   skill 命名与 frontmatter
+│   │   ├── summary.js               #   总结生成：提示词 / LLM 调用 / 解析 / 拒答
+│   │   ├── session-log.js           #   会话历史定位与 zstd 读取
+│   │   ├── session-read.js          #   会话历史直读
+│   │   ├── session-migrate.js       #   会话/预设一次性迁移
+│   │   ├── state-io.js              #   状态写入与目录准备
+│   │   └── dsh-conn.js              #   DSH settings + credentials 解析
+│   ├── client.manager.bundle.js     # 客户端 ★ **单文件即源码，没有构建步骤**，直接改它
+│   ├── utils.js                     # 纯函数工具
+│   └── client.js                    # 客户端加载壳
+├── tests/                           # 测试（`npm test` 逐文件跑；数量以输出为准，别手抄）
+├── tools/
+│   ├── assert-style-budget.mjs      # 样式预算棘轮（check:style）
+│   ├── style-budget.json            #   样式预算基线
+│   ├── check-client-integrity.mjs   # 自检三件套：悬空 id / 标签配平 / 卡片深度，见 §10
+│   ├── check-innerhtml-escape.mjs   # innerHTML 转义棘轮（check:innerhtml）
+│   ├── innerhtml-baseline.json      #   转义棘轮基线（只许减不许增）
+│   ├── check-syntax.mjs             # 全仓语法检查（check；不 spawn 子进程）
+│   └── run-each-test.mjs            # 逐文件跑测试 = `npm test`，见 §9
+├── .github/workflows/check.yml      # CI：唯一的自动化强制点，见 §9
+├── docs/
+│   ├── issues/                      # 待决策议题留档
+│   └── archive/                     # 历史文档归档区（不进发布包）
+│       ├── CHANGELOG-pre-2.6.md
+│       ├── AUDIT-功能体检.md / ROOT_CAUSE_报告.md / HANDOFF-会话绑定修复.md
+│       ├── RELEASE_NOTES_v*.md
+│       ├── _probes/                 # 一次性探针脚本（含绝对路径，勿照抄）
+│       └── _legacy/                 # 根目录遗留的旧 client bundle 副本（78 KB，改了不生效）
+├── CHANGELOG.md                     # 只留当前批次；更早的已归档
+├── AGENTS.md                        # 本文件（唯一规范源）
+├── CLAUDE.md / .cursorrules         # 指针文件
+├── HANDOFF-重构交接.md              # 本次重构的工作交接（S2 起）
+├── README.md / TUTORIAL.md / CONTRIBUTING.md
+├── cordis.patch.yml
 └── package.json
 ```
 
-## 模块依赖关系（服务端自包含，无循环依赖）
+---
+
+## 2. 模块依赖关系（无循环依赖）
 
 ```
-index.js ──→ (仅 Node 内置模块：fs/os/path/http/https/node:zlib)
-client.manager.bundle.js ──→ (经 HTTP API 与 index.js 通信)
-tests/core.test.js ──→ lib/index.js（_test 导出） + lib/utils.js
+钩子 + 装配        lib/index.js
+                     ├── lib/server/{constants,util,zstd,text,prompt,
+                     │              worldbook,preset-decl,session-log,
+                     │              summary,dsh-conn}.js                ← S2-A 已完成（单向依赖）
+                     ├── lib/server/{state,presets,bindings,inject,
+                     │              relations,skills}.js                ← S2-B/C 待做
+                     ├── lib/utils.js
+                     └── lib/server/routes/*.js
+HTTP API  ←────→  lib/client.manager.bundle.js（平台注入，经 ctx.webServer 与服务端通信）
+tests/*.test.js ─→ lib/index.js 的 `_test` 导出 + lib/utils.js
+tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 ```
 
-> ⚠️ 注意：服务端逻辑全部集中在 `lib/index.js`（自包含设计）。
-> 修改服务端功能时直接改 `lib/index.js`，不要新建拆分子模块文件。
-> 纯函数如需单测，可加入 `lib/index.js` 末尾的 `_test` 导出。
+> `index.js` 的 `apply(ctx)` 在 S2 之后应当**只做装配**：
+> 解析 Home → 建状态 → 注册 inject 段 → 注册路由 → 注册生命周期。具体逻辑下沉到 `lib/server/*`。
 
-## 代码规范
+---
 
-### 1. 模块系统
-- 全部使用 ES Modules：`import` / `export`
-- 禁止使用 `require()` / `module.exports`
-- 导入路径使用相对路径：`./utils.js`
+## 3. 架构地图（按功能块定位，**不要按行号** —— 行号会漂）
 
-### 2. 命名规范
-- 函数名：小驼峰 `camelCase`（如 `readPresetFiles`）
-- 常量：大写下划线 `UPPER_SNAKE_CASE`（如 `DEFAULT_PRESET_ID`）
-- 变量：小驼峰 `camelCase`
-- 文件名：小写下划线或短横线（如 `preset-manager.js`）
+### 服务端 `lib/index.js`
 
-### 3. 函数设计
-- 优先使用纯函数（输入确定输出，无副作用）
-- 有副作用的函数（写文件、改状态）要明确命名
-- 每个函数只做一件事，超过50行考虑拆分
+| 功能 | 搜索关键字 |
+|---|---|
+| Home 解析 | `resolveDshHome`（优先级：显式配置 → `$DSH_HOME` → `~/.dsh`） |
+| 提示词注入段 | **实际只有 2 个** `ctx.systemPrompt.section(`：`tavern:card`（`order: -999999`）与 `tavern:nsfw`（**order: -1**）。<br>§3 早先版本把 `tavern:wb` / `tavern:memory` / `tavern:relations` / `tavern:skills` 也列成独立段 —— **那是错的**（2026-10-08 实测：`grep systemPrompt.section` 只有 2 处）。<br>其余内容全部**拼进 `tavern:card` 的 `cardOut`**：<br>`sanitizePromptText(summaryText + header + text + wbText + memoryText + styleText + netText + toolsRestriction + relationsText + skillsText)`<br>⚠️ 其中 `summaryText` / `memoryText` 来自 `readSessionMemory()`，**是模型输出、且原样进系统提示**；`relationsText` 只含计数（见 `buildRelationsHintText`）。 |
+| 体积快照 | `flushPromptStats()`（**必须每条返回路径都调用**）、`sectionSizes` |
+| HTTP 路由 | `ctx.webServer.register(`、`/api/tavern/` |
+| 预设 CRUD / 声明 | `writePresetFiles`、`agent.cordis.yml`、`prefix:`（**不是 `text:`**）、禁止 `complete: true` |
+| 世界书 | 关键词触发匹配、`injectMode`（full / keyword） |
+| 记忆 / 总结 | `buildSummaryPrompt`、`callLLM`、`parseSummaryOutput` |
+| 关系网 | 关系数据落库 + 渲染数据来源（**来自模型输出**） |
+| 技能生成 | `SKILL.md` 生成 |
+| 设置页（自渲染 HTML） | 搜 `<button id=`；已全部改 `addEventListener`，**零内联事件** |
+| 测试导出 | `_test` |
 
-### 4. 错误处理
+### 客户端 `lib/client.manager.bundle.js`
+
+| 功能 | 搜索关键字 |
+|---|---|
+| 面板 markup | `function panelHTML(`（12 张一级卡片，每张有 `data-tv-tab`） |
+| 页签引擎 | `installPanelTabs()`、`TAB_DEFS`、`TAB_TAIL_RULES`、`tabKeyForTitle`、`tabKeyForTail` |
+| 页签自检 | `data-tab-unclaimed`（未归类卡片会被点名且保持可见） |
+| 转义（**安全关键**） | `function esc(`、`function escAttr(`（`escAttr` 现在是 `esc` 的别名） |
+| 关系网渲染 | `renderRelationsGraph`、`renderLargeGraph`（**两个函数都要转义**） |
+| 面板各卡片 | 世界书 / 预设 / 会话绑定 / 生效范围 / 记忆 / 故事背景 / 写作辅助 / 回复体检 |
+| 设置页样式 | `#tavern-manager` 作用域下的 CSS 字符串 |
+
+---
+
+## 4. 客户端 bundle 是源码，**没有构建步骤**
+
+> 旧文档说「客户端是打包文件，修改源码后需要重新打包」—— **这句话是错的，已删。**
+> `lib/client.manager.bundle.js` 就是发货源码，可以直接改。
+
+- 可以直接修改它；**不要**引入构建步骤却不同步改发布流程（`package.json.files`、npm 发布、市场更新都会跟着变）。
+- ⚠️ 仓库里还有一个 `docs/archive/_legacy/client.manager.bundle.js`（78 KB 旧副本），**那是遗留占位，改了不生效**。
+
+---
+
+## 5. 服务端分层（2.7.3 起的新规矩，取代旧的自包含条款）
+
+**允许并且鼓励**把 `lib/index.js` 拆成 `lib/server/` 下的多个模块。拆分时的硬要求：
+
+1. **先有安全网再动刀**：见 §10 自检三件套。这类改动会让一批「扫源码字符串」的测试大面积报红，
+   没有安全网就会失去判断力。
+2. **逐段搬家，不要整文件重排**：每次只搬一个功能块，搬完立即跑 §9 的全量测试。
+3. **不许改用户可见行为**：灰度口径就是「测试不能改」+「`prompt-stats.json` 输出结构不变」。
+4. 每个新文件都要过 `node --check`。
+5. 禁止循环依赖：`lib/server/*` 只允许依赖更底层的模块（`state` / `utils`），不允许反向 import `index.js`。
+   **推论**：某个常量若同时被「搬走的函数」和「留守的函数」用到，它必须先下沉到 `lib/server/constants.js`
+   —— 否则搬走的那边只能反向 import `index.js`，直接违反本条。
+
+### 5.1 有一批函数**不许搬出 `lib/index.js`**（2.7.4 实测）
+
+几个测试会**按行切片** `lib/index.js` 的源码，把函数体拼成独立模块求值
+（`memory-isolation` / `session-storage-migration` / `greeting-seed`）。被切的函数必须：
+
+- 以 `function <名>(` 顶格声明、以顶格 `}` 收尾（`sliceFn` 就这么找的）；
+- **只依赖 `fs` / `path` / 彼此** —— 一旦引用了被搬走的函数，独立模块里就是 `ReferenceError`。
+
+当前钉住的名单（改名前先回来核对）：
+
+| 来源测试 | 钉住的函数 / 代码块 |
+|---|---|
+| `memory-isolation` | `readPresetsMeta` `getPresetDir` `memoryFile` `sessionDir` `sessionMemoryFile` `readSessionMemory` `readMemory`，以及 `let ROOT = path.join(DSH_HOME, '.agent-presets')` → `const DEFAULT_PRESET_DIR` 这段常量块 |
+| `session-storage-migration` | `migrateSessionStorageOutOfPresetRoot` `readSessionMemory` `readSessionRelations`（另带动 `hasCardGreeting` `pickGreetingCard` `sessionRelationsFile` 不许搬） |
+| `greeting-seed` | `appendGreetingToSessionEnd` `insertGreetingForSession` `canAppendGreetingSurface` |
+| `memory-isolation`（总结棒） | 源码里必须有字面量 **`const targetSid = lastSessionId`**（禁止异步回调里再读全局），且不许出现 `runSummary(ctx, st2, lastSessionId,` ⇒ `lastSessionId` **不能改名、不能收进 state.js** |
+| `nsfw-slot` ⑪ / `core` P0-6 | **`readState`** —— 函数体里含默认 state 字面量 `nsfwEnabled: false, nsfwPrompt: ''`，搬走立刻报红 |
+| `greeting-seed` | **`armLiveAgents`** —— 测试按 `function armLiveAgents(` 切片它 |
+| `core` P0-6 / `nsfw-slot` ⑪⑫ | `apply` 内 `tavern:nsfw` 注册段（须含 `isTavernSession(` `decideInjectionScope(` `order: -1`）、`flushPromptStats(); return ''`、`sectionSizes.nsfw = body.length` |
+| `inject-observe` [12] | `apply` 内 `try { observeInjection({…}) } catch {}` 与 `writeInjectObserveRecord` 的静默 try/catch |
+| `memory-isolation` | `apply` 内 `★ 记忆总结注入` 块（到 `} catch {}` 为止） |
+
+### 5.2 两个差点咬人的坑（搬代码块时必看）
+
+1. **别用「第一个顶格 `}`」判断函数结尾**。源码里有缩进错的闭合括号
+   （`normalizeName` 的 `for` 循环 `}` 是顶格写的），还有正则字面量里带 `\{`
+   （`parseStagePlans` 的 `condRe`）—— 两种都会让朴素扫描把函数拦腰截断。
+   正确做法：括号配平 + **把每个抽出的块单独 `node --check`**（截断必然报语法错）。
+   可复用的边界表生成器在 `_scratch/s2-ends.mjs`，验收脚本 `_scratch/s2-verify.mjs`。
+2. **搬函数时别连「分节的说明注释」一起搬**。`// ── DSH home 解析 ──` 下面那段注释同时服务于
+   留下来的 `resolveDshHome`，整块吃掉会让留守函数失去说明。
+
+### 5.3 可变状态怎么给 `lib/server/*` 用（2.7.8 定型）
+
+`lib/server/state.js` 是唯一的收纳容器，分两块，规则不同：
+
+| | 内容 | 规则 |
+|---|---|---|
+| `S` | `playerName` / `activePluginCtx` / `builtinDirsCache` / `_bindingsCache` / `_bindingsDirty` / `promptStatsFlushedAt` | 已经**完全搬进去**了 —— 全仓只认 `S.xxx`，没有第二份 |
+| `P` | 9 个路径（`ROOT` / `SESSIONS_ROOT` / `STATE_PATH` …） | **镜像**。真源仍是 `index.js` 顶层那 9 个 `let`（切片锚点，搬不走） |
+
+`P` 的三条铁律（有护栏盯着）：
+
+1. **唯一写入点是 `syncPaths()`**，全仓只有两处调用：`index.js` 模块初始化时 + `bindDshPaths()` 里。
+2. **`lib/server/*` 不许直接改 `P`**（`P.ROOT = …` 一律拒绝）—— 那会让真源与镜像脱钩。
+3. **不许在 `bindDshPaths()` 之外给那 9 个 `let` 赋值**。
+
+> ⚠️ 镜像调用**不能**插在 `let ROOT = …` 与 `const DEFAULT_PRESET_DIR` 之间：
+> 那段是 memory-isolation 的切片范围（两端都含），插进去会让独立模块引用到未定义的 `syncPaths`。
+
+护栏：`tests/server-state-paths.test.js`（含反证）。
+
+---
+
+## 6. 不可回归的不变量（改完必须自证）
+
+1. **渲染转义**：`esc` 必须吃掉 `& < > " '` 五个字符；`escAttr` ≡ `esc`；关系网**所有**模型字段
+   （`e.source` / `e.target` / `n.label` / `e.label` / `ed.label` / 邻居名）必须转义；世界书正文/名称/关键词必须转义。
+   → `tests/render-escape.test.js`（每项都配「旧实现必须失败」的反例）
+   背景：**这是真实高危漏洞的修复**（issue #14：模型输出 → innerHTML，可偷 agent 控制权），别再退回去。
+2. **会话隔离**：角色卡 / 世界书 / 成人段只注入**已绑定**的会话；未绑定则不注入。
+   → `native-preset-binding.test.js`、`memory-isolation.test.js`、`nsfw-slot.test.js`
+3. **提示词组装**：`flushPromptStats()` 必须在**每条返回路径**上落盘；`tavern:nsfw` 的 `order: -1` 不要动。
+4. **页签归属**：每张一级卡片必须有合法 `data-tv-tab`；声明值须与标题前缀映射一致；未归类卡片要被点名**且保持可见**。
+   → `tests/panel-tabs.test.js`
+5. **样式预算**：`inlineHandlerAttr`（客户端）与 `inlineHandlerAttrServer`（服务端）**恒为 0**；`important` 恒为 0；
+   其余指标**只许降不许升**。→ `tests/style-budget.test.js`
+   当前基线：`inlineStyleAttr 301`、`bareHex 331`、`bareRgba 150`、`cssTextAssign 59`、
+   `distinctColorLiterals 53`、`distinctFontSizes 12`、`distinctRadii 8`、`distinctPaddings 42`、
+   `distinctZIndex 8`、`styleTags 0`。
+6. **转义只有一套实现**：所有 HTML 转义都必须走 `esc()`（客户端 `client.manager.bundle.js` L12）。
+   `escapeHtml` / `htmlEscapeStr` / `escAttr` 都只允许是它的**薄封装**（`return esc(s)`）。
+   **禁止**再写第二套 `replace(/&/g,'&amp;')` —— 第二份实现迟早会漂（`escAttr` 曾漂成空操作、
+   `htmlEscapeStr` 曾漏掉单引号，两次都真发生过）。→ `tests/innerhtml-escape-ratchet.test.js` ⑦
+7. **`innerHTML` 裸拼只许减不许增**：判据不看变量名 —— `.innerHTML` 右边按顶层 `+` 分段，
+   逐段要求「字面量 / esc 函数族 / 含 esc 的 map·join 链 / `.length`·`.count` / 两支都是字面量的三元」。
+   → `tools/check-innerhtml-escape.mjs`（`npm run check:innerhtml`）+ `tests/innerhtml-escape-ratchet.test.js`
+   基线 `tools/innerhtml-baseline.json`（7 条）。
+   **为什么单列一条**：`render-escape.test.js` 的 ③ 是按**变量名写死**的模式，对「新建一条渲染路径」是盲的；
+   而"合并两个渲染函数""抽统一拼装 helper"恰恰最容易漏掉某一路来源（PR #13 真实翻车：转义了
+   `e.source`/`e.target`，漏了 `label`）。**动渲染相关代码后必须跑这一条。**
+   **基线三条铁律**：① 能彻底消掉的（在用处加 esc）不许留进基线；
+   ② 每条必须带 `kind` + `why` + `mustContain` 证据，`unclassified` 直接判失败；
+   ③ `mustContain` 是**每次都会复查的断言**（测试 ⑥）—— 证据失效即报红，别让它变成写给人看的注释。
+8. **预设 persona**：字段名必须是 `prefix:`；**禁止** `complete: true`（会把其它系统提示段整段压掉）。
+9. **`DSH_HOME`** 解析优先级：显式配置 → `$DSH_HOME` → `~/.dsh`。
+10. **编码只覆盖 HTML 语境**：仓库里唯一的转义器 `esc()` 解决的是「HTML 文本 / 属性值」两个语境。
+    **已知未覆盖的语境**（2026-10-08 实测当前代码；这里是**记账**，不是已发现漏洞）：
+    - **URL 语境**：整份 bundle **没有**动态 `href` / `src`（实测命中 0 处）。将来若要加，
+      注意 `esc()` 挡不住 `javascript:` 之类的协议走私 —— 那需要的是**协议白名单**，不是转义。
+    - **CSS 语境**：`style="…"` 的动态插值**全部**是「双支都是字面量的三元」或**数值**
+      （如 `bottomGap` / `panelW`），没有字符串数据进过 CSS。若将来要塞字符串，需要 CSS 转义。
+    - **脚本语境**：完全没有 `<script>` 字面量。
+    - **`srcdoc` 文档语境**：`iframe.srcdoc = sb.html`（muv-engine 状态栏）—— 内容来自
+      `/api/muv-engine/status-bar` 返回的 HTML，那是**另一份完整文档**，`esc()` 在这里语义不同。
+      当前缓解是 `sandbox="allow-scripts"`（**刻意没有** `allow-same-origin`）⇒ 不透明源，
+      够不到主页面 DOM 与凭据。**改这个 iframe 时不要顺手加 `allow-same-origin`。**
+    ⇒ 不要因为「过了 `esc`」就认为任意语境都安全。
+11. **落库边界能一次覆盖两条出口**：`parseSummaryOutput` 的产物有**两条出口** ——
+    ① 关系网字段（`nodes` / `edges` / `label` …）→ 客户端 `innerHTML`（XSS 路）；
+    ② `summary` / `memory` 文本 → 系统提示段（提示词注入路）。
+    两条出口**字段不重叠、但同源**（同一份模型输出 JSON），因此在落库前净化一次可同时覆盖；
+    只在渲染端加 `esc()` 永远只护得住 ①。
+    → 议题与最小方案：`docs/issues/2026-10-08-parseSummaryOutput-边界净化.md`
+      （**尚未实施** —— 属行为变更，需单独决策，别顺手改）。
+    ⚠️ 别把它写成「关系网字段既进 innerHTML 也进提示词」：实测 `buildRelationsHintText()`
+    往提示词里注入的**只有计数**（「本会话记录了 N 个角色 / N 条关系」），关系字段本身**不进**系统提示。
+12. **没有第二道墙（既定前提）**：DSH 主 Web UI 页面**没有阻断性 CSP**。
+    2026-10-08 实测：DSH `app.asar` 里的 CSP 命中逐条看过 —— 分别属于**媒体文件响应头**
+    （`sandbox; default-src 'none'`）、**SVG 净化 meta**、以及**若干附属页的 meta**
+    （其中一处是 `script-src 'unsafe-inline'`），**没有一条作用在主 UI 页面上**。
+    而插件注入的脚本跑在**持有 DSH 本地 API 凭据**的那个源里（无凭据调 API 返回 401）。
+    ⇒ **必须假设「转义是第一道、也是唯一一道防线」**，不要指望 CSP 兜底。
+    这条前提一旦变化（DSH 给主 UI 加了 CSP），回来改这一条。
+
+---
+
+## 7. 红线（违反会出事）
+
+1. **绝不改写 DSH 会话日志**。历史上有个 `writeSessionLines()` 会重写整份 zstd 会话（属于已删除的
+   「编辑 AI 回复」功能），**已删**，`lib/index.js` 里留了注释警示，**不要再引入这类写法**。
+   会话日志是 zstd 压缩的多帧格式，**不要解析、不要改写**。
+2. **不要动 `~/.dsh` 下的用户数据**：`.agent-presets/`、`tavern-state.json`、`tavern-data/` 等。
+   **测试一律用 tmpdir**。
+3. **仓库里不许出现**：本机绝对路径、token、会话 id、真实预设 id / 角色卡名。
+   历史上清洗过一次真实用户标识（见归档 CHANGELOG 的 v2.5.5 隐私条目），别再引进来。
+4. **换行符**：保留文件原有换行风格，**不要做整文件换行转换**。
+   本仓库 `core.autocrlf=true` —— git 里存的是 LF，Windows 工作树检出成 CRLF，这属于正常现象。
+   注意：所有按行扫描的工具/测试都**不**做 `\r` 归一，所以不要制造额外的混合换行。
+   ★ **两个 lib 文件的行尾约定不一样**（2026-10-08 实测，别想当然）：
+     - `lib/index.js` 和 `lib/server/*.js` → **CRLF**
+     - `lib/client.manager.bundle.js` → **LF**（0 个 CRLF，全 LF）
+     ★ 混合换行已有护栏：`tests/tooling-integrity.test.js` 会扫全仓文本文件，
+       同一个文件里不允许既有 CRLF 又有裸 LF。新建文件时**照抄同目录邻居的换行符**。
+     改哪个文件之前先确认它自己的行尾。另外 Git Bash 里 `grep -c $'\r$'` 在这上面会给出
+     **假读数**（会把 LF 文件也报成全 CRLF）—— 用 node 数 `\r\n` 才准。
+5. **不要整文件重排格式**（会淹没真实 diff）。改动越小越好审阅。
+6. **`_scratch/` 不入库**（已写进 `.gitignore`）：里面放的是本地临时脚本，
+   其中含「从会话日志提取 token」的性质，绝不能提交。用完即删。
+
+---
+
+## 8. 代码规范
+
+### 8.1 命名
+- 函数名：小驼峰 `camelCase`（`readPresetFiles`）
+- 常量：大写下划线 `UPPER_SNAKE_CASE`（`DEFAULT_PRESET_ID`）
+- 文件名：小写下划线或短横线（`preset-manager.js`）
+
+### 8.2 函数
+- 优先纯函数；有副作用的函数（写文件 / 改状态）要明确命名
+- 每个函数只做一件事，超过 50 行考虑拆
+
+### 8.3 错误处理
 - 文件操作必须 `try/catch`
-- Promise 必须有 `.catch()`
-- 禁止在 Promise 回调中 `throw`（会导致进程崩溃）
-- 错误信息要清晰，包含上下文
+- Promise 必有 `.catch()`；**禁止在 Promise 回调里 `throw`**（会导致进程崩溃）
+- 错误信息要带上下文
 
-### 5. 注释规范
-- 复杂逻辑必须加注释
-- 模块顶部加 JSDoc 说明用途
-- 公共导出函数加 JSDoc 参数说明
+### 8.4 注释
+- 复杂逻辑必须加注释；模块顶部加 JSDoc；公共导出加参数说明
+- 改动 yaml 以外的文件时，注释里**不要写本机路径**
 
-## 测试与验证
+---
 
-### 1. 语法检查（必须）
+## 9. 测试与验证
 
-修改任何 `.js` 文件后，必须用 DSH 自带的 Node.js 检查语法：
+| 用途 | 命令 |
+|---|---|
+| **跑全量测试** | `npm test`（= `node tools/run-each-test.mjs`，逐文件独立判红） |
+| 只跑某类 | `node tools/run-each-test.mjs panel` |
+| **语法检查（全仓）** | `npm run check`（= `node --experimental-vm-modules tools/check-syntax.mjs`） |
+| 客户端语法 | `npm run check:client` |
+| 样式预算 | `npm run check:style`（= `node tools/assert-style-budget.mjs`） |
+| 客户端自检三件套 | `npm run check:integrity`（= `node tools/check-client-integrity.mjs`） |
+| innerHTML 转义棘轮 | `npm run check:innerhtml`（= `node tools/check-innerhtml-escape.mjs`） |
+| **CI（唯一的强制点）** | `.github/workflows/check.yml`，push / PR 自动跑上面这几条 |
 
-```bash
-# Windows PowerShell
-& "$env:LOCALAPPDATA\Programs\Deepseek Harness EAC v2.0\resources\node\node.exe" --check lib/xxx.js
-```
+- **测试清单不手抄**：`npm test` 直接扫 `tests/*.test.js`，新增测试文件自动纳入。
+  2026-10-08 实测：旧的 `scripts.test` 是一条**手抄的 `&&` 长链**，漏掉 3 个文件
+  （含 `render-escape.test.js` 这个 issue #14 的安全回归）—— 也就是说「`npm test` 全绿」
+  并不代表安全不变量真的跑过。同一批改动里 `scripts.check` 也只引用了少数文件，
+  现已改成扫目录的 `tools/check-syntax.mjs`。
+- **不要手抄数字**：本文件曾在同一节里同时存在 22 / 23 / 25 三套口径。
+  验证基线一律以 `npm test` 的**输出**为准；文档里禁止再写「N 个文件 / N 项」。
+- ⚠️ **空跑即失败**：`tools/run-each-test.mjs` 把「`pass=0` 且 `fail=0`」判为**失败**（标 `❔`），
+  因为那说明该文件一条断言都没跑（被清空、或被注释掉、或子进程压根没起来）。
+  受限环境里 spawn 失败（EBUSY）也会落到这一档 —— **看到 `❔` 说明环境有问题，不是通过**。
+  免费送出来的绿灯比红灯更危险。
+- 跑测试前有时需要 `DSH_ASAR`（指向 DSH 的 `app.asar`），`cordis-mount.test.js` 依赖它；
+  找不到时那个文件会**自己 skip**（不当红灯），所以 CI 不需要装 DSH。
 
-**所有模块都要检查**，不能只检查修改的那个。
+---
 
-### 2. 重启验证（必须）
+## 10. 重构阶段地图（含当前进度）
 
-语法检查通过后，必须重启 DSH 验证：
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| **S1 收尾** | 改旧规矩 / 校准文档 / 历史文档归档 / CHANGELOG 拆分 | ✅ **2.7.3 完成** |
+| **S4① 安全网** | 自检三件套：① 悬空 id 扫描 ② 标签配平 ③ 卡片嵌套深度 | ✅ **2.7.3 完成**（`tools/check-client-integrity.mjs` + `tests/client-integrity.test.js`） |
+| **S2-A 服务端分层** | 搬「闭包干净、无可变状态」的 53 个函数 → `lib/server/` 10 个模块 | ✅ **2.7.4 完成**（7175 → 6195 行，净减 980） |
+| **S2-B1** | 再搬 21 个函数/常量，建起 `bindings` / `skills` / `presets` | ✅ **2.7.5 完成**（6195 → 5924 行） |
+| **S2-B2a** | 非路径可变状态收进 `lib/server/state.js` 的 `S` | ✅ **2.7.7 完成** |
+| **S2-B2b** | 路径 `let` 的单向镜像 `P` + `syncPaths()`，含路径镜像护栏 | ✅ **2.7.8 完成** |
+| **S2-C1** | 搬出首批路径依赖函数（dsh-conn / session-read / session-migrate / state-io） | ✅ **2.7.8 完成**（5923 → 5583 行） |
+| **S2-C2** | 从 `apply(ctx)` 里抽出装配步骤，让它只做装配 | ⬜ 待做 —— **这是剩下最大的一块** |
+| **S3 前端结构化** | `--tv-*` 语义令牌层 + 组件基元，**只加不删** | ⬜ 待做 |
 
-```bash
-# 1. 杀掉进程
-taskkill /F /IM "Deepseek Harness EAC.exe"
+> 进度：各阶段的行数净减见上表；`lib/server/` 下模块清单见 §1 结构图（不在这里手抄数字）。
+> 剩下的大头只有 `apply(ctx)` 一个函数。
 
-# 2. 等待3秒
-Start-Sleep -Seconds 3
+**顺序建议：S1 → S4①（先有安全网）→ S2 → S3。**
 
-# 3. 启动
-Start-Process "$env:LOCALAPPDATA\Programs\Deepseek Harness EAC v2.0\Deepseek Harness EAC.exe"
+### 自检三件套（`tools/check-client-integrity.mjs`，已实现）
 
-# 4. 等待12秒后检查进程是否存在
-Start-Sleep -Seconds 12
-Get-Process -Name "Deepseek Harness EAC"
-```
+用法：`npm run check:integrity`。改完客户端 UI 后建议顺手跑一次。
+1. **悬空 id 扫描**：把 JS 里 `getElementById` / `querySelector('#…')` 引用的 id，与 markup 里实际存在的 id
+   取差集；并与上游对比，**区分「新引入」与「既有」**。
+2. **标签配平**：把 markup 字面量拼起来做栈式配对（含 void 元素白名单）。
+3. **卡片嵌套深度**：确认每张 `data-tv-tab` 卡片的层级与同级卡片一致，没有被容器误吞。
+   （面板外面本来就包着 `#tavern-manager`，所以卡片天然是 depth=2；这里比的是**同级一致性**，而不是绝对层数。）
 
-**进程存在才算通过**，如果进程退出说明有运行时错误。
+> 三个检查都带**空跑防护**：源码里明明有 `data-tv-tab` / 字面量 id 查询，却一个都没抓到时，
+> 工具会判**失败**并提示「判据空跑」—— 免费送出来的绿灯比红灯更危险。
 
-### 3. 功能验证
+> 每个工具都必须自带「**用坏样本必须报错**」的非空跑对照测试 —— 否则等于没有护栏。
 
-重启后手动验证：
-- 酒馆面板能正常打开
-- 预设列表能正常显示
-- 切换预设角色卡不串台
-- 记忆和关系网能正常注入
+---
 
-## 提交规范
-
-### 提交信息格式
+## 11. 提交规范
 
 ```
 <type>: <简短描述>
@@ -128,64 +386,53 @@ Get-Process -Name "Deepseek Harness EAC"
 <详细描述（可选）>
 ```
 
-### type 类型
+`type`：`feat` / `fix` / `refactor` / `docs` / `style` / `perf` / `chore`
 
-| type | 说明 | 例子 |
-|------|------|------|
-| `feat` | 新功能 | `feat: 新增会话级预设隔离` |
-| `fix` | 修复 bug | `fix: 修复预设切换后角色卡串台` |
-| `refactor` | 重构（不改变功能） | `refactor: 拆分 preset-manager 模块` |
-| `docs` | 文档修改 | `docs: 更新 README 安装说明` |
-| `style` | 代码格式（不影响功能） | `style: 统一缩进` |
-| `perf` | 性能优化 | `perf: 优化世界书匹配算法` |
-| `chore` | 构建/工具/依赖 | `chore: 升级依赖版本` |
-
-### 提交前检查清单
-
-- [ ] 所有修改的文件语法检查通过
-- [ ] DSH 重启后进程正常运行
-- [ ] 核心功能手动验证通过
+**提交前清单**
+- [ ] `npm run check` 通过（全仓语法，扫目录，不是只检查改的那个）
+- [ ] `npm test` 全绿（逐文件独立判红；有红项会列出文件名）
+- [ ] 改过客户端 UI 的话顺手 `npm run check:integrity`
+- [ ] `npm run check:style` 通过，且预算指标**没有上涨**
 - [ ] 没有引入循环依赖
-- [ ] 提交信息符合规范
-
-## 重要注意事项
-
-### 1. 不要修改的文件
-
-- `lib/client.manager.bundle.js` — 客户端打包文件，修改源码后需要重新打包
-- `package.json` 的 `exports` 字段 — 必须是对象形式 `{ "default": "..." }`，不能是字符串
-- `LICENSE` — 许可证文件
-
-### 2. 数据存储路径
-
-- 预设根目录：`~/.dsh/.agent-presets/`
-- 会话级存储：`~/.dsh/.agent-presets/sessions\<sessionId>\`
-- 全局异常日志：`~/.dsh/.agent-presets/unhandled-error.log`
-
-### 3. DSH 插件加载机制
-
-- DSH 使用 cordis 框架，插件通过 `apply(ctx)` 函数注册
-- 系统提示通过 `ctx.systemPrompt.section()` 注册
-- HTTP 路由通过 `ctx.webServer.register()` 注册
-- 生命周期管理通过 `ctx.effect()` 注册
-
-### 4. 常见坑
-
-- **Promise 中 throw 会导致进程崩溃**：必须用 `.catch()` 或返回错误响应
-- **exports 字段用字符串会报 "Cannot find package"**：必须用对象形式
-- **角色卡含 `{{user}}` 会报 "unknown prompt variable"**：需要转义为 `\{\{user\}\}`
-- **删除预设后要清理会话绑定**：否则会指向不存在的预设
-
-## 新增功能流程
-
-1. **先写需求**：在 GitHub 开 issue 或写 spec 文档，明确要做什么
-2. **再写代码**：按模块划分，新功能优先放新模块，不要全堆到 index.js
-3. **语法检查**：所有修改的文件都要检查
-4. **重启验证**：DSH 重启后进程正常、功能正常
-5. **提交代码**：按提交规范写 commit message
-6. **更新文档**：README、CHANGELOG 同步更新
+- [ ] 没有把绝对路径 / token / 会话 id 写进仓库
+- [ ] CHANGELOG.md 同步（用户可见改动）+ 版本号同步
 
 ---
 
-**最后更新**：2026-08-21
+## 12. 常见坑
+
+- **Promise 中 throw 会导致进程崩溃**：用 `.catch()` 或返回错误响应。
+- **`exports` 字段用字符串会报 "Cannot find package"**：必须是对象形式。
+- **角色卡含 `{{user}}` 会报 "unknown prompt variable"**：需转义为 `\{\{user\}\}`。
+- **删除预设后要清理会话绑定**：否则指向不存在的预设。
+- **绝不用 PowerShell 对含中文/emoji 的字符串做手术**：传参会乱码，甚至写出语法错误的脚本
+  （历史踩过两次假阴性、两次脚本损坏）。**一律写 Node 脚本**执行。
+- **不要按行号做锚点**：行号会漂。用**唯一子串 + 命中次数校验**（`split(a).length - 1 === 1` 才改），
+  并让脚本在写盘前后做自检。
+- **GitHub 推送**：`github.com:443` 不稳定时走 `api.github.com`（blob → tree → commit → PATCH ref），
+  **每次都要比对本地 tree 与远端返回 tree**；多提交一起推时 `LOCAL_BASE` 必须是远端已存在的那个提交。
+- **npm 发布后有 CDN 传播期**（约 35 秒 ~ 2.5 分钟）：抓包先验证 gzip 魔数 `1f 8b` 再 `gunzip`，
+  否则会误报 `incorrect header check`。
+- **发布包不含 `tools/` 与 `tests/`**（由 `package.json.files` 决定）；改 `files` 要同步改发布验证。
+
+---
+
+## 13. 遗留项（不阻塞，但要知道）
+
+- 还有 1 处装饰 emoji：`✏️ 手动输入` 单选标签（有文字，emoji 只是装饰）。
+  状态栏解析依赖的 `👤` / `⏰` 等属于预设格式契约，**不要动**。
+- `edited-messages.json`（用户数据）已不再被任何代码引用，文件保留未删。
+- `compatibility.json` 里 `dsh-tavern@2.5.0 / 2.5.2` 的豁免项在新版本上已不需要（新 peerDeps 直接含 `^0.2.0-rc.2`），可清理。
+- 归档 CHANGELOG 末尾有一条 `## v3.0.0` 空标题（历史遗留，无正文），已在归档文件里标注，不动它。
+- **`parseSummaryOutput` 落库前缺少边界净化**（安全·设计，**待决策**）：
+  模型输出落库后被两条路消费 —— DOM（`relations[]` → innerHTML）与提示词
+  （`summary` 正文 + 记忆正文 → `summaryText` / `memoryText` → 系统提示）。
+  渲染层已防（2.6.1 + 2.7.9 棘轮），但**数据本身从没净化过**。
+  ⚠️ 注意：关系网字段**没有**进提示词（`buildRelationsHintText` 只给计数），别搞错暴露面。
+  详情见 [`docs/issues/2026-10-08-parseSummaryOutput-边界净化.md`](./docs/issues/2026-10-08-parseSummaryOutput-边界净化.md)
+  —— 它是**行为变更**（会改动落库内容），需要先定口径，所以没顺手做。
+
+---
+
+**最后更新**：2026-10-08（2.7.10）
 **维护者**：chen731215-dev

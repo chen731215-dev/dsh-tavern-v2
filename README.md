@@ -12,7 +12,7 @@
 
 ## 🔴 v2.5.4 更新要点（建议尽快升级）
 
-> 完整说明见 [RELEASE_NOTES_v2.5.4.md](./RELEASE_NOTES_v2.5.4.md) 与 [CHANGELOG.md](./CHANGELOG.md)。
+> 完整说明见 [docs/archive/RELEASE_NOTES_v2.5.4.md](./docs/archive/RELEASE_NOTES_v2.5.4.md) 与 [CHANGELOG.md](./CHANGELOG.md)。
 
 - **v2.5.3（严重）**：修掉「开场白播种把会话日志写坏到**永久打不开**」——
   报错特征是 `SessionFormatError: system/message requires a protected first surface head`。
