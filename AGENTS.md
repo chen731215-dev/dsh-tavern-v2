@@ -160,10 +160,14 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 
 当前钉住的名单（改名前先回来核对）：
 
+> ✅ 这份名单已有**机器护栏**：`tests/slice-anchors.test.js`。它会反推所有 `sliceFn('…')` 目标，
+> 一旦某个被切片的函数被搬走、改名、或不再是**顶格** `function X(`，立刻报红；
+> 名单落后于事实（有函数被钉住却没在上表点名）同样报红。
+
 | 来源测试 | 钉住的函数 / 代码块 |
 |---|---|
 | `memory-isolation` | `readPresetsMeta` `getPresetDir` `memoryFile` `sessionDir` `sessionMemoryFile` `readSessionMemory` `readMemory`，以及 `let ROOT = path.join(DSH_HOME, '.agent-presets')` → `const DEFAULT_PRESET_DIR` 这段常量块 |
-| `session-storage-migration` | `migrateSessionStorageOutOfPresetRoot` `readSessionMemory` `readSessionRelations`（另带动 `hasCardGreeting` `pickGreetingCard` `sessionRelationsFile` 不许搬） |
+| `session-storage-migration` | `migrateSessionStorageOutOfPresetRoot` `appendSessionMemory` `readSessionMemory` `readSessionRelations` `sessionDir` `sessionMemoryFile` `sessionRelationsFile`（另带动 `hasCardGreeting` `pickGreetingCard` 不许搬） |
 | `greeting-seed` | `appendGreetingToSessionEnd` `insertGreetingForSession` `canAppendGreetingSurface` |
 | `memory-isolation`（总结棒） | 源码里必须有字面量 **`const targetSid = lastSessionId`**（禁止异步回调里再读全局），且不许出现 `runSummary(ctx, st2, lastSessionId,` ⇒ `lastSessionId` **不能改名、不能收进 state.js** |
 | `nsfw-slot` ⑪ / `core` P0-6 | **`readState`** —— 函数体里含默认 state 字面量 `nsfwEnabled: false, nsfwPrompt: ''`，搬走立刻报红 |
