@@ -1,0 +1,44 @@
+# 本仓唯一的**自动化强制点**。
+#
+# 为什么需要它：在此之前，所有护栏（全量测试 / 样式预算 / 客户端自检 / innerHTML 棘轮 /
+# 语法检查）都只在「人记得手动跑」的那一刻生效 —— 一个坏提交可以直接进 main，没有任何拦截。
+#
+# 为什么是 windows-latest（而不是 ubuntu）：
+#   · 本仓是 Windows-only：DSH Desktop、LOCALAPPDATA 推导路径、CRLF 工作树。
+#     用 Linux 跑会掩盖只在 Windows 上出现的问题，那还不如不跑。
+#   · tests/cordis-mount.test.js 找不到 DSH 的 app.asar 时会**自己 skip**（不当红灯），
+#     所以 runner 上不需要安装 DSH。
+#
+# 本仓零运行时依赖（package.json 没有 dependencies），因此不需要 npm ci。
+name: check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22' # package.json engines: node >=22.5
+
+      - name: 语法检查（全仓 lib/ tests/ tools/，按 ESM 解析）
+        run: npm run check
+
+      - name: 全量测试（逐文件独立判红；清单由目录决定，不再手抄）
+        run: npm test
+
+      - name: 样式预算（内联事件恒为 0，其余指标只许降）
+        run: npm run check:style
+
+      - name: 客户端自检三件套（悬空 id / 标签配平 / 卡片层级）
+        run: npm run check:integrity
+
+      - name: innerHTML 转义棘轮（基线只许减不许增）
+        run: npm run check:innerhtml
