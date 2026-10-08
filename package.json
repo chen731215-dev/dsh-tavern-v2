@@ -24,8 +24,9 @@
         "check:style": "node tools/assert-style-budget.mjs",
         "check:integrity": "node tools/check-client-integrity.mjs",
         "check:innerhtml": "node tools/check-innerhtml-escape.mjs",
+    "check:hygiene": "node tools/check-repo-hygiene.mjs",
     "check:golden-origin": "node tools/check-golden-origin.mjs",
-        "ci:local": "npm run check && npm test && npm run check:style && npm run check:integrity && npm run check:innerhtml && npm run check:golden-origin",
+        "ci:local": "npm run check && npm test && npm run check:style && npm run check:integrity && npm run check:innerhtml && npm run check:golden-origin && npm run check:hygiene",
         "test:each": "node tools/run-each-test.mjs"
     },
     "dsh": {

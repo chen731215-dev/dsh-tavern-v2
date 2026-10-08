@@ -47,3 +47,6 @@ jobs:
 
       - name: golden 来源验证（在重构前那一版上重新生成，逐字节比）
         run: npm run check:golden-origin
+
+      - name: 仓库卫生（不许出现凭据 / 会话记录 / 本机路径）
+        run: npm run check:hygiene

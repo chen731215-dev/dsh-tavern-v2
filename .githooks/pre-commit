@@ -1,0 +1,8 @@
+#!/bin/sh
+# 提交前拦一道：不允许把凭据 / 会话记录 / 本机路径提交进仓库。
+# 启用（每个克隆做一次）：git config core.hooksPath .githooks
+node tools/check-repo-hygiene.mjs --staged || {
+  echo ""
+  echo "提交被拦下：见上面的仓库卫生报告。若确实要提交，请先清理或改用 git commit --no-verify（不推荐）。"
+  exit 1
+}
