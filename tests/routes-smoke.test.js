@@ -115,9 +115,14 @@ lib.apply(ctx)
 /** ⑦ 两个界的值：**与旧口径同一个 4000ms**（不许把"真挂住"调成"慢"）。 */
 const HANDLER_MS = 4000
 const RESPONSE_MS = 4000
+/** 路由级默认界（导出给测试断言"没有为快而放宽"）。 */
+export const SMOKE_BOUNDS = { handlerMs: HANDLER_MS, responseMs: RESPONSE_MS }
 
-/** 打一条路由；返回 { method, path, status, hasResponse, handlerHang, thrown, body }。 */
-async function hit(route, method) {
+/** 打一条路由；返回 { method, path, status, hasResponse, handlerHang, thrown, body }。
+ *  `bounds` 只给**单测**注入更短的界；路由级默认仍是 SMOKE_BOUNDS（4000ms）。 */
+export async function hit(route, method, bounds = {}) {
+  const handlerMs = bounds.handlerMs ?? HANDLER_MS
+  const responseMs = bounds.responseMs ?? RESPONSE_MS
   const q = method === 'GET' ? '?sessionId=' + encodeURIComponent(SID) + '&presetId=' + PID : ''
   const url = route.path + q
   const req = method === 'POST'
@@ -143,13 +148,13 @@ async function hit(route, method) {
       //   实测（本轮反证变异C）：一条 `() => new Promise(() => {})` 的探针路由就能挂死整份测试。
       let timer = null
       await Promise.race([maybe, new Promise((r) => {
-        timer = setTimeout(() => { handlerHang = true; r(null) }, HANDLER_MS)
+        timer = setTimeout(() => { handlerHang = true; r(null) }, handlerMs)
         if (timer && timer.unref) timer.unref()
       })])
       if (timer) clearTimeout(timer)
     }
   } catch (e) { thrown = e }
-  const body = await Promise.race([ended, new Promise((r) => setTimeout(() => r(null), RESPONSE_MS))])
+  const body = await Promise.race([ended, new Promise((r) => setTimeout(() => r(null), responseMs))])
   await drainRejections()          // ★ ⑤：让本轮 fire-and-forget 的拒绝带着上下文被记下
   currentHit = null
   return {
@@ -289,4 +294,34 @@ test('③ 清理：临时 DSH_HOME 不在用户真实目录里，且夹具没被
   assert.ok(path.isAbsolute(TMP_HOME))
   assert.ok(TMP_HOME.toLowerCase().includes('dsh-routes-smoke-'), '用的是系统临时目录：' + TMP_HOME)
   assert.ok(!TMP_HOME.includes('.dsh' + path.sep + '.agent-presets'), '★ 夹具建到用户真实预设目录了')
+})
+
+test('⑤⑥⑦ 分支真跑：handler 返回 thenable 的两种情形 + ⑥ 的两个桶（走真 hit()，不是合成记录）', async (t) => {
+  // ★ 这条是审核方点名的"判据自己没被执行过"的补课：④ 只把**合成记录**喂给 classifySmoke()，
+  //   而仓库里没有任何测试真的走进 `hit()` 里那条"handler 返回 thenable"的分支
+  //   ⇒ 少写一个 const 也没人发现（`b2be34b` 就是这么挂的：`HANDLER_MS` 未声明、⑦ 变成死代码、
+  //   而且在"handler 正常完成"的情形下**完全隐形** —— race 会落在先 settle 的那个输入上、拒绝被丢弃）。
+  //   这里用**探针路由 + 导出后的 hit()** 真跑它。
+  //   ★ 界值：只在本测试注入 40ms；**路由级默认仍必须是 4000ms**（下面两条断言钉住，不许为快而放宽）。
+  assert.equal(SMOKE_BOUNDS.handlerMs, 4000, '路由级默认的 handler 界不许放宽')
+  assert.equal(SMOKE_BOUNDS.responseMs, 4000, '路由级默认的响应界不许放宽')
+  const FAST = { handlerMs: 40, responseMs: 40 }
+  const bucketsOf = (r) => Object.keys(classifySmoke([r])).filter((k) => classifySmoke([r])[k].length > 0)
+
+  const settled = await hit({ path: '/api/tavern/zz-unit-settled', handler: async (req, res) => { res.writeHead(200); res.end('{}') } }, 'GET', FAST)
+  assert.equal(settled.handlerHang, false, '已 settle 的 thenable 不该进 handlerHang')
+  assert.equal(settled.hasResponse, true, '已 settle 的 thenable 应当给出响应')
+  assert.deepEqual(bucketsOf(settled), [], '已 settle 的情形不该进任何失败桶')
+
+  const pending = await hit({ path: '/api/tavern/zz-unit-pending', handler: () => new Promise(() => {}) }, 'GET', FAST)
+  assert.equal(pending.handlerHang, true, '★ 永不 settle 必须落 handlerHang —— 这条断言同时证明⑦那条分支真的被执行到了')
+  assert.deepEqual(bucketsOf(pending), ['handlerHang'], '且只落 handlerHang（不许冒充 hung）')
+
+  const noEnd = await hit({ path: '/api/tavern/zz-unit-noend', handler: () => {} }, 'GET', FAST)
+  assert.deepEqual(bucketsOf(noEnd), ['hung'], '响应永不 end ⇒ hung（与 handlerHang 分开）')
+
+  const threw = await hit({ path: '/api/tavern/zz-unit-throw', handler: () => { throw new Error('unit-throw') } }, 'GET', FAST)
+  assert.deepEqual(bucketsOf(threw), ['threwBeforeResp'], '抛在响应之前 ⇒ threwBeforeResp')
+
+  t.diagnostic('分支真跑（界值 40ms，仅本测试）：settled→无桶 · pending→handlerHang · noend→hung · throw→threwBeforeResp')
 })
