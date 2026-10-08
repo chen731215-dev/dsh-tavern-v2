@@ -7,7 +7,7 @@
 > 见 §5「服务端分层」。那条规矩正是把 index.js 堆成巨型单文件的原因。
 
 - **包名**：`dsh-tavern`（**不是** `@local/dsh-tavern`）
-- **版本**：2.7.14
+- **版本**：2.7.15
 - **模块系统**：ES Modules（`import` / `export`，禁止 `require` / `module.exports`）
 - **服务端入口**：`lib/index.js`（分层进度见 §1 结构图 / §5；**行数与模块数一律不写进文档**，手抄必漂）
 - **客户端入口**：`lib/client.manager.bundle.js`
@@ -255,7 +255,8 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
     两条出口**字段不重叠、但同源**（同一份模型输出 JSON），因此在落库前净化一次可同时覆盖；
     只在渲染端加 `esc()` 永远只护得住 ①。
     → 议题与最小方案：`docs/issues/2026-10-08-parseSummaryOutput-边界净化.md`
-      （**尚未实施** —— 属行为变更，需单独决策，别顺手改）。
+      （**已于 2.7.15 实施**：`lib/server/summary.js` 的 `sanitizeModelText` / `sanitizeRelations` 在落库前做
+      字符级/标签/协议剥离；判据 `tests/summary-boundary-sanitize.test.js`。**更新前先读该议题文档**）。
     ⚠️ 别把它写成「关系网字段既进 innerHTML 也进提示词」：实测 `buildRelationsHintText()`
     往提示词里注入的**只有计数**（「本会话记录了 N 个角色 / N 条关系」），关系字段本身**不进**系统提示。
 12. **没有第二道墙（既定前提）**：DSH 主 Web UI 页面**没有阻断性 CSP**。
@@ -525,15 +526,15 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 - `edited-messages.json`（用户数据）已不再被任何代码引用，文件保留未删。
 - `compatibility.json` 里 `dsh-tavern@2.5.0 / 2.5.2` 的豁免项在新版本上已不需要（新 peerDeps 直接含 `^0.2.0-rc.2`），可清理。
 - 归档 CHANGELOG 末尾有一条 `## v3.0.0` 空标题（历史遗留，无正文），已在归档文件里标注，不动它。
-- **`parseSummaryOutput` 落库前缺少边界净化**（安全·设计，**待决策**）：
+- **`parseSummaryOutput` 落库边界净化**（安全·设计，**已于 2.7.15 实施**）：
   模型输出落库后被两条路消费 —— DOM（`relations[]` → innerHTML）与提示词
   （`summary` 正文 + 记忆正文 → `summaryText` / `memoryText` → 系统提示）。
   渲染层已防（2.6.1 + 2.7.9 棘轮），但**数据本身从没净化过**。
   ⚠️ 注意：关系网字段**没有**进提示词（`buildRelationsHintText` 只给计数），别搞错暴露面。
   详情见 [`docs/issues/2026-10-08-parseSummaryOutput-边界净化.md`](./docs/issues/2026-10-08-parseSummaryOutput-边界净化.md)
-  —— 它是**行为变更**（会改动落库内容），需要先定口径，所以没顺手做。
+  —— 它是**行为变更**（会改动落库内容）；口径已定并落地（字符级/标签/协议剥离；只在写入时净化；不删语义字段）。
 
 ---
 
-**最后更新**：2026-10-08（2.7.14）
+**最后更新**：2026-10-08（2.7.15）
 **维护者**：chen731215-dev
