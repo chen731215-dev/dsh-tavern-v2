@@ -25,6 +25,40 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
+      "line": "el.innerHTML = state.characters.map(function (c, i) {",
+      "lineNo": 1139,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "state.characters.map(function (c, i) { var checked = c.enabled !== false ? 'checked' : ''; return '<div class=\"t-item\">' + '<div class=\"t-item-row\">' + '<label class=\"t-check\"><input type=\"checkbox\" data-char=\"' + i + '\" ' + checked + '> <span class=\"t-item-name\">' + esc(c.name || ('角色' + (i + 1))) + '</span></label>' + '<button data-char-del=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">删除</button>' + '</div>' + (c.desc ? '<div class=\"t-item-desc\">' + esc(truncate(c.desc, 80)) + '</div>' : '') + '</div>'; }).join('')"
+      ],
+      "kind": "param-by-callers",
+      "why": "角色卡列表：checked 为布尔字面量、下标 i 为数字、名称经 esc",
+      "mustContain": [
+        "esc(c.name || ('角色' + (i + 1)))",
+        "checked = c.enabled !== false ? 'checked' : ''"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "el.innerHTML = state.presets.map(function (p, i) {",
+      "lineNo": 1175,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "state.presets.map(function (p, i) { var isActive = state.activePresetIdx === i; var collapsed = p._collapsed !== false; var mods = ''; if ((p.modules || []).length) { var modCount = p.modules.length; mods = '<div class=\"t-item-children\" style=\"' + (collapsed ? 'display:none' : '') + '\">' + p.modules.map(function (m, j) { var mchk = m.enabled !== false ? 'checked' : ''; return '<label class=\"t-entry\"><input type=\"checkbox\" data-pm=\"' + i + '\" data-pmi=\"' + j + '\" ' + mchk + '> <span>' + esc(m.name || ('模块' + (j + 1))) + '</span></label>'; }).join('') + '</div>'; } var toggleBtn = (p.modules || []).length ? '<button data-preset-toggle=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">' + (collapsed ? '▶ 展开(' + p.modules.length + ')' : '▼ 折叠(' + p.modules.length + ')') + '</button>' : '';"
+      ],
+      "kind": "param-by-callers",
+      "why": "预设列表：mods / toggleBtn 由 esc(m.name) 与数字下标拼成",
+      "mustContain": [
+        "esc(m.name || ('模块' + (j + 1)))",
+        "data-pm=\"' + i + '\""
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
       "line": "if (st) st.innerHTML = '✅ 已导入预设「' + esc(pname) + '」，自动清理了 <b>' + cleanedTotal + '</b> 个不兼容 DSH 的模块内容（<thinking>/HTML注释/{{变量}}等已剥离）';",
       "lineNo": 1448,
       "occ": 1,
@@ -85,13 +119,31 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
+      "line": "sel.innerHTML = '<option value=\"\">选择一个历史对话…</option>' + data.sessions.map(function (s) {",
+      "lineNo": 2033,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "data.sessions.map(function (s) { var d = s.createdAt ? new Date(s.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '未知时间'; var label = s.title ? (s.title.length > 40 ? s.title.slice(0, 40) + '…' : s.title) : ('未命名会话 ' + s.id.slice(0, 8)); return '<option value=\"' + esc(s.id) + '\">' + esc(label) + ' — ' + esc(d) + (s.origin === 'subagent' ? ' (子代理)' : '') + '</option>'; }).join('')"
+      ],
+      "kind": "param-by-callers",
+      "why": "历史对话选择器：id/label/日期串均已 esc，origin 为枚举比较",
+      "mustContain": [
+        "esc(s.id)",
+        "esc(label)",
+        "esc(d)"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
       "line": "tags.innerHTML = bannedWords.slice(0, 20).map(function(w) {",
       "lineNo": 2318,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
       "parts": [
-        "(bannedWords.length > 20 ? '<span style=\"color:var(--dsw-alias-label-secondary);font-size:11px;padding:2px 4px\">+' + (bannedWords.length - 20) + ' 更多</span>' : '')"
+        "bannedWords.slice(0, 20).map(function(w) { return '<span style=\"background:rgba(233,69,96,.12);color:#e94560;padding:1px 7px;border-radius:10px;font-size:11px;white-space:nowrap\">' + esc(w) + '</span>'; }).join('')"
       ],
       "kind": "ternary-literals",
       "why": "map 体已 esc(w)；尾部三元两支都是字面量 + 纯数字算术",

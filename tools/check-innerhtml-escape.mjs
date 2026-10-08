@@ -89,6 +89,12 @@ export const UNLISTED_SINKS = [
  */
 export const EVIDENCE = [
   // ── srcdoc：整份文档，转义无从下手；唯一缓解是 iframe 的 sandbox ──
+  // ── 局部变量拼装型（2.7.14 结构化判据保守判红）：函数体里先算好局部变量再拼接。
+  //    这类**不能**在用处补 esc（局部变量本身含刻意渲染的标记，如 '<div class="t-item-children"'），
+  //    故按本仓既有做法进基线 + mustContain 证据：钉住'用户数据那几处确实 esc 了、其余是数字/下标/字面量'。 ──
+  { re: /el\.innerHTML = state\.characters\.map\(function/, kind: 'param-by-callers', why: '角色卡列表：checked 为布尔字面量、下标 i 为数字、名称经 esc', mustContain: ["esc(c.name || ('角色' + (i + 1)))", "checked = c.enabled !== false ? 'checked' : ''"] },
+  { re: /el\.innerHTML = state\.presets\.map\(function/, kind: 'param-by-callers', why: '预设列表：mods / toggleBtn 由 esc(m.name) 与数字下标拼成', mustContain: ["esc(m.name || ('模块' + (j + 1)))", 'data-pm="\' + i + \'"'] },
+  { re: /sel\.innerHTML = '<option value="">选择一个历史对话/, kind: 'param-by-callers', why: '历史对话选择器：id/label/日期串均已 esc，origin 为枚举比较', mustContain: ['esc(s.id)', 'esc(label)', 'esc(d)'] },
   { re: /\.srcdoc\s*=(?!=)/, kind: 'sandboxed-doc', why: 'muv-engine 状态栏：服务端返回另一份完整文档；iframe 只给 allow-scripts（刻意不给 allow-same-origin）⇒ 不透明源，够不到主页面 DOM 与凭据', mustContain: ['sandbox="allow-scripts"'] },
 
   // ── 静态模板：panelHTML() 是 483 行纯静态骨架，体内 0 处插值 ──
@@ -134,47 +140,124 @@ export function classify(line, sinkId) {
 const ESCAPE_CALL = /\b(?:esc|escAttr|escapeHtml|htmlEscapeStr|encodeURIComponent)\s*\(/
 const isCommentLine = (l) => /^\s*(\/\/|\*|\/\*)/.test(l)
 
-/** 按**顶层**分隔符切分（尊重引号与 ()[]{} 深度）。 */
-export function splitTopLevel(expr, delim = '+') {
-  const parts = []
-  let cur = ''
-  let quote = ''
-  let depth = 0
-  for (let i = 0; i < expr.length; i++) {
-    const c = expr[i]
-    if (quote) {
-      cur += c
-      if (c === '\\') { cur += expr[++i] || ''; continue }
-      if (c === quote) quote = ''
-      continue
-    }
-    if (c === '"' || c === "'" || c === '`') { quote = c; cur += c; continue }
-    if (c === '(' || c === '[' || c === '{') depth++
-    else if (c === ')' || c === ']' || c === '}') depth--
-    else if (c === delim && depth === 0) { parts.push(cur); cur = ''; continue }
-    cur += c
+/**
+ * ★ 共享扫描原语 —— **全工具只有这一处数引号**。
+ *
+ * 为什么必须唯一：2026-10-08 的对抗性复核证明，captureExpr / splitTopLevel / insideStringSink
+ * 三处各自数引号时，正则字面量里的引号（`/['"]/`）只会污染"没被改到的那两处"，
+ * 而 splitTopLevel 一旦塌段，segmentIsSafe 就退化成「整行有 esc( 就放行」⇒ 实测 6 类真漏报。
+ * 所以：引号/正则/深度感知**只实现一次**，所有扫描器都调它。
+ */
+
+/** 给定行内某个 `/` 的下标，判断它是不是**正则字面量的起点**。
+ *  依据前一个非空字符：值/右括号之后是除号；否则是正则起点（与各 JS 词法器同款启发式）。 */
+function isRegexStart(line, k) {
+  if (line[k] !== '/') return false
+  const nx = line[k + 1]
+  if (nx === '/' || nx === '*') return false          // 注释不是正则
+  for (let q = k - 1; q >= 0; q--) {
+    const pc = line[q]
+    if (pc === ' ' || pc === '\t') continue
+    return !/[A-Za-z0-9_$)\]}]/.test(pc)
   }
-  parts.push(cur)
-  return parts
+  return true
 }
 
-/** 在顶层找某个分隔符的下标（从 from 开始），找不到返回 -1 */
-function findTopLevel(expr, delim, from = 0) {
-  let quote = ''
+/** 从正则起点 `/`（含）扫到结束，返回结束下标（含 flags 的最后一个字符）；不是正则或未闭合返回 k+1。 */
+function regexEndAt(line, k) {
+  if (!isRegexStart(line, k)) return k + 1
+  let inClass = false
+  let i = k + 1
+  for (; i < line.length; i++) {
+    const c = line[i]
+    if (c === '\\') { i++; continue }
+    if (c === '[') { inClass = true; continue }
+    if (c === ']') { inClass = false; continue }
+    if (c === '/' && !inClass) break
+  }
+  if (i >= line.length) return k + 1                        // 未闭合：保守地只跳过这个字符
+  i++
+  while (i < line.length && /[a-z]/i.test(line[i])) i++      // flags
+  return i - 1
+}
+
+/**
+ * 逐字符遍历一行代码，**引号 / 正则 / 模板 / 深度全部感知**，并逐个回调。
+ * @param {(c: string, index: number, ctx: {inLiteral: boolean, depth: number}) => void} cb
+ *   `inLiteral=true` 表示该字符落在字符串/正则字面量内部（含起止引号本身）。
+ */
+function eachCodeChar(line, cb) {
+  let quote = ''   // 当前所在字面量（含正则用 '/' 标记）
   let depth = 0
-  for (let i = 0; i < expr.length; i++) {
-    const c = expr[i]
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
     if (quote) {
+      cb(c, i, { inLiteral: true, depth })
+      if (quote === '/') { if (c === '\\') { i++; continue } if (c === '/') quote = ''; continue }
       if (c === '\\') { i++; continue }
       if (c === quote) quote = ''
       continue
     }
-    if (c === '"' || c === "'" || c === '`') { quote = c; continue }
+    if (c === '"' || c === "'" || c === '`') { quote = c; cb(c, i, { inLiteral: true, depth }); continue }
+    if (c === '/') {
+      const end = regexEndAt(line, i)
+      if (end > i) {                       // 是正则字面量：整段按字面量处理
+        quote = '/'
+        cb(c, i, { inLiteral: true, depth })
+        continue
+      }
+    }
     if (c === '(' || c === '[' || c === '{') depth++
     else if (c === ')' || c === ']' || c === '}') depth--
-    else if (c === delim && depth === 0 && i >= from) return i
+    cb(c, i, { inLiteral: false, depth })
   }
-  return -1
+}
+/** 按**顶层**分隔符切分（尊重引号、正则与 ()[]{} 深度）。 */
+export function splitTopLevel(expr, delim = '+') {
+  const parts = []
+  let cur = ''
+  eachCodeChar(expr, (c, i, ctx) => {
+    if (!ctx.inLiteral && c === delim && ctx.depth === 0 && !cur.endsWith('\\')) {
+      parts.push(cur)
+      cur = ''
+      return
+    }
+    cur += c
+  })
+  parts.push(cur)
+  return parts
+}
+
+/**
+ * 在**顶层**按任意「会破坏安全性的」运算符切分：
+ *   `+ - * / % && || ?? ? : ,` —— 只要这些出现在顶层，两侧就是**各自独立**的表达式，
+ *   必须**每一段**都安全。
+ * 为什么要它（复核报告 §2）：原先只切 `+`，于是
+ *   `? esc(a) : raw`、`esc(a) && raw`、`f(esc(a), raw)`、`.map(x => esc(x.a) + x.b)`
+ * 全都塌成一段，而 `segmentIsSafe` 见到段内有 `esc(` 就放行 ⇒ 真漏报。
+ */
+export function splitOperators(expr) {
+  return splitTopLevelAny(expr, ['?', ':', ',', '&', '|', '+', '-', '*', '/', '%'])
+}
+
+function splitTopLevelAny(expr, delims) {
+  const parts = []
+  let cur = ''
+  eachCodeChar(expr, (c, i, ctx) => {
+    if (!ctx.inLiteral && ctx.depth === 0 && delims.includes(c)) { parts.push(cur); cur = ''; return }
+    cur += c
+  })
+  parts.push(cur)
+  return parts
+}
+
+/** 在顶层找某个分隔符的下标（从 from 开始），找不到返回 -1（同样走共享原语） */
+function findTopLevel(expr, delim, from = 0) {
+  let found = -1
+  eachCodeChar(expr, (c, i, ctx) => {
+    if (found < 0 && !ctx.inLiteral && ctx.depth === 0 && c === delim && i >= from) found = i
+  })
+  return found
 }
 
 /**
@@ -190,28 +273,134 @@ export function isLiteral(x) {
   return /^-?[\d.]+$/.test(s) || /^(true|false|null|undefined)$/.test(s)
 }
 
-/** 这一段是不是「结构上不可能带 HTML」？ */
-export function segmentIsSafe(seg) {
-  const s = seg.trim()
+/**
+ * 这一段是不是「结构上不可能带 HTML」？
+ *
+ * ★ 2.7.14 起改成**结构化递归**判定（复核报告 §2 的直接后果）：
+ *   旧口径里有一条 `ESCAPE_CALL.test(s) → true`（整段里出现 `esc(` 就放行），
+ *   一旦上游把表达式塌成一段，它就退化成「整行有 esc 就放行」——实测放过了这些真洞：
+ *     · `<img src="${esc(u)}" onerror="${raw}">`（模板里一个转义一个裸插值）
+ *     · `(raw + esc(a))` / `esc(a) && raw` / `? esc(a) : raw`
+ *     · `f(esc(a), raw)`（实参里混一个裸值）
+ *     · `.map(x => esc(x.a) + x.b)`（PR #13 那一类）
+ *   现在的要求：**纯 esc 调用**才算安全；组 / 实参 / 三元各分支 / 模板插值 / 链内表达式
+ *   一律**递归**检查，任一处不安全即整段不安全。深度上限 6，超过按不安全处理（保守）。
+ */
+export function segmentIsSafe(x, d = 0) {
+  const s = String(x).trim()
   if (s === '') return true
+  if (d > 6) return false
   if (isLiteral(s)) return true
-  if (ESCAPE_CALL.test(s)) return true
-  // 含 esc 的 .map/.filter/.join 链（跨行时由调用方先把窗口拼好）
-  if (/\.(map|filter|forEach|join|reduce)\s*\(/.test(s)) return ESCAPE_CALL.test(s)
-  if (/^(String|Number|Boolean)\s*\(/.test(s)) return ESCAPE_CALL.test(s) || /^String\s*\(\s*[-'\d]/.test(s)
-  // 计数：结构上就是数字
+  // 计数 / 纯数字 / `xxx || 0` 兜底
   if (/\.(length|count)$/.test(s)) return true
-  // 括号包起来的三元，且**两支都是字面量**
-  // 例：(g.collapsed ? '' : 'transform:rotate(90deg);')  ← 分支里含 ':'，所以必须用顶层扫描而不是正则
-  if (s.startsWith('(') && s.endsWith(')')) {
-    const inner = s.slice(1, -1)
-    const q = findTopLevel(inner, '?')
-    if (q >= 0) {
-      const colon = findTopLevel(inner, ':', q + 1)
-      if (colon > q && isLiteral(inner.slice(q + 1, colon)) && isLiteral(inner.slice(colon + 1))) return true
+  if (/^-?[\d.]+$/.test(s)) return true
+  if (/^\(?\s*[A-Za-z_$][\w$.]*\s*\|\|\s*0\s*\)?$/.test(s)) return true
+  // 具名/匿名函数表达式：形参与声明不参与拼接 ⇒ 只判**函数体**（`function (s) { return esc(s.id); }` 安全）
+  const fn = s.match(/^function\b[^{]*\{([\s\S]*)\}$/)
+  if (fn) return statementsSafe(fn[1], d + 1)
+  // 箭头函数：形参不参与 HTML 构造 ⇒ 只判**函数体**（`x => esc(x.a)` 是安全的）
+  const arrow = s.match(/^(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*([\s\S]+)$/)
+  if (arrow) return segmentIsSafe(arrow[1], d + 1)
+  // 顶层三元：条件只决定"选哪支"，两支各自才可能带 HTML ⇒ 只判两支
+  const q = findTopLevel(s, '?')
+  if (q > 0) {
+    const c = findTopLevel(s, ':', q + 1)
+    if (c > q) {
+      return segmentIsSafe(s.slice(q + 1, c), d + 1) && segmentIsSafe(s.slice(c + 1), d + 1)
     }
   }
-  return false
+  // 纯 esc 家族调用（整段就是它，且括号闭合）：安全 —— 这正是 esc 的意义
+  if (/^(?:esc|escAttr|escapeHtml|htmlEscapeStr)\s*\(/.test(s) && closesAtEnd(s, s.indexOf('('))) return true
+  // 模板字面量：逐个 ${…} 递归
+  if (s.startsWith('`') && s.endsWith('`') && s.length > 1) {
+    const interps = [...s.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1])
+    if (!interps.length) return true
+    return interps.every((t) => splitOperators(t).every((p) => segmentIsSafe(p, d + 1)))
+  }
+  // 组：( … ) — 递归内部
+  // 组：( … ) — **先递归判内部整串**（内部若还是三元/箭头，会先被上面那两条识别），
+  // 再退回按运算符切分。写成"先切分"会让 `(cond ? '' : 'x')` 的 cond 被当成裸标识符：
+  // 实测这正是真实代码里两条 ternary-literals 基线条目被判红的原因。
+  if (s.startsWith('(') && closesAtEnd(s, 0)) {
+    const inner = s.slice(1, -1)
+    if (segmentIsSafe(inner, d + 1)) return true
+    return splitOperators(inner).every((p) => segmentIsSafe(p, d + 1))
+  }
+  // 顶层运算符：两侧各自独立 ⇒ 每段都要安全（这一条覆盖 `+ && || ?? ? : ,`）
+  const parts = splitOperators(s)
+  if (parts.length > 1) return parts.every((p) => segmentIsSafe(p, d + 1))
+  // 一元/成员取值链：把**所有成对括号**的内容当参数表递归（覆盖 f(a, raw) 与 .map(x => …) 这类）
+  const groups = parenGroups(s)
+  if (groups.length) {
+    for (const g of groups) {
+      if (!splitOperators(g).every((p) => segmentIsSafe(p, d + 1))) return false
+    }
+    // 括号都安全还不够：`raw.slice(0, 1)` 里的 `raw` 在括号外。
+    // 但集合方法链（map/filter/forEach/reduce/join）的接收者**不是**被拼进 HTML 的数据 ——
+    // 它的元素由回调处理，而回调体上面已经递归判过了 ⇒ 这类豁免；其余一律按裸标识符处理。
+    const outside = stripGroups(s)
+    const collectionChain = /\.(map|filter|forEach|reduce|join)\s*\(/.test(s)
+    const outsideNoCallee = outside.replace(/[A-Za-z_$][\w$]*\s*\.\s*[A-Za-z_$][\w$]*\s*(?=\()/g, '')
+    if (collectionChain) {
+      // 集合方法链：把「接收者+方法」整条链（到每个 ( 之前）都去掉 —— 元素已由回调处理
+      const rest = outside.replace(/[A-Za-z_$][\w$]*(\s*\.\s*[A-Za-z_$][\w$]*)*\s*(?=\()/g, '')
+      return !/[A-Za-z_$]/.test(rest)
+    }
+    if (/[A-Za-z_$]/.test(outside)) return false
+    return true
+  }
+  return false   // 其余（含裸标识符）一律保守判不安全
+}
+
+/** 语句块安全判定：按 `;`/换行切分，逐句去掉 `return`/`var` 等前缀后递归。 */
+function statementsSafe(body, d) {
+  return String(body).split(/;|\n/).map((x) => x.trim()).filter(Boolean).every((st) => {
+    const t = st.replace(/^(?:return|throw|var|let|const)\s+/, '').replace(/;\s*$/, '').trim()
+    return t === '' || segmentIsSafe(t, d)
+  })
+}
+
+/** 下标 openIdx 处的 `(` 是否正好在**串尾**闭合（用于识别"整段就是一个调用"）。 */
+function closesAtEnd(s, openIdx) {
+  if (openIdx < 0 || s[openIdx] !== '(') return false
+  let depth = 0
+  let endAt = -1
+  eachCodeChar(s, (c, i, ctx) => {
+    if (ctx.inLiteral) return
+    if (c === '(') depth++
+    else if (c === ')') { depth--; if (depth === 0 && endAt < 0) endAt = i }
+  })
+  return endAt === s.length - 1
+}
+
+/** 取出串内**所有最外层成对括号**的内容（走共享原语，引号/正则安全）。 */
+function parenGroups(s) {
+  const out = []
+  let depth = 0
+  let start = -1
+  eachCodeChar(s, (c, i, ctx) => {
+    if (ctx.inLiteral) return
+    if (c === '(') { if (depth === 0) start = i; depth++ }
+    else if (c === ')') { depth--; if (depth === 0 && start >= 0) { out.push(s.slice(start + 1, i)); start = -1 } }
+  })
+  return out
+}
+
+/**
+ * 去掉成对括号**里面的内容**，但**保留括号本身** —— 用于检查括号外的裸标识符。
+ * ★ 必须保留 `()`：调用方的 `IDENT.IDENT(?=\()` 是靠 lookahead 认「被调用者」的，
+ *   把括号一起剥掉会让 `list.map.join` 这种链认不出来（实测：安全 map 被误报）。
+ */
+function stripGroups(s) {
+  let out = ''
+  let depth = 0
+  eachCodeChar(s, (c, i, ctx) => {
+    if (ctx.inLiteral) { if (depth === 0) out += c; return }
+    if (c === '(') { depth++; out += c; return }
+    if (c === ')') { depth--; out += c; return }
+    if (depth === 0) out += c
+  })
+  return out
 }
 
 /**
@@ -305,13 +494,11 @@ function insideStringSink(line, re) {
   const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
   let m
   while ((m = g.exec(line))) {
-    let q = ''
-    for (let k = 0; k < m.index; k++) {
-      const c = line[k]
-      if (q) { if (c === '\\') { k++; continue } if (c === q) q = '' ; continue }
-      if (c === '"' || c === "'" || c === '`') q = c
-    }
-    if (!q) return m
+    let inside = false
+    // ★ 必须看「匹配点**是否正在**字面量里」：写成「之前有没有出现过字面量」会被前面任意一个
+    //   字符串/正则带偏 ⇒ 真 sink 被整行跳过（复核报告 G3 就是这个漏报）。
+    eachCodeChar(line, (c, i, ctx) => { if (i === m.index) inside = ctx.inLiteral })
+    if (!inside) return m
   }
   return null
 }
@@ -331,7 +518,7 @@ export function findSuspects(src) {
       if (!m) continue
       const expr = captureExpr(lines, i, m.index + m[0].length)
       if (!expr) continue
-      const segs = splitTopLevel(expr)
+      const segs = splitOperators(expr)
       const bad = segs.filter((s) => !segmentIsSafe(s))
       if (!bad.length) continue
       const line = lines[i].trim().replace(/\s+/g, ' ')
@@ -381,9 +568,9 @@ export function bodyInterpolationsUnsafe(src, fnName) {
     // 去掉语句前缀（`return ` / `var x = ` / `x = ` / `x += `）与行尾 `;`，只判表达式部分
     const pre = l.match(/^\s*(?:return\s+|throw\s+)?(?:(?:var|let|const)\s+)?(?:[A-Za-z_$][\w$.[\]]*\s*(?:\+=|=)\s*)?/)
     const expr = l.slice(pre ? pre[0].length : 0).replace(/;\s*$/, '')
-    for (const s of splitTopLevel(expr)) {
+    for (const s of splitOperators(expr)) {
       const t = s.trim()
-      if (t === '' || isLiteral(t) || segmentIsSafe(t)) continue
+      if (t === '' || segmentIsSafe(t)) continue
       issues.push(`${fnName}:${k + 1}  未转义插值段 ${JSON.stringify(t.slice(0, 90))}`)
     }
   }
@@ -437,7 +624,7 @@ export function valueOriginUnsafe(src, spec) {
     const m = l.match(assignRe)
     if (!m) continue
     const expr = l.slice(m.index + m[0].length).replace(/;\s*$/, '')
-    for (const seg of splitTopLevel(expr)) {
+    for (const seg of splitOperators(expr)) {
       const t = seg.trim()
       if (t === '' || isLiteral(t) || segmentIsSafe(t) || numberish(t)) continue
       issues.push(spec.name + ':' + (k + 1) + '  未转义片段 ' + JSON.stringify(t.slice(0, 90)))
