@@ -153,6 +153,8 @@ feat: 新增会话级预设隔离
       做法：`git update-index --chmod=+x <path>` 暂存后**直接提交索引**
       （`git commit -F <msg>`，**不加 `--only`、不是 `-a`**），提交后用 **`git ls-tree HEAD <path>` 复验模式**
       —— **不要**信 `--only` 的退出码。
+      （完整流程、反例与出处见 **`AGENTS.md` §11**；该现象的前提是 `core.fileMode=false`（Windows），
+       `core.fileMode=true` 的平台不出现。）
 - [ ] 所有修改的文件语法检查通过
 - [ ] DSH 重启后进程正常运行
 - [ ] 核心功能手动验证通过
