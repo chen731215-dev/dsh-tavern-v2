@@ -334,6 +334,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | innerHTML 转义棘轮 | `npm run check:innerhtml`（= `node tools/check-innerhtml-escape.mjs`） |
 | **CI（唯一的强制点）** | `.github/workflows/check.yml`，push / PR 自动跑上面这几条 |
 | **本地复现 CI** | `npm run ci:local` —— 与工作流**同一组命令、同一顺序**（有护栏 ④-d 强制一致） |
+| **行为等价（差分）** | `tests/golden-prompt.test.js` —— 与**重构前那一版**的产物逐字节比；边界（豁免清单）见 `docs/VERIFICATION.md` |
 
 - **测试清单不手抄**：`npm test` 直接扫 `tests/*.test.js`，新增测试文件自动纳入。
   2026-10-08 实测：旧的 `scripts.test` 是一条**手抄的 `&&` 长链**，漏掉 3 个文件
@@ -392,6 +393,20 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 
 **证据要留痕**：在做发布的那次 CHANGELOG 条目里写一行「真机冒烟：通过（版本 / 日期）」——
 否则半年后没人知道到底跑没跑过，跟 CI 的「静默不跑」是同一类问题。
+
+### 9.2 行为等价的 golden 差分（`tests/golden-prompt.test.js`）
+
+「逐行对账 + 全量测试通过」**只是必要不充分**：文本对得上只说明没抄错，而重排代码最容易破坏的
+恰恰是**没有断言的那些行为**。所以另有一层证据：
+
+- `tests/fixtures/golden-prompt.json` 是**在重构前那一版（`a816afd`）上生成的**产物快照；
+- 测试在当前版本上重跑同一组固定 fixture，要求**逐字节一致** ⇒ 任何一处组装语义被改坏，立刻报红。
+
+⚠️ **它有明确的边界**：`apply(ctx)` 内部的真实组装（装配体还在 apply 里，等 S2-C2 抽出来后补）、
+`prompt-stats` 的数值、UI 交互、时序并发、LLM 失败路径 —— 都不在覆盖范围内，
+豁免清单写在测试文件的 `EXEMPT` 常量里并有护栏防它缩水。**不要把它当成「全覆盖」。**
+
+真机那一环仍见 §9.1；历次「变异 → 报红」的对照记录见 `docs/VERIFICATION.md`。
 
 ---
 

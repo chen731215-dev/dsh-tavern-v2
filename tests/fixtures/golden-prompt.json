@@ -1,0 +1,92 @@
+{
+  "buildWorldbookText": "【酒馆世界书 — 当前预设直接注入】\n\n⚠️ 格式说明：以下世界书条目包含 HTML 格式标签（如 <Drama> <details> <choices> <div> 等）。这些是格式模板，不是要你原样输出的内容。请按模板格式填充你的回复内容，但不要输出 <style> 标签和空的模板容器。\n\n## 人物·甲\n甲是主角，与用户并肩。\n\n## 地点·城\n触发词：城\n一座城。\n<div class=\"card\">带格式</div>\n\n## 常数条目\n无视关键词，永远在场。\n\n## 阶段·甲\n<% var aff = getvar('stat_data.甲.好感度[0]') %>\n<% if (aff > 60) { %><%- getwi(1, '甲-亲密') %><% } else { %><%- getwi(1, '甲-普通') %><% } %>",
+  "cleanSillyTavernVars": "你好，我是角色。保留  原样。",
+  "composed": "【当前预设】甲卡\n你是角色，与用户同行。\n\n【酒馆世界书 — 当前预设直接注入】\n\n⚠️ 格式说明：以下世界书条目包含 HTML 格式标签（如 <Drama> <details> <choices> <div> 等）。这些是格式模板，不是要你原样输出的内容。请按模板格式填充你的回复内容，但不要输出 <style> 标签和空的模板容器。\n\n## 人物·甲\n甲是主角，与用户并肩。\n\n## 地点·城\n触发词：城\n一座城。\n<div class=\"card\">带格式</div>\n\n## 常数条目\n无视关键词，永远在场。\n\n## 阶段·甲\n<% var aff = getvar('stat_data.甲.好感度[0]') %>\n<% if (aff > 60) { %><%- getwi(1, '甲-亲密') %><% } else { %><%- getwi(1, '甲-普通') %><% } %>\n\n【会话记忆】上次在城门口分开。\n\n【写作风格】短句，多动作。",
+  "contentToText": "第一段。\n第二段。",
+  "estimatePromptBudget": {
+    "chars": 12345,
+    "level": "ok",
+    "pct": 12.1,
+    "ratio": 0.1205625,
+    "tokens": 3858
+  },
+  "extractCardText": "你是{{char}}，正在与{{user}}对话。\n保持角色语气，不要出戏。",
+  "matchWorldbookEntries": [
+    "人物·甲",
+    "地点·城"
+  ],
+  "parseStagePlans": [
+    [
+      "甲-亲密",
+      {
+        "charName": "甲",
+        "min": 60
+      }
+    ],
+    [
+      "甲-普通",
+      {
+        "charName": "甲",
+        "min": 0
+      }
+    ]
+  ],
+  "resolveWbIsFull": [
+    true,
+    false,
+    false,
+    true
+  ],
+  "sanitizePromptText": "角色名 对 用户 说：保留 ；角色卡名是 。",
+  "selectWorldbookEntries": {
+    "injectEntries": [
+      {
+        "content": "无视关键词，永远在场。",
+        "enabled": true,
+        "name": "常数条目"
+      },
+      {
+        "content": "甲是主角，与{{user}}并肩。",
+        "enabled": true,
+        "keys": [
+          "甲"
+        ],
+        "name": "人物·甲"
+      },
+      {
+        "content": "一座城。\n<div class=\"card\">带格式</div>",
+        "enabled": true,
+        "keywords": [
+          "城"
+        ],
+        "name": "地点·城"
+      }
+    ],
+    "picks": [
+      {
+        "chars": 11,
+        "name": "常数条目",
+        "reason": "const"
+      },
+      {
+        "chars": 17,
+        "name": "人物·甲",
+        "reason": "matched"
+      },
+      {
+        "chars": 32,
+        "name": "地点·城",
+        "reason": "matched"
+      }
+    ],
+    "stats": {
+      "const": 1,
+      "disabled": 1,
+      "ejs": 1,
+      "keyword": 2,
+      "matched": 2,
+      "stage": 0,
+      "stageSkipped": 0
+    }
+  }
+}
