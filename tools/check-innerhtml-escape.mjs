@@ -657,14 +657,24 @@ export function valueOriginUnsafe(src, spec) {
   }
   return issues
 }
+/** 去掉行尾注释与字面量内容（留下代码骨架）。用于「清单外入口」判定：
+ *  `const s = 'eval('` 或 `// eval(x)` 是文字而非入口 —— 否则整跑 exit 1，
+ *  让人去登记一个并不存在的注入点（第二轮复核 ⑥）。 */
+function stripCommentsAndLiterals(line) {
+  let out = ''
+  eachCodeChar(line, (c, i, ctx) => { if (!ctx.inLiteral) out += c })
+  return out.split('//')[0]
+}
+
 /** 清单外的注入入口（返回到命中的行）。 */
 export function findUnlistedSinks(src) {
   const lines = String(src).split(/\r?\n/)
   const out = []
   for (let i = 0; i < lines.length; i++) {
     if (isCommentLine(lines[i])) continue
+    const codeOnly = stripCommentsAndLiterals(lines[i])
     for (const u of UNLISTED_SINKS) {
-      if (u.re.test(lines[i])) out.push({ lineNo: i + 1, line: lines[i].trim().replace(/\s+/g, ' '), why: u.why })
+      if (u.re.test(codeOnly)) out.push({ lineNo: i + 1, line: lines[i].trim().replace(/\s+/g, ' '), why: u.why })
     }
   }
   return out

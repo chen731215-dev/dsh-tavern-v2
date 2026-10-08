@@ -34,6 +34,8 @@ const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', c
 const norm = (s) => String(s).replace(/\r\n/g, '\n')
 
 function fail(msg, extra = '') {
+  // ★ 先清理再退出：process.exit 不展开栈、会跳过 finally（第二轮复核在克隆里实测到残留 worktree）。
+  try { doCleanup() } catch { /* 清理失败不掩盖原错 */ }
   console.error('❌ ' + msg)
   if (extra) console.error(extra.split('\n').slice(-12).map((l) => '   ' + l).join('\n'))
   process.exit(1)
@@ -90,8 +92,13 @@ try {
     fail('fixture 与「在 ' + OLD_SHA + ' 上生成的产物」**不一致** —— golden 的来源声明不成立', detail)
   }
 } finally {
+  doCleanup()
+}
+
+function doCleanup() {
   if (added) {
-    run('git', ['worktree', 'remove', '--force', wt])
+    const rm = run('git', ['worktree', 'remove', '--force', wt])
+    if (rm.status !== 0) console.error('  ⚠️ worktree remove 失败（会残留）：' + String(rm.stderr || '').trim().slice(0, 200))
     run('git', ['worktree', 'prune'])
   } else {
     try { fs.rmSync(wt, { recursive: true, force: true }) } catch { /* 忽略 */ }
