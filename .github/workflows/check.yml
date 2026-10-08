@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # golden 来源验证需要旧提交（a816afd）；浅克隆会响亮失败
 
       - uses: actions/setup-node@v4
         with:
@@ -42,3 +44,6 @@ jobs:
 
       - name: innerHTML 转义棘轮（基线只许减不许增）
         run: npm run check:innerhtml
+
+      - name: golden 来源验证（在重构前那一版上重新生成，逐字节比）
+        run: npm run check:golden-origin

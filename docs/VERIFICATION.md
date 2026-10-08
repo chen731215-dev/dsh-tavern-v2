@@ -59,6 +59,7 @@ node --test tests/golden-prompt.test.js
 | 采集项 | 11 项（世界书选条与渲染、卡正文提取、宏剔除、`sanitizePromptText`、预算估算、注入模式判定、阶段解析、拼接语义…） |
 | 旧版 → 当前版 | ✅ **逐字节一致** |
 | 变异验证 | 把 `buildWorldbookText` 的标题改掉两个字 ⇒ 立刻报红，并打印**第一处差异所在行**（golden / 现在 两行对照） |
+| **来源验证**（2026-10-08，复核方提出后固化） | 在 `a816afd` 的干净 worktree 里用 `UPDATE_GOLDEN=1` **重新生成**，与仓库里的 fixture **逐字节一致**（两边同 3424 字节，11 个采集键）⇒ 「golden 源自重构前那一版」由自述升级为**机器结论**。已固化为 `npm run check:golden-origin`（CI 已接；需 `fetch-depth: 0`，浅克隆会**响亮失败**而不是跳过） |
 
 **边界（豁免清单，写在测试文件里、且有护栏防它缩水）**：
 
