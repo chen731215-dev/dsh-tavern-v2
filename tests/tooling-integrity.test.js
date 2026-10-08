@@ -45,6 +45,7 @@ export const DOC_COUNT_PATTERNS = [
   { re: /\d{3,}\s*行/, why: '手抄行数（三位以上必然是行数指标，且本身有两种口径）' },
   { re: /净减\s*\d+/, why: '手抄净减行数' },
   { re: /\d+\s*个(?:函数|模块|常量)/, why: '手抄函数/模块/常量个数' },
+  { re: /\d+\s*条/, why: '手抄条数（基线/清单条数）' },
 ]
 
 /** 返回文本里命中的「手抄数字」违规（空数组 = 干净） */
@@ -197,6 +198,9 @@ test('④-d `npm run ci:local` 必须与 CI 跑**同一组**命令（本地镜�
   const ci = workflowRunCommands(read(WORKFLOW))
   const onlyLocal = local.filter((c) => !ci.includes(c))
   const onlyCi = ci.filter((c) => !local.includes(c))
+  // ★ 顺序也要一致：AGENTS §9 声称「同一组命令、同一顺序」——旧判据只比集合，属「声称强于事实」
+  //   （第三轮复核把工作流整段倒序后代入旧判据仍 PASS）。
+  assert.deepEqual(local, ci, '★ 本地镜像与 CI 的命令**顺序**不一致（AGENTS §9 声称同一顺序）')
   assert.deepEqual(
     { onlyLocal, onlyCi },
     { onlyLocal: [], onlyCi: [] },
