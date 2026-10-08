@@ -1,8 +1,8 @@
 {
-  "_note": "bareHex 331 → 336 是 S3 批1（只加不删：新增 5 个 --tv-color-* 令牌定义）的一次性上升 —— 令牌定义本身就是 5 个字面量；批2 起逐处替换会把裸 hex 降回来，届时同步下调。其余指标未动。",
+  "_note": "S3 令牌层的两次记账：批1 新增 5 个 --tv-color-* 定义 ⇒ bareHex 331→336（一次性 +5，理由已记）；批2 把 16 个**已证明在 #tavern-manager 子树内**的点换成 var(--tv-color-*)，共替换掉 17 个字面量 ⇒ bareHex 336→**319**（随本批同步下调）。319 < S3 之前的 331 ⇒ 令牌层的净效果是**降**，且后续批次只降不升。",
   "inlineStyleAttr": 301,
   "inlineHandlerAttr": 0,
-  "bareHex": 336,
+  "bareHex": 319,
   "bareRgba": 150,
   "cssTextAssign": 59,
   "important": 0,

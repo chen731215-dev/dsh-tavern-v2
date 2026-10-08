@@ -104,6 +104,20 @@ export function extractTokenRefs(cssText) {
   return out
 }
 
+/**
+ * ★ 批2 起新增的**引用面**：`var(--tv-*)` 的引用不只出现在 CSS 载体里 ——
+ * 逐处替换之后，它们大量出现在 **panelHTML 的 markup**（`style="color:var(--tv-color-danger)"`）
+ * 与 **JS 赋值**（`st.style.color = 'var(--tv-color-warn)'`）里。
+ * 只扫载体的话，这些引用**完全不在判据视野内**：一个拼错的令牌名（`--tv-color-dangerr`）
+ * 会让 `var()` 解析失败 ⇒ 颜色退回继承/默认 ⇒ 真·用户可见变化，而判据全绿。
+ * 所以引用的"必须有定义"这一条，扫描面 = **整个 bundle**（定义面仍限 `TAVERN_CSS` 载体）。
+ */
+export function extractTokenRefsAnywhere(bundleText) {
+  const out = new Map()                       // name → 出现次数
+  for (const m of String(bundleText).matchAll(/var\(\s*(--tv-[\w-]*)/g)) out.set(m[1], (out.get(m[1]) || 0) + 1)
+  return out
+}
+
 /** ① 的子集判据：`baseline.classes` 里哪些**没在**现状里（= 被删的，且没登记删除声明）。 */
 export function missingClassNames(baseline, current, removals = []) {
   const declared = new Set(removals.map((r) => r && r.name))
@@ -152,6 +166,9 @@ const RULES = CARRIER ? parseCssRules(CARRIER) : []
 const CLASSES = CARRIER ? extractCssClassNames(CARRIER) : new Set()
 const DEFS = CARRIER ? extractTokenDefs(CARRIER) : []
 const REFS = CARRIER ? extractTokenRefs(CARRIER) : new Set()
+/** 全仓引用面（批2 起：引用大量落在 markup / JS 里，只扫载体等于看不见它们） */
+const REFS_ALL = extractTokenRefsAnywhere(BUNDLE)
+export const REF_FLOOR = 17                // 实测 17（时点：S3 批2；逐批只增）
 
 test('①-0 载体边界必须**唯一**（fail-closed：不许静默绑到后面那个结束标记上）', (t) => {
   t.diagnostic('起始行 L' + (CAND.start + 1) + '（缩进 ' + JSON.stringify(CAND.indent) + '）· 结束标记候选 ' +
@@ -223,10 +240,26 @@ test('①-b 反证：删一个既有类名必须报红并点名；**新增**类�
 
 test('② `--tv-*` 令牌必须限定在 `#tavern-manager` 作用域内（含 `:root` 反例）', (t) => {
   assert.ok(CARRIER, '找不到 CSS 载体 —— 判据空跑')
-  t.diagnostic('令牌定义 ' + DEFS.length + ' 条 · 引用 ' + REFS.size + ' 个 · 登记表 ' + BASELINE.tokens.length + ' 条（本卡从 0 开始建层）')
+  t.diagnostic('令牌定义 ' + DEFS.length + ' 条 · 载体内的引用 ' + REFS.size + ' 个 · **全仓引用** ' +
+    [...REFS_ALL.values()].reduce((a, b) => a + b, 0) + ' 处 / ' + REFS_ALL.size + ' 个名字 · 登记表 ' + BASELINE.tokens.length + ' 条')
   assert.ok(DEFS.length >= TOKEN_FLOOR, '令牌只解析出 ' + DEFS.length + ' 条（下限 ' + TOKEN_FLOOR + '）')
-  const bad = tokenProblems(DEFS, REFS, BASELINE.tokens)
+  // ★ 引用面 = **整个 bundle**（批2 起引用落在 markup / JS 里；只扫载体等于看不见它们 —— 见 extractTokenRefsAnywhere 注释）
+  const bad = tokenProblems(DEFS, new Set(REFS_ALL.keys()), BASELINE.tokens)
   assert.deepEqual(bad, [], '★ `--tv-*` 令牌层不合规：\n  ' + bad.join('\n  '))
+})
+
+test('②-c 反证（批2 新增能力）：**markup / JS 里**的未定义引用必须报红（只扫载体时是瞎的）', () => {
+  const refs = extractTokenRefsAnywhere("var a = 'style=\"color:var(--tv-color-danger)\"'\nst.style.color = 'var(--tv-color-dangerr)'")
+  assert.deepEqual([...refs.keys()].sort(), ['--tv-color-danger', '--tv-color-dangerr'], '全仓引用必须两个都取到（含 markup 里那个）')
+  const bad = tokenProblems([{ name: '--tv-color-danger', selector: '#tavern-manager', topLevel: false }], new Set(refs.keys()), ['--tv-color-danger'])
+  assert.equal(bad.length, 1, '拼错的引用必须报一条，实际=' + JSON.stringify(bad))
+  assert.match(bad[0], /--tv-color-dangerr/)
+  // 对照：**载体内的**扫描面看不见 markup 里那处（这正是"扫描面必须扩"的理由）
+  const carrierOnly = extractTokenRefs("'#tavern-manager{--tv-color-danger:#e74c3c}'")
+  assert.deepEqual([...carrierOnly], [], '对照：载体里没有引用 ⇒ 载体口径下引用数为 0（看不见 markup）')
+  // 引用下限（非空跑）：真实 bundle 的全仓引用数必须 ≥ 下限
+  const total = [...REFS_ALL.values()].reduce((a, b) => a + b, 0)
+  assert.ok(total >= REF_FLOOR, '全仓引用只数到 ' + total + ' 处（下限 ' + REF_FLOOR + '）—— 判据空跑或替换被回退')
 })
 
 test('②-b 反证：把定义挪到 `:root` ⇒ 报红；作用域内 ⇒ 放行；引用未定义 ⇒ 报红；登记表漂移 ⇒ 报红', () => {
