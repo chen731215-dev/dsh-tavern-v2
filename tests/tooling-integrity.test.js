@@ -18,6 +18,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (p) => fs.readFileSync(path.join(REPO, p), 'utf8')
@@ -56,6 +57,59 @@ export function docCountOffences(text) {
 /** 同一份文本里是否既含 CRLF 又含裸 LF */
 export function isMixedEol(text) {
   return /\r\n/.test(text) && /(?<!\r)\n/.test(text)
+}
+
+/**
+ * ★★ 形态判据的**blob 口径**（本仓既定纪律：形态判据不许只看工作树 —— 看工作树的守卫自己就变成环境依赖）。
+ *
+ * 为什么 ⑥ 那条工作树判据不够（两个方向都会歪）：
+ *   · `core.autocrlf=true`（本仓默认）⇒ 工作树被检出成 CRLF ⇒ *工作树* 永远看不出"blob 里混了裸 LF"；
+ *   · CI / 干净检出可能关掉 autocrlf（本会话实测过）⇒ 同一条判据在 CI 上看的其实是 blob 内容
+ *     ⇒ **同一条断言在不同机器上断言不是同一件事**，这正是"环境依赖"的定义。
+ * ⇒ 所以把**载荷判据**落到 blob 上（提交进去的那份字节），工作树那条**保留**但改名标清口径（本地检出形态）。
+ *
+ * 纯函数形态（喂坏样本即可反证）：`entries = [{ rel, text, binary }]`。
+ * @returns {{bad: Array<string>, skipped: Array<string>, checked: number}}
+ */
+export function mixedEolBlobProblems(entries, { minBlobs = 50 } = {}) {
+  const bad = []
+  const skipped = []
+  let checked = 0
+  for (const e of entries) {
+    if (e.binary) { skipped.push(e.rel); continue }
+    checked++
+    if (isMixedEol(e.text)) {
+      const crlf = (e.text.match(/\r\n/g) || []).length
+      const lf = (e.text.match(/(?<!\r)\n/g) || []).length
+      bad.push(e.rel + '（blob：CRLF ' + crlf + ' / 裸LF ' + lf + '）')
+    }
+  }
+  if (checked < minBlobs) {
+    bad.push('(非空跑下限) 只检查了 ' + checked + ' 个 blob（要求 ≥ ' + minBlobs + '）⇒ 本轮的「没有混合换行」可能只是「没在看」')
+  }
+  return { bad, skipped, checked }
+}
+
+/**
+ * 取全部已跟踪文件的 **blob 内容**（形态判据的实际输入）。
+ * 取不到（`git ls-files -s` 失败 / bat 拿不到）⇒ 返回 null，调用方必须**出声**（不许静默降级）。
+ * 二进制（前 8000 字节含 NUL）在这里就标出来，交给纯判据跳过并计数。
+ */
+export function trackedBlobEntries({ maxBytes = 2 * 1024 * 1024 } = {}) {
+  const ls = spawnSync('git', ['ls-files', '-s', '-z'], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  if (ls.status !== 0) return null
+  const out = []
+  for (const rec of ls.stdout.split('\0').filter(Boolean)) {
+    const m = /^\d+ ([0-9a-f]{40}) \d+\t([\s\S]*)$/.exec(rec)
+    if (!m) continue
+    const rel = m[2].replace(/\\/g, '/')
+    const r = spawnSync('git', ['cat-file', 'blob', m[1]], { cwd: REPO, maxBuffer: 64 * 1024 * 1024 })
+    if (r.status !== 0 || !r.stdout) continue
+    const buf = r.stdout
+    const binary = buf.subarray(0, 8000).includes(0) || buf.length > maxBytes
+    out.push({ rel, text: binary ? '' : buf.toString('utf8'), binary })
+  }
+  return out
 }
 
 /** 收集仓库里的文本文件（相对路径），跳过 .git / node_modules / 临时目录 */
@@ -269,7 +323,7 @@ test('⑤-b 反证：坏样本必须被判据抓住', () => {
 // ⑥ 行尾不许混合
 // ════════════════════════════════════════════════════════════════
 
-test('⑥ 全仓文本文件不得混合换行（同一文件既有 CRLF 又有裸 LF）', () => {
+test('⑥ 工作树形态：本地检出不得混合换行（**环境相关**；载荷判据见 ⑥-c 的 blob 口径）', () => {
   const files = textFiles()
   assert.ok(files.length > 20, '只扫到 ' + files.length + ' 个文件 —— 判据空跑')
   const bad = []
@@ -282,7 +336,7 @@ test('⑥ 全仓文本文件不得混合换行（同一文件既有 CRLF 又有�
       bad.push(rel + '（CRLF ' + crlf + ' / 裸LF ' + lf + '）')
     }
   }
-  assert.deepEqual(bad, [], '★ 混合换行（新建文件请照抄同目录邻居的换行符）：\n' + bad.join('\n'))
+  assert.deepEqual(bad, [], '★ 工作树里有混合换行（新建文件请照抄同目录邻居的换行符）：\n' + bad.join('\n'))
 })
 
 test('⑥-b 反证：混合换行判据必须能认出来，且不误报统一行尾', () => {
@@ -290,4 +344,39 @@ test('⑥-b 反证：混合换行判据必须能认出来，且不误报统一�
   assert.ok(!isMixedEol('a\r\nb\r\n'), '误报：全 CRLF 被判成混合')
   assert.ok(!isMixedEol('a\nb\n'), '误报：全 LF 被判成混合')
   assert.ok(!isMixedEol('单行无换行'))
+})
+
+// ════════════════════════════════════════════════════════════════
+// ⑥-c blob 口径：**提交进去的那份字节**不许混合换行（载荷判据；与 BOM 判据同款纪律）
+//   为什么单列：⑥ 读的是工作树 —— `core.autocrlf=true` 时工作树是 CRLF ⇒ 永远看不出 blob 里混了裸 LF；
+//   而 CI/干净检出可能关掉 autocrlf ⇒ 同一条断言在不同机器上不是同一件事（环境依赖）。
+// ════════════════════════════════════════════════════════════════
+test('⑥-c 全仓 blob 不得混合换行（以 blob 为准 + 非空跑下限）', (t) => {
+  const entries = trackedBlobEntries()
+  assert.ok(entries, '取不到 blob（git ls-files -s / cat-file 失败）⇒ 判据没在做事（不许静默降级）')
+  const { bad, skipped, checked } = mixedEolBlobProblems(entries)
+  t.diagnostic('blob 口径：扫描 ' + entries.length + ' 个已跟踪文件 · 判定 ' + checked + ' 个文本 · 跳过 ' + skipped.length + ' 个二进制/超大')
+  assert.deepEqual(bad, [], '★ 这些文件的 **blob** 里混合了换行（提交进去的形态就是坏的）：\n' + bad.join('\n'))
+  assert.ok(checked >= 50, '只判定到 ' + checked + ' 个 blob —— 判据空跑（下限 50）')
+})
+
+test('⑥-d 反证：blob 口径判据喂坏样本必须报红（混合 ⇒ 点名；统一行尾/单行 ⇒ 不误报；二进制 ⇒ 跳过并计数；过少 ⇒ 下限红）', () => {
+  const e = (rel, text) => ({ rel, text, binary: false })
+  const mixed = mixedEolBlobProblems([e('a.js', 'x\r\ny\nz'), ...Array.from({ length: 60 }, (_, i) => e('p' + i + '.js', 'ok\n'))])
+  assert.equal(mixed.bad.length, 1, '混合 blob 必须报一条，实际=' + JSON.stringify(mixed.bad))
+  assert.match(mixed.bad[0], /^a\.js（blob：CRLF 1 \/ 裸LF 1）/, '必须点名到文件 + 两种计数')
+  // 统一行尾 / 单行 ⇒ 不误报
+  const clean = mixedEolBlobProblems([
+    e('lf.js', 'a\nb\n'), e('crlf.js', 'a\r\nb\r\n'), e('one.js', 'single'),
+    ...Array.from({ length: 60 }, (_, i) => e('q' + i + '.js', 'ok\n')),
+  ])
+  assert.deepEqual(clean.bad, [], '统一行尾不许误报，实际=' + JSON.stringify(clean.bad))
+  // 二进制 ⇒ 跳过并**计数**（不许静默把它当"看过且干净"）
+  const bin = mixedEolBlobProblems([{ rel: 'x.bin', text: '', binary: true }, ...Array.from({ length: 60 }, (_, i) => e('r' + i + '.js', 'ok\n'))])
+  assert.deepEqual(bin.bad, [], '二进制不该判红')
+  assert.equal(bin.skipped.length, 1, '跳过的必须被记下')
+  // 非空跑下限：检查数不足 ⇒ 必须红（否则"没报混合"可能只是"没在看"）
+  const few = mixedEolBlobProblems([e('only.js', 'ok\n')])
+  assert.equal(few.bad.length, 1, '过少必须报下限，实际=' + JSON.stringify(few.bad))
+  assert.match(few.bad[0], /^\(非空跑下限\)/)
 })
