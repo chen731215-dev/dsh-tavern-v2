@@ -125,13 +125,42 @@ export function resolveBindingChain(lines, expr, lineIdx, depth = 0) {
 }
 
 /**
- * 全仓 `var(--tv-*)` 使用点的归属判定。
- * @returns {{sites: Array, panelRange: object|null, panelIds: Set, problems: string[]}}
- *   site = `{ line, name, kind: 'markup'|'js', id, anchor, ok, why }`
+ * CSS 载体的**行范围**（0-based，含首尾；只取数组内容行）。边界不唯一 ⇒ null（fail-closed）。
+ * 与判据 ② 判"定义作用域"用的是同一套边界（`carrierCandidates`）—— 两处口径必须一致。
+ */
+export function cssCarrierRange(bundleText) {
+  const { start, sameIndent } = carrierCandidates(bundleText)
+  if (start < 0 || sameIndent.length !== 1) return null
+  return { from: start + 1, to: sameIndent[0] - 1 }
+}
+
+/**
+ * 载体里第 `i` 行**所在规则**的选择器：向上找最近的含 `{` 的行，取 `{` 之前的文本。
+ * 找不到 ⇒ null（fail-closed —— 定位不到就不许当成"在作用域内"）。
+ */
+export function enclosingCarrierSelector(lines, i, range) {
+  for (let k = i; k >= range.from; k--) {
+    const at = lines[k].indexOf('{')
+    if (at < 0) continue
+    return lines[k].slice(0, at).replace(/^[\s',]+/, '').trim()
+  }
+  return null
+}
+
+/**
+ * 全仓 `var(--tv-*)` 使用点的归属判定。**三种可证明的证据形态**（缺一即红）：
+ *   ① `markup` ：该行在 `panelHTML` 函数体内（面板根即 `#tavern-manager`）；
+ *   ② `js`     ：该行的 `.style.` 目标，绑定链**逐行向上**解析后落回面板内元素 id；
+ *   ③ `carrier`：该行在 **CSS 载体**内，且**所在规则的选择器含 `#tavern-manager`**
+ *                （= 判据 ② 判"定义作用域"用的同一条规则）。
+ * ★ 形态③ 是**增补**（批3c 落地，与首批真实载体点同笔）：在此之前，载体里的使用点没有绑定链，
+ *   会被误判成 `js` 形态并报红 —— 而它的归属其实可证明（**选择器自己写着作用域**）。
+ *   既有两种形态**原样保留**（不是替换、更不是放宽）；负反证见 ③-c。
  */
 export function tvUsageSites(bundleText) {
   const lines = String(bundleText).split(/\r?\n/)
   const range = panelHtmlRange(bundleText)
+  const carrier = cssCarrierRange(bundleText)
   const panelIds = new Set(
     range ? lines.slice(range.from, range.to + 1).join('\n').match(/id="([^"]+)"/g)?.map((m) => m.slice(4, -1)) ?? [] : [],
   )
@@ -146,6 +175,18 @@ export function tvUsageSites(bundleText) {
     const inMarkup = !!(range && i >= range.from && i <= range.to)
     if (inMarkup) {
       for (const name of names) sites.push({ line: i + 1, name, kind: 'markup', id: (l.match(/id="([^"]+)"/) || [])[1] || null, anchor: 'panelHTML', ok: true, why: '在 panelHTML 体内' })
+      return
+    }
+    // ③ 载体内的使用点：靠**所在规则的选择器**证明作用域（不等同于"在 panelHTML 里"）
+    if (carrier && i >= carrier.from && i <= carrier.to) {
+      const sel = enclosingCarrierSelector(lines, i, carrier)
+      const ok = !!(sel && sel.includes('#tavern-manager'))
+      for (const name of names) {
+        sites.push({
+          line: i + 1, name, kind: 'carrier', id: null, anchor: sel, ok,
+          why: ok ? '所在规则选择器含 #tavern-manager（' + sel + '）' : '所在规则选择器**不含** #tavern-manager（' + (sel || '定位不到选择器') + '）',
+        })
+      }
       return
     }
     const m = l.match(/([A-Za-z_$][\w$]*)\.style\./)
@@ -163,13 +204,14 @@ export function tvUsageSites(bundleText) {
   })
   if (!range) problems.push('找不到 panelHTML 的函数体 —— 判据空跑（面板 markup 边界没了）')
   if (!panelIds.size) problems.push('panelHTML 里一个 id 都没解析到 —— 判据空跑')
+  if (!carrier) problems.push('取不到 CSS 载体的行范围 —— 形态③ 无法判定（fail-closed）')
   for (const s of sites) if (!s.ok) problems.push('L' + s.line + ' 的 ' + s.name + '（' + s.kind + '）' + s.why)
-  return { sites, panelRange: range, panelIds, problems }
+  return { sites, panelRange: range, panelIds, carrierRange: carrier, problems }
 }
 
 /** ③ 的非空跑下限（**随批次抬**；契约是"下限"本身，数字只是时点快照）。
- *  17（时点 be756f7：只有颜色令牌的引用）→ **54**（时点批3b：+37 处 gap 令牌引用）。 */
-export const USAGE_FLOOR = 54
+ *  17（时点 be756f7：只有颜色令牌引用）→ 54（批3b：+37 处 gap 引用）→ **61**（批3c：+7 处载体内 gap 引用）。 */
+export const USAGE_FLOOR = 61
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BUNDLE_FILE = path.join(REPO, 'lib', 'client.manager.bundle.js')
@@ -300,7 +342,7 @@ export function tokenProblems(defs, refs, registry = []) {
  *  ⚠️ 注释里的实测值是**时点快照**（会随批次变），别把它当契约；契约是"下限"本身。 */
 export const CLASS_FLOOR = 24          // 实测 30（时点 7117a40）
 export const RULE_FLOOR = 30           // 实测 52（时点：本批加入令牌规则之后）
-export const TOKEN_FLOOR = 4           // 实测 5（第一批颜色令牌）；**下限在这一批从 0 抬到 4** —— 兑现判据笔里那句承诺
+export const TOKEN_FLOOR = 7           // 实测 9（批3c；reviewer 建议按"~80%"惯例从 4 抬到 7）——下限只增
 
 const BUNDLE = fs.readFileSync(BUNDLE_FILE, 'utf8')
 const CAND = carrierCandidates(BUNDLE)
@@ -315,7 +357,7 @@ const DEFS = CARRIER ? extractTokenDefs(CARRIER) : []
 const REFS = CARRIER ? extractTokenRefs(CARRIER) : new Set()
 /** 全仓引用面（批2 起：引用大量落在 markup / JS 里，只扫载体等于看不见它们） */
 const REFS_ALL = extractTokenRefsAnywhere(BUNDLE)
-export const REF_FLOOR = 17                // 实测 17（时点：S3 批2；逐批只增）
+export const REF_FLOOR = 61                // 实测 61（批3c；从 17 抬上来 —— reviewer 指出"逐批只增"该体现在这里）
 
 test('①-0 载体边界必须**唯一**（fail-closed：不许静默绑到后面那个结束标记上）', (t) => {
   t.diagnostic('起始行 L' + (CAND.start + 1) + '（缩进 ' + JSON.stringify(CAND.indent) + '）· 结束标记候选 ' +
@@ -449,8 +491,10 @@ test('③-b 反证：把一处 JS 绑定改到**面板外**的元素 ⇒ 必须�
     'var outside = \'<div style="color:var(--tv-color-danger)"></div>\'',   // 面板外
   ].join('\n')
   const s3 = tvUsageSites(synthetic)
-  assert.equal(s3.problems.length, 1, '面板外的使用点必须报一条，实际=' + JSON.stringify(s3.problems))
-  assert.match(s3.problems[0], /L4/)
+  // ⚠️ 合成样本里没有 CSS 载体 ⇒ 会**另有一条**"取不到载体"的问题（fail-closed 的正当行为）；
+  //    所以这里断言"含 L4 的归属问题"，而不是"恰好一条"（把 fail-closed 的额外红当成噪声会写歪判据）。
+  assert.ok(s3.problems.some((p) => /L4/.test(p) && /无法证明在面板子树内/.test(p)),
+    '面板外的使用点必须点名到 L4 且给出归属原因，实际=' + JSON.stringify(s3.problems))
   // ★ 反证③（reviewer 的 I2 形态，最容易被下限蒙过去的一种）：**新增**一个"面板外的 JS 使用点"，
   //   且总数仍然 ≥ 下限 ⇒ 必须红，而且红的原因**不能**是下限 ⇒ 证明是**逐点判定**在起作用。
   const added = BUNDLE + "\nvar probeOut = document.getElementById('dsh-tavern-float-hint'); probeOut.style.color = 'var(--tv-color-danger)';\n"
@@ -462,6 +506,39 @@ test('③-b 反证：把一处 JS 绑定改到**面板外**的元素 ⇒ 必须�
   // 对照：**同样的新增行**若绑到面板**内**的元素 ⇒ 不该红（证明上一条不是"见到新增就红"）
   const addedIn = BUNDLE + "\nvar probeIn = document.getElementById('tavern-status'); probeIn.style.color = 'var(--tv-color-danger)';\n"
   assert.deepEqual(tvUsageSites(addedIn).problems, [], '绑到面板内元素的新增点不该红')
+})
+
+test('③-c 反证（形态③ 载体+作用域）：scoped 载体点 ⇒ 绿；选择器改成裸 `.t-card` ⇒ 必须红；定位不到选择器 ⇒ 必须红', (t) => {
+  const real = USAGE.sites.filter((s) => s.kind === 'carrier').length
+  t.diagnostic('形态③（载体内使用点）**真实流量**：' + real + ' 处（本笔 ≠ 0 —— 判据与首批真实点同笔落地）')
+  const END = "].join('');"
+  const FIX = (sel) => [
+    '    var TAVERN_CSS = [',
+    "      '" + sel + " .t-card{padding:var(--tv-space-2);border-radius:var(--tv-radius-md)}',",
+    '    ' + END,
+    'function panelHTML() {',
+    '  return \'<div id="t-x"></div>\'',
+    '}',
+  ].join('\n')
+  const okFix = tvUsageSites(FIX('#tavern-manager'))
+  assert.deepEqual(okFix.problems, [], 'scoped 载体点不该红，实际=' + JSON.stringify(okFix.problems))
+  assert.equal(okFix.sites.filter((s) => s.kind === 'carrier').length, 2, '两个令牌都该被算成 carrier 形态，实际=' + JSON.stringify(okFix.sites))
+  assert.equal(okFix.sites[0].anchor, '#tavern-manager .t-card', '必须把所在规则的选择器解析出来（供材料逐点对照）')
+  // 负反证①：同一条规则去掉作用域 ⇒ 必须红（这正是形态③ 要挡的：样式会泄漏到面板外）
+  const bareFix = tvUsageSites(FIX(''))
+  assert.equal(bareFix.problems.length, 2, '裸选择器下的两个载体点都该报，实际=' + JSON.stringify(bareFix.problems))
+  assert.match(bareFix.problems[0], /所在规则选择器\*\*不含\*\* #tavern-manager/)
+  // 负反证②：载体里**定位不到**选择器（少了 `{`）⇒ 同样必须红（fail-closed，不许默认放行）
+  const noSel = tvUsageSites([
+    '    var TAVERN_CSS = [',
+    "      'padding:var(--tv-space-2)',",
+    '    ' + END,
+    'function panelHTML() {',
+    '  return \'<div id="t-x"></div>\'',
+    '}',
+  ].join('\n'))
+  assert.equal(noSel.problems.length, 1, '定位不到选择器必须报一条，实际=' + JSON.stringify(noSel.problems))
+  assert.match(noSel.problems[0], /定位不到选择器/)
 })
 
 test('②-b 反证：把定义挪到 `:root` ⇒ 报红；作用域内 ⇒ 放行；引用未定义 ⇒ 报红；登记表漂移 ⇒ 报红', () => {
