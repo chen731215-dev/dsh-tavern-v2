@@ -163,8 +163,14 @@ const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex')
  * 为什么必须做：技能指针段有一条分支会把 `skillsRoot()` 的**绝对路径**拼进提示词
  * （`<DSH_HOME>/skills/<name>/SKILL.md`），而它是本次运行的 tmpdir ⇒ 不归一化的话
  * fixture 会（a）每次跑都不一样、（b）把本机绝对路径写进仓库（卫生闸门会拦，AGENTS §7.3）。
+ *
+ * ⚠️ **环境相关量不许冻结**（CI run #9 的真实翻车点）：
+ *   上面那条绝对路径还会让产物的**原始长度**随临时目录路径长度变化（本机 `C:\Users\…\Temp\…`
+ *   与 CI 的另一种形态长度不同）⇒ fixture 只冻**归一化后**的 `sha256` / `bytes`（环境无关），
+ *   而 `sectionSizes.card` / 原始长度只在**同一次运行内**比对（当场量、当场比）。
  */
-const normalize = (s) => String(s).split(TMP_HOME).join('<DSH_HOME>')
+const PLACEHOLDER = '<DSH_HOME>'
+const normalize = (s) => String(s).split(TMP_HOME).join(PLACEHOLDER)
 
 // ── 静态契约用的解析器：把两侧的「键名集合」抽出来比（不跑运行时）──
 // 为什么这条断言住在这个文件里：它守的是**同一道边界**（S2-C2 抽装配的入参契约），
@@ -213,11 +219,14 @@ function capture() {
     const s = normalize(raw)
     return {
       mode: c.mode, sid: c.sid, presetId: c.presetId,
-      rawLen: raw.length,                       // 与 sectionSizes.card 同一口径（未归一化）
-      bytes: Buffer.byteLength(s, 'utf8'),      // 归一化后的字节数（fixture 比的就是这个）
+      // ↓ 这两项是**环境无关**的（归一化后）→ 冻结进 fixture
+      bytes: Buffer.byteLength(s, 'utf8'),
       sha256: sha(s),
       cardOut: s,
-      _rawHadTmp: raw.includes(TMP_HOME),
+      // ↓ 这两项**只在本进程内比对**，不进 fixture（随临时目录路径长度变化）
+      rawLen: raw.length,
+      normLen: s.length,
+      tmpOcc: raw.split(TMP_HOME).length - 1,
     }
   })
   // sectionSizes 是"最近一轮"的快照（各段的 text() 回填）—— 这里正好是最后一条的
@@ -243,9 +252,24 @@ test('① 覆盖：每个可选段都非空（哨兵逐个可见）', () => {
   assert.ok(rp.cardOut.includes('本会话绑定了 skill：'), '★ 「挂了 skill 工具」那条分支没被覆盖')
   assert.ok(cr.cardOut.includes('本会话绑定了设定索引文件：'), '★ 「未挂 skill 工具」那条分支没被覆盖')
   // 非空跑：归一化必须真的动过东西（否则 normalize 是空操作，将来 tmp 路径会悄悄进 fixture）
-  assert.ok(got.captures.some((c) => c._rawHadTmp), '★ 没有任何一条产物含本机临时目录 —— 归一化判据空跑，请检查夹具')
+  assert.ok(got.captures.some((c) => c.tmpOcc >= 1), '★ 没有任何一条产物含本机临时目录 —— 归一化判据空跑，请检查夹具')
+  // ★ 环境无关的两条（CI run #9 的翻车点：以前冻的是这两项原始长度）：
+  //   ① `sectionSizes.card` 量的是**归一化之前**的产物 ⇒ 与"当场量到的原始长度"比，不冻数值；
+  const last = got.captures[got.captures.length - 1]
+  assert.equal(got.sectionSizes.card, last.rawLen, 'sectionSizes.card 必须等于**当场量到**的原始产物长度（同一次运行内比对）')
+  //   ② 原始 / 归一化的**字符**差必须正好等于「被替换的路径出现次数 × 长度差」——把归一化走了几次也钉住。
+  for (const cap of got.captures) {
+    assert.equal(
+      cap.rawLen - cap.normLen, cap.tmpOcc * (TMP_HOME.length - PLACEHOLDER.length),
+      '★ ' + cap.mode + ' 的「原始长度 − 归一化长度」与路径替换代数对不上（tmpOcc=' + cap.tmpOcc + '）',
+    )
+    assert.ok(cap.rawLen >= cap.normLen, '原始长度不可能小于归一化长度')
+  }
   assert.ok(got.sectionSizes.wb > 0, '★ sectionSizes.wb 为 0 ⇒ 世界书段在本轮是空的，这张网没覆盖到它')
-  assert.equal(got.sectionSizes.card, got.captures[got.captures.length - 1].rawLen, 'sectionSizes.card 必须等于最后一条产物的长度（未归一化口径）')
+  // 诊断行（进材料用）：CI 与本机的临时目录形态不同时，这一行能一眼看出差在哪
+  console.log('  [golden-rich] tmpdir=' + os.tmpdir() + '（基路径 len=' + TMP_HOME.length + '）'
+    + ' | 最后一条产物：原始长度=' + last.rawLen + ' 归一化后=' + last.normLen + ' 差值=' + (last.rawLen - last.normLen)
+    + ' | tmp 路径出现 ' + last.tmpOcc + ' 次 | sectionSizes.wb=' + got.sectionSizes.wb)
 })
 
 test('② 逐字节比对：两层夹具（roleplay / creative）都与 fixture 完全一致', () => {
@@ -253,9 +277,10 @@ test('② 逐字节比对：两层夹具（roleplay / creative）都与 fixture 
   if (process.env.UPDATE_GOLDEN === '1') {
     fs.mkdirSync(path.dirname(FIXTURE), { recursive: true })
     fs.writeFileSync(FIXTURE, JSON.stringify({
-      _note: '宿主侧 golden（富夹具）：tavern:card 在「所有可选段都非空」下的组装产物。更新方式：UPDATE_GOLDEN=1。',
+      _note: '宿主侧 golden（富夹具）：tavern:card 在「所有可选段都非空」下的组装产物（已归一化）。更新方式：UPDATE_GOLDEN=1。⚠️ 只冻环境无关量：原始长度（sectionSizes.card / rawLen）随临时目录路径长度变化，不冻结，改由测试内的一致性断言覆盖。',
       _generatedFrom: process.env.GOLDEN_FROM || '（未标注提交）',
-      ...got,
+      captures: got.captures.map(({ mode, sid, presetId, bytes, sha256, cardOut }) => ({ mode, sid, presetId, bytes, sha256, cardOut })),
+      sectionSizes: { wb: got.sectionSizes.wb, nsfw: got.sectionSizes.nsfw },
     }, null, 2) + '\n', 'utf8')
     console.log('  [golden-rich] 已写入 ' + path.relative(REPO, FIXTURE))
     return
@@ -272,7 +297,10 @@ test('② 逐字节比对：两层夹具（roleplay / creative）都与 fixture 
       '★ 「' + w.mode + '」产物变了（S2-C2 抽装配的富夹具回归网）：期望 ' + w.bytes + ' 字节 / 实际 ' + g.bytes + ' 字节',
     )
   }
-  assert.deepEqual(got.sectionSizes, want.sectionSizes, '体积快照变了（面板显示与预算判据都依赖它）')
+  assert.deepEqual(
+    { wb: got.sectionSizes.wb, nsfw: got.sectionSizes.nsfw }, want.sectionSizes,
+    '与环境无关的体积快照变了（sectionSizes.card 属环境相关量，已在测试①里当场比对，不冻结）',
+  )
 })
 
 test('③ 静态契约：assemble.js 解构出的依赖名集合 == index.js 调用点传入的键集合', () => {
