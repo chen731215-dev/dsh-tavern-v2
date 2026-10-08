@@ -228,14 +228,22 @@ export function loadClosureJudge() {
 
 // ════════════════════════════════════════════════════════════════════
 // 读数（模块加载时算一次）
+//   ★ 行尾口径：读入后**把 CRLF 归一成 LF** 再算一切。
+//     理由（实测，不是预防性猜测）：本仓 `core.autocrlf=true` ⇒ 同一个 blob 在**干净 clone / CI** 里
+//     会检成 CRLF，而本机工作树是 LF。不归一的话，段字节数会多出"每行 1 个 CR"（实测 45543 → 46026，
+//     差 +483 = 段行数），段/产物 sha 全变 ⇒ **在克隆里假红**（本笔正对照第一次跑就撞上了）。
+//     bundle 在仓库里的约定行尾是 LF（AGENTS §7.4），所以归一是"回到 blob 形态"，不是掩盖差异。
 // ════════════════════════════════════════════════════════════════════
-const SRC = fs.readFileSync(BUNDLE, 'utf8')
+const RAW = fs.readFileSync(BUNDLE, 'utf8')
+const SRC = RAW.replace(/\r\n/g, '\n')
+const EOL_NORMALIZED = RAW !== SRC
 const SEG = extractSegment(SRC)
 const { fn, product } = evaluateProduct(SEG.seg)
 const FP = fingerprintSet(SEG.seg)
 const HITS = hitReport(product, FP.values)
 
 test('① 段常数：行区间 / 行数 / 字节 / sha（配方写死"无尾随换行"）', (t) => {
+  t.diagnostic('行尾口径：本机读到 ' + (EOL_NORMALIZED ? 'CRLF（已归一成 LF）' : 'LF（无需归一）') + ' —— 归一后所有读数与冻结值可比')
   t.diagnostic('段 L' + SEG.from + '–' + SEG.to + ' · ' + SEG.lineCount + ' 行 · ' + SEG.seg.length + ' chars · ' +
     Buffer.byteLength(SEG.seg, 'utf8') + ' 字节 · sha ' + sha256(SEG.seg))
   assert.equal(SEG.from, FROZEN.segment.from, '段起点漂了')
