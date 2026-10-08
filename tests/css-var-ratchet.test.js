@@ -134,15 +134,32 @@ export function cssCarrierRange(bundleText) {
   return { from: start + 1, to: sameIndent[0] - 1 }
 }
 
+/** 从一行里取 `{` 之前的选择器（剥掉数组元素的引号/缩进/尾逗号）。 */
+function selectorOf(line, at) {
+  return line.slice(0, at).replace(/^[\s',]+/, '').trim()
+}
+
 /**
- * 载体里第 `i` 行**所在规则**的选择器：向上找最近的含 `{` 的行，取 `{` 之前的文本。
- * 找不到 ⇒ null（fail-closed —— 定位不到就不许当成"在作用域内"）。
+ * 载体里第 `i` 行**所在规则**的选择器 —— **回溯不许跨规则边界**。
+ * 规则（reviewer 在真载体形态上定的；载体实测：完整单行规则 50 / 未闭合(多行) 3 / 无 `{` 行 18）：
+ *   · 本行含 `{` ⇒ 用本行 `{` 之前的选择器（覆盖单行规则 **与** 多行规则的起始行）；
+ *   · 否则向上找：**中途遇到任何 `}` ⇒ 立刻 null**（说明本点在这条规则**外面**）；
+ *     遇到**未闭合**的 `{`（多行规则）才是我们的选择器。
+ * ⚠️ 为什么必须用 `}` 判死（本判据在 `320ca06` 上被真载体证伪过）：只找"最近的含 `{` 的行"时，
+ *    一旦某条规则的 `{` 被改成 `;`（或任何原因定位不到），回溯会**跨过若干完整规则**、
+ *    绑到一条**不相干**的选择器上（实测绑到 `'#tavern-manager{--tv-color…}'`），
+ *    只要那条也含 `#tavern-manager` 就"证明通过"⇒ **假绿**。
+ *    ⇒ 与"载体结束标记必须唯一"同族：**证据必须来自这个点自己所在的结构**。
+ *    回溯类判据尤其容易出这种"跨结构取证"，补夹具时要用**真载体形态**（上面有别的规则/干扰项），
+ *    不能用"上面什么都没有"的合成样本 —— 后者恰好绕过这个形态、给出虚假信心。
  */
 export function enclosingCarrierSelector(lines, i, range) {
-  for (let k = i; k >= range.from; k--) {
+  const own = lines[i].indexOf('{')
+  if (own >= 0) return selectorOf(lines[i], own)
+  for (let k = i - 1; k >= range.from; k--) {
+    if (lines[k].includes('}')) return null          // 先撞到规则闭合 ⇒ 本点在这条规则外面（fail-closed）
     const at = lines[k].indexOf('{')
-    if (at < 0) continue
-    return lines[k].slice(0, at).replace(/^[\s',]+/, '').trim()
+    if (at >= 0) return selectorOf(lines[k], at)     // 未闭合（否则上面的 `}` 检查会先返回 null）
   }
   return null
 }
@@ -528,17 +545,34 @@ test('③-c 反证（形态③ 载体+作用域）：scoped 载体点 ⇒ 绿；
   const bareFix = tvUsageSites(FIX(''))
   assert.equal(bareFix.problems.length, 2, '裸选择器下的两个载体点都该报，实际=' + JSON.stringify(bareFix.problems))
   assert.match(bareFix.problems[0], /所在规则选择器\*\*不含\*\* #tavern-manager/)
-  // 负反证②：载体里**定位不到**选择器（少了 `{`）⇒ 同样必须红（fail-closed，不许默认放行）
+  // 负反证②：载体里**定位不到**选择器（缺 `{`）⇒ 同样必须红（fail-closed，不许默认放行）
+  //   ★ 夹具必须是**真载体形态**（上面有别的完整规则作干扰），否则恰好绕过"跨结构取证"那个洞 ——
+  //     这一条正是 `320ca06` 被真载体证伪后补的：原来那份"上面什么都没有"的合成样本给了虚假信心。
   const noSel = tvUsageSites([
     '    var TAVERN_CSS = [',
-    "      'padding:var(--tv-space-2)',",
+    "      '#tavern-manager{--tv-color-danger:#e74c3c}',",              // 干扰项：一条完整单行规则（含作用域！）
+    "      '#tavern-manager .t-list;gap:var(--tv-space-xs)',",           // 本点所在行：`{` 缺失
     '    ' + END,
     'function panelHTML() {',
     '  return \'<div id="t-x"></div>\'',
     '}',
   ].join('\n'))
-  assert.equal(noSel.problems.length, 1, '定位不到选择器必须报一条，实际=' + JSON.stringify(noSel.problems))
-  assert.match(noSel.problems[0], /定位不到选择器/)
+  assert.equal(noSel.problems.length, 1, '缺 `{` 时必须恰好报一条（归属定位不到），实际=' + JSON.stringify(noSel.problems))
+  assert.ok(/定位不到选择器/.test(noSel.problems[0]) && /--tv-space-xs/.test(noSel.problems[0]),
+    '缺 `{` 必须报"定位不到选择器"并点名令牌（**不许**绑到上面那条 `#tavern-manager{--tv-color…}` 上蒙过去），实际=' + JSON.stringify(noSel.problems))
+  // 正对照：**多行未闭合规则**（真载体里 L511 就是这种）⇒ 必须绿 —— 收紧不能把合法的收掉
+  const multi = tvUsageSites([
+    '    var TAVERN_CSS = [',
+    "      '#tavern-manager .t-tabbar{',",
+    "      '  gap:var(--tv-space-xs)',",
+    "      '}',",
+    '    ' + END,
+    'function panelHTML() {',
+    '  return \'<div id="t-x"></div>\'',
+    '}',
+  ].join('\n'))
+  assert.deepEqual(multi.problems, [], '多行未闭合规则的载体点必须绿（正对照），实际=' + JSON.stringify(multi.problems))
+  assert.equal(multi.sites.find((s) => s.kind === 'carrier')?.anchor, '#tavern-manager .t-tabbar', '必须回溯到那条多行规则的选择器')
 })
 
 test('②-b 反证：把定义挪到 `:root` ⇒ 报红；作用域内 ⇒ 放行；引用未定义 ⇒ 报红；登记表漂移 ⇒ 报红', () => {
