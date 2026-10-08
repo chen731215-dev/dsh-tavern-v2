@@ -19,7 +19,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   CLIENT_SRC, checkTagBalance, checkDanglingIds, checkCardDepth,
-  collectJsIds, collectMarkupIds, extractMarkupGroups, blankTemplateExpr, VOID_TAGS,
+  collectJsIds, collectMarkupIds, extractMarkupGroups, extractMarkupGroupsEx,
+  checkTagBalanceGroups, blankTemplateExpr, VOID_TAGS, readRowOpenTable, resolveRowEmitter,
 } from '../tools/check-client-integrity.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
@@ -247,4 +248,179 @@ test('④ 当前 bundle 三件套全绿，且工具真的扫到了东西', () =>
   const cards = checkCardDepth(src)
   assert.ok(cards.total >= 12, '面板至少 12 张一级卡片，实际 ' + cards.total)
   assert.equal(cards.ok, true, '有卡片层级不一致：' + JSON.stringify(cards.bad.slice(0, 5)))
+})
+
+// ════════════════════════════════════════════════════════════════
+// ⑥ S3 基元（`tvRowOpen` / `tvRowClose`）：**要么还原、要么响亮报错**，不许静默丢组
+//
+// 为什么单列一节（task-25 笔2）：`panelHTML` 里 39 个 `<div class="t-row" …>` 元素从字面量
+// 迁成了基元调用。而 `extractMarkupGroups` 只认「`[` + ≥3 个纯字面量 + `]`」⇒ 元素是**调用**
+// 就把**整组**丢掉：② 的 `scanned` 610→0、③ 的 `total` 12→0（本仓实测；Lead 独立复现：
+// **只把数组里一个元素换成调用**就足以让两条判据整体归零）。
+// 工具因此新增"按同源字面量表静态还原基元"的解析 —— 本节就是它的非空跑对照：
+//   ① 纯字面量数组仍按**旧路径**正确解析（正对照：没把老路拆了）
+//   ② 基元调用被还原，且**与字面量写法读数完全一致**（等价性）
+//   ③ 动态实参 ⇒ 响亮报错并点名行（不许"认不出就当没有"）
+//   ④ 表缺失 / 名字对不上 ⇒ 同样响亮报错；`vacuous` 语义**不许**被动过
+// ════════════════════════════════════════════════════════════════
+
+/** 合成样本：**全字面量**形态的面板骨架（⑥-a 的正对照；⑥-b 的等价性对照）。 */
+function literalPanelFixture() {
+  return [
+    'function panelHTML() {',
+    '  return [',
+    `    '<div id="tavern-manager">',`,
+    `    '    <div class="t-row" style="margin-top:8px">',`,
+    `    '      <span>hi</span>',`,
+    `    '    </div>',`,
+    `    '  </div>',`,
+    "  ].join('');",
+    '}',
+  ].join('\n')
+}
+
+/** 「一个字面量元素 + 一个基元元素」的最小合成样本（其余全字面量）。 */
+export function minimalEmitterFixture() {
+  return [
+    'function panelHTML() {',
+    '  var TV_ROW_OPEN = { 4: { \'margin-top:8px\': \'    <div class="t-row" style="margin-top:8px">\' } };',
+    '  return [',
+    `    '<div id="tavern-manager">',`,
+    `    tvRowOpen(4, 'margin-top:8px'),`,
+    `    '      <span>hi</span>',`,
+    `    tvRowClose(),`,
+    `    '  </div>',`,
+    "  ].join('');",
+    '}',
+  ].join('\n')
+}
+
+test('⑥-a 正对照：纯字面量数组仍按**旧路径**解析（没把老路拆了）', (t) => {
+  const src = literalPanelFixture()
+  const ex = extractMarkupGroupsEx(src)
+  const bal = checkTagBalanceGroups(src)
+  t.diagnostic('纯字面量：groups=' + ex.groups.length + ' · problems=' + ex.problems.length + ' · scanned=' + bal.scanned)
+  assert.equal(ex.groups.length, 1, '纯字面量数组必须仍被认成 1 组')
+  assert.deepEqual(ex.problems, [], '纯字面量不该产生任何 problem')
+  assert.ok(bal.scanned >= 4, '旧路径要真的扫到标签，实际 ' + bal.scanned)
+  assert.equal(bal.ok, true, '合成样本本身是配平的：' + JSON.stringify(bal.errors))
+})
+
+test('⑥-b 基元调用被还原，且与**字面量写法读数完全一致**（等价 + 只换一个元素就够）', (t) => {
+  const lit = literalPanelFixture()
+  const emi = [
+    'function panelHTML() {',
+    '  var TV_ROW_OPEN = { 4: { \'margin-top:8px\': \'    <div class="t-row" style="margin-top:8px">\' } };',
+    '  return [',
+    `    '<div id="tavern-manager">',`,
+    `    tvRowOpen(4, 'margin-top:8px'),`,
+    `    '      <span>hi</span>',`,
+    `    tvRowClose(),`,
+    `    '  </div>',`,
+    "  ].join('');",
+    '}',
+  ].join('\n')
+  const a = checkTagBalanceGroups(lit)
+  const b = checkTagBalanceGroups(emi)
+  const c = checkCardDepth(emi)
+  t.diagnostic('字面量：groups=' + a.groups + ' scanned=' + a.scanned + ' ｜ 基元：groups=' + b.groups +
+    ' scanned=' + b.scanned + ' problems=' + b.problems.length)
+  assert.equal(b.groups, 1, '★ 基元调用必须被还原成组（0 组就是"整组丢掉"，正是要挡的形态）')
+  assert.deepEqual(b.problems, [], '能解析就不该报 problem：' + JSON.stringify(b.problems))
+  assert.equal(b.groups, a.groups, '基元写法的组数必须与字面量写法一致')
+  assert.equal(b.scanned, a.scanned, '★ 基元写法扫到的标签数必须与字面量写法**逐数相同**')
+  assert.equal(b.ok, true, '还原后的 markup 仍是配平的：' + JSON.stringify(b.errors))
+  assert.equal(c.vacuous, false, '还原后 ③ 也不该空跑')
+  // mutate 自证：把那个元素改回"读不懂"的形态 ⇒ 读数必须**变**（否则上面那些"相等"毫无信息量）
+  const broken = emi.replace(`tvRowOpen(4, 'margin-top:8px')`, 'tvRowOpen(4, someVar)')
+  assert.notEqual(broken, emi, 'mutate 必须真的发生')
+  assert.notEqual(checkTagBalanceGroups(broken).problems.length, 0, '坏样本必须报 problem（对照）')
+})
+
+test('⑥-c ★ 反证①：动态实参（`tvRowOpen(4, someVar)`）⇒ 响亮报错并点名行', (t) => {
+  const good = minimalEmitterFixture()
+  const bad = good.replace(`tvRowOpen(4, 'margin-top:8px')`, 'tvRowOpen(4, someVar)')
+  assert.notEqual(bad, good, 'mutate 必须真的发生')
+  const g = checkTagBalanceGroups(good)
+  const b = checkTagBalanceGroups(bad)
+  t.diagnostic('好样本 problems=' + g.problems.length + ' ｜ 动态实参 problems=' + b.problems.length +
+    (b.problems[0] ? ' · 第 ' + b.problems[0].line + ' 行：' + b.problems[0].why : ''))
+  assert.deepEqual(g.problems, [], '好样本不该报')
+  assert.ok(b.problems.length >= 1, '★ 动态实参必须响亮报错（不许静默丢组）')
+  assert.match(b.problems[0].why, /tvRowOpen/, '报错要点名是哪个基元：' + b.problems[0].why)
+  assert.ok(b.problems[0].line > 0, '要能给出行号方便定位，实际 ' + b.problems[0].line)
+  assert.equal(b.ok, false, '有 problem 时 ok 必须为 false（fail-closed）')
+  // 同一份源码在 ③ 上也要报（两条网共用提取器）
+  assert.ok(checkCardDepth(bad).problems.length >= 1, '③ 也必须看见同一条 problem')
+})
+
+test('⑥-d ★ 反证②：表缺失 / 名字对不上 ⇒ 同样响亮报错（不许"认不出就当没有"）', (t) => {
+  const noTable = minimalEmitterFixture().replace(/^.*var TV_ROW_OPEN.*\n/m, '')
+  const noTableR = checkTagBalanceGroups(noTable)
+  t.diagnostic('表缺失：groups=' + noTableR.groups + ' · problems=' + JSON.stringify(noTableR.problems))
+  assert.ok(noTableR.problems.length >= 1, '★ 表没了必须报 problem')
+  assert.match(noTableR.problems[0].why, /TV_ROW_OPEN/, '报错要点名表：' + noTableR.problems[0].why)
+
+  // 名字对不上（第三种形态）：仍然不许静默 —— 走"markup 数组里出现读不懂的调用"那条
+  const otherName = minimalEmitterFixture().replace('tvRowOpen(4,', 'tvRowCell(4,')
+  const otherR = checkTagBalanceGroups(otherName)
+  t.diagnostic('陌生调用名：groups=' + otherR.groups + ' · problems=' + JSON.stringify(otherR.problems))
+  assert.ok(otherR.problems.length >= 1, '★ markup 数组里的陌生调用必须报 problem，绝不许静默少一组')
+  assert.match(otherR.problems[0].why, /调用元素/, '报错要说清是"读不懂的调用元素"：' + otherR.problems[0].why)
+
+  // 正对照：同一份源码未改写 ⇒ 不报
+  assert.deepEqual(checkTagBalanceGroups(minimalEmitterFixture()).problems, [], '未改写的样本不该报')
+})
+
+test('⑥-e ★ 反证③：`vacuous` 的语义**不许被动过**（空跑仍判失败）', () => {
+  // 形态不是"数组拼装"⇒ 提取器抓不到 ⇒ 与迁移前完全一样地标记空跑
+  const notAnArray = "const html = '<div data-tv-tab=\"a\"></div>'"
+  assert.equal(checkCardDepth(notAnArray).vacuous, true, '抓不到卡片必须仍是空跑（语义不许动）')
+  assert.equal(checkTagBalanceGroups(notAnArray).vacuous, true, '抓不到分组必须仍是空跑')
+  // 基元坏样本：组被丢掉 ⇒ vacuous 仍然照旧为真（**不因为新增了 problems 就改口径**）
+  const bad = minimalEmitterFixture().replace(`tvRowOpen(4, 'margin-top:8px')`, 'tvRowOpen(4, someVar)')
+  const r = checkTagBalanceGroups(bad)
+  assert.equal(r.groups, 0, '坏样本确实丢组')
+  assert.equal(r.vacuous, true, '★ 丢组 ⇒ vacuous 仍必须为真（旧语义）；新增的 problems 是**额外**的一道，不是替换')
+})
+
+// ════════════════════════════════════════════════════════════════
+// ⑦ ★ 覆盖下限（常驻棘轮）：把"网静默变小"变成机器看得见的红灯
+//
+// 为什么需要（审核方 2026-10 指出的形状）：`vacuous` 只兜**极端**（0 组 / 0 标签）⇒
+// **中间缩水是静默的**：`scanned 610 → 300`、`total 12 → 3` 时 `vacuous` 仍是 `false`
+// ⇒ 红灯不亮、网却小了一半。扩网只补**这一次**；下次有人再往数组里塞调用仍会重演。
+// ⇒ 对**工具自身的覆盖指标**设**下限**（先测量再写死；合法扩面时**同笔抬下限**，口径"逐批只增"）。
+//   先例：USAGE_FLOOR / TOKEN_FLOOR / REF_FLOOR / MIN_BLOB_HEADS。
+//
+// 下限来源（**迁移前**实测，时点 = task-25 笔2 落笔前，tip `da2eabc`）：
+//   `scanned 610 / groups 1 · total 12 / groups 1`（另有第三方独立复现：Lead 在干净 worktree @da2eabc 复算一致）
+// 复算命令：`node tools/check-client-integrity.mjs`（打印"② … 共扫描 N 个标签 / ③ 发现 M 个带 data-tv-tab 的元素"）
+// ════════════════════════════════════════════════════════════════
+export const COVERAGE_FLOORS = {
+  scanned: 610,   // ② 标签配平：扫到的标签数下限（迁移前实测 610）
+  groups: 1,      // ② 认出的 markup 数组分组数下限
+  cards: 12,      // ③ 卡片深度：带 data-tv-tab 的元素数下限（迁移前实测 12）
+}
+
+test('⑦ 覆盖下限：②③ 的覆盖数不得低于迁移前实测值（含 diagnostics 四个数）', (t) => {
+  const src = fs.readFileSync(REAL_CLIENT, 'utf8')
+  const bal = checkTagBalanceGroups(src)
+  const depth = checkCardDepth(src)
+  t.diagnostic('覆盖读数：scanned=' + bal.scanned + ' / groups=' + bal.groups + ' / vacuous=' + bal.vacuous +
+    ' ｜ total=' + depth.total + ' / groups=' + depth.groups + ' / vacuous=' + depth.vacuous +
+    ' ｜ problems=' + bal.problems.length + '/' + depth.problems.length)
+  t.diagnostic('下限来源（迁移前实测）：scanned>=' + COVERAGE_FLOORS.scanned + ' · groups>=' + COVERAGE_FLOORS.groups +
+    ' · cards>=' + COVERAGE_FLOORS.cards + '（复算：node tools/check-client-integrity.mjs）')
+  assert.deepEqual(bal.problems, [], '★ 基元解析失败 ⇒ ② 的覆盖已不可信：' + JSON.stringify(bal.problems))
+  assert.deepEqual(depth.problems, [], '★ 基元解析失败 ⇒ ③ 的覆盖已不可信：' + JSON.stringify(depth.problems))
+  assert.ok(bal.scanned >= COVERAGE_FLOORS.scanned,
+    '★ ② 覆盖缩水：scanned ' + bal.scanned + ' < 下限 ' + COVERAGE_FLOORS.scanned +
+    '（迁移前实测值）—— 有元素从覆盖里掉出去了（静默缩水不会有其它红灯）')
+  assert.ok(bal.groups >= COVERAGE_FLOORS.groups, '★ ② 分组数低于下限：' + bal.groups)
+  assert.ok(depth.total >= COVERAGE_FLOORS.cards,
+    '★ ③ 覆盖缩水：total ' + depth.total + ' < 下限 ' + COVERAGE_FLOORS.cards +
+    '（迁移前实测值）—— 卡片从覆盖里掉出去了')
+  assert.equal(bal.vacuous, false, '② 不许空跑')
+  assert.equal(depth.vacuous, false, '③ 不许空跑')
 })
