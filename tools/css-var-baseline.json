@@ -33,5 +33,11 @@
     "t-tabbar"
   ],
   "classRemovals": [],
-  "tokens": []
+  "tokens": [
+    "--tv-color-accent",
+    "--tv-color-danger",
+    "--tv-color-on-accent",
+    "--tv-color-success",
+    "--tv-color-warn"
+  ]
 }

@@ -158,6 +158,7 @@ if (isMain) {
   const { increased, decreased, hardZeroViolations } = compare(actual, budget)
   console.log('样式预算校验（实测 / 预算）')
   for (const k of Object.keys(budget)) {
+    if (typeof budget[k] !== 'number') continue     // 例如 `_note`：人读的说明，不参与棘轮
     const a = actual[k]
     const b = budget[k]
     const flag = a > b ? '❌ 超标' : a < b ? '↓ 可下调' : '  ok'
