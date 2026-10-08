@@ -497,6 +497,13 @@ test('对照臂：settlement 判据能对「缺 stream 的旧形态」变红', (
 
 const INDEX_SRC = fs.readFileSync(path.join(import.meta.dirname, '..', 'lib', 'index.js'), 'utf8')
 
+// ★ 第三块搬迁（task-7）：这两条路由已从 lib/index.js 搬进 lib/server/routes.js ⇒ 下面那条切片
+//   **跟到新文件**（否则 indexOf 返回 -1、切片失效 —— 这正是 `slice-anchors` ④ 那道门禁盯着的东西）。
+//   断言**不削弱**：它要的是"这条路由走统一决策函数 + 返回 greeting-already-present"，与文件位置无关。
+//   搬完实测（值 + 口径）：新切片 **2136 字符**（旧 lib/index.js 上 2217，差值 −81 = 整块去掉 2 空格缩进），
+//   首 40 字与尾 40 字结构一致，两个断言目标（insertGreetingForSession( 与 'greeting-already-present'）都在。
+const ROUTES_SRC = fs.readFileSync(path.join(import.meta.dirname, '..', 'lib', 'server', 'routes.js'), 'utf8')
+
 test('护栏：写入点必须过闸门，且显式给 stream: []', () => {
   const start = INDEX_SRC.indexOf('function appendGreetingToSessionEnd(')
   const end = INDEX_SRC.indexOf('function insertGreetingForSession(', start)
@@ -547,11 +554,11 @@ test('护栏：apply() 必须登记活会话，否则手动注入找不到 Agent
   assert.ok(!src.includes('session.append('), '★ 登记监听里不许再写日志（写就是播种，会弄坏会话）')
 })
 
-test('护栏：注入路由必须走统一决策函数并返回 greeting-already-present', () => {
-  const start = INDEX_SRC.indexOf("path: '/api/tavern/greeting/insert'")
-  const end = INDEX_SRC.indexOf("path: '/api/tavern/state'", start)
-  assert.ok(start >= 0 && end > start, '切片范围异常（路由被删了？）')
-  const src = INDEX_SRC.slice(start, end)
+test('护栏：注入路由必须走统一决策函数并返回 greeting-already-present（已随第三块搬到 routes.js）', () => {
+  const start = ROUTES_SRC.indexOf("path: '/api/tavern/greeting/insert'")
+  const end = ROUTES_SRC.indexOf("path: '/api/tavern/state'", start)
+  assert.ok(start >= 0 && end > start, '切片范围异常（路由又搬走了？）')
+  const src = ROUTES_SRC.slice(start, end)
   assert.ok(src.includes('insertGreetingForSession('), '路由必须走统一决策函数（判重才有地方落地）')
   assert.ok(src.includes("'greeting-already-present'"), '必须返回 greeting-already-present（面板靠它改提示）')
 })

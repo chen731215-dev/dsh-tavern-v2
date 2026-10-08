@@ -934,9 +934,14 @@ test('P0-6 成人向提示段：默认（关 + 空正文）装配结果里一个
 
 test('P0-6 成人向提示段：源码里必须"有槽位、过闸门、默认空"', () => {
   const src = fs.readFileSync(path.join(fileURLToPath(new URL('..', import.meta.url)), 'lib', 'index.js'), 'utf8')
+  // ★ 第三块搬迁（task-7）：`/api/tavern/state` 这条路由（含它的开关写法与响应字段）已从 lib/index.js
+  //   搬进 lib/server/routes.js ⇒ **这两条断言跟到新文件**。断言不削弱：它要的是"这条路由接受开关、
+  //   响应里回这个字段"，与文件位置无关。而 `nsfwEnabled: false, nsfwPrompt: ''`（readState 的默认值）
+  //   与 `tavern:nsfw` 槽位**仍在 index.js**（AGENTS §5.1 钉住的）—— 下面那几条继续用 src。
+  const routesSrc = fs.readFileSync(path.join(fileURLToPath(new URL('..', import.meta.url)), 'lib', 'server', 'routes.js'), 'utf8')
   assert.ok(src.includes("name: 'tavern:nsfw'"), 'tavern:nsfw 槽位必须存在')
-  assert.ok(/if \(typeof body\.nsfwEnabled === 'boolean'\)/.test(src), 'state 路由要接受开关')
-  assert.ok(/nsfwEnabled: state\.nsfwEnabled/.test(src), '响应里要回这个字段（面板回填用）')
+  assert.ok(/if \(typeof body\.nsfwEnabled === 'boolean'\)/.test(routesSrc), 'state 路由要接受开关（已随第三块搬到 routes.js）')
+  assert.ok(/nsfwEnabled: state\.nsfwEnabled/.test(routesSrc), '响应里要回这个字段（面板回填用；同上，已随第三块搬走）')
   assert.ok(/nsfwEnabled: false, nsfwPrompt: ''/.test(src), '★ 默认必须是「关 + 空正文」')
   // 槽位必须过两道判据（会话隔离 + 统一生效范围）
   const start = src.indexOf("name: 'tavern:nsfw'")
