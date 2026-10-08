@@ -296,7 +296,10 @@ test('③ 清理：临时 DSH_HOME 不在用户真实目录里，且夹具没被
   assert.ok(!TMP_HOME.includes('.dsh' + path.sep + '.agent-presets'), '★ 夹具建到用户真实预设目录了')
 })
 
-test('⑤⑥⑦ 分支真跑：handler 返回 thenable 的两种情形 + ⑥ 的两个桶（走真 hit()，不是合成记录）', async (t) => {
+// ★ `{ timeout }`：这条测试自己也要**有界**。反证实测：把 handler 界改成"永不触发"时，
+//   若没有这个超时，整份文件会**挂住**（不是干净报红）；加上它 ⇒ node:test 干净判红
+//   （"test timed out"），把"⑦ 的分支坏了"变成一条可读的红。
+test('⑤⑥⑦ 分支真跑：handler 返回 thenable 的两种情形 + ⑥ 的两个桶（走真 hit()，不是合成记录）', { timeout: 15000 }, async (t) => {
   // ★ 这条是审核方点名的"判据自己没被执行过"的补课：④ 只把**合成记录**喂给 classifySmoke()，
   //   而仓库里没有任何测试真的走进 `hit()` 里那条"handler 返回 thenable"的分支
   //   ⇒ 少写一个 const 也没人发现（`b2be34b` 就是这么挂的：`HANDLER_MS` 未声明、⑦ 变成死代码、
