@@ -433,6 +433,8 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 
 **顺序建议：S1 → S4①（先有安全网）→ S2 → S3。**
 
+> 📌 **接手的人从这里开始**：最新工作交接见 [HANDOFF-2026-10-08.md](./HANDOFF-2026-10-08.md)（现状快照 / 待办顺序 / 验证方法；规范本体仍以本文件为准）。
+
 ### 自检三件套（`tools/check-client-integrity.mjs`，已实现）
 
 用法：`npm run check:integrity`。改完客户端 UI 后建议顺手跑一次。
