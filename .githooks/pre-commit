@@ -1,22 +1,107 @@
 #!/bin/sh
-# 提交前拦一道：不允许把凭据 / 会话记录 / 本机路径提交进仓库。
+# 提交前拦一道：不允许把凭据 / 会话记录 / 本机路径 / BOM 提交进仓库。
 # 启用（每个克隆做一次）：git config core.hooksPath .githooks
 #
-# ★ 找不到 node 时**放行并告警**（fail-open）：本仓的 node 是内置运行时，不在 PATH 上很常见；
-#   此时本地这道闸门降级，由 CI 步骤 npm run check:hygiene 兜底（那才是强制点）。
-#   为什么不用 exit 1：那会把没配 PATH 的人**所有**提交都拦死，反而逼人去用 --no-verify。
+# ★ node 定位（2026-10-09 起）：**先探测**，三个候选都找不到才**显著失败** —— 不再静默放行。
+#
+#   为什么改（实测成因，不是纸面风险）：本仓的 node 是**内置运行时**，不在 PATH 上很常见
+#   （本机实测：`command -v node` 取不到，而 node 就在 [$DSH_HOME]/dsh-runtimes/*/dependencies/node/bin/ 下，
+#     且没有设 DSH_NODE）。旧版钩子遇到这种情况直接 `exit 0` ⇒ 每个提交都打印一行"已跳过"然后**放行**，
+#   于是本地这道闸门长期是**关闭**的而没人发现（CI 的 `check:hygiene` 仍是强制点，但它只在推之后跑）。
+#
+#   探测顺序：① $DSH_NODE（显式覆盖；**设了就必须有效**，否则报错而不是悄悄换别的）
+#            ② 内置运行时：$DSH_HOME（缺省 $HOME/.dsh）/dsh-runtimes/*/dependencies/node/bin/node[.exe]
+#            ③ PATH 上的 node（`command -v node`）
+#   ⚠️ 为什么内置运行时排在 PATH 之前：要与仓/测试用的一致；PATH 上可能是任意第三方的旧 node。
+#   ⚠️ 路径形态：Git Bash 里 $HOME 是 /c<home> 而 $DSH_HOME 可能是 Windows 形式（<home>）。
+#      两种形态都要能命中 ⇒ 先试原样，再试转成 POSIX 形式（cygpath 优先，没有就纯 sh 手改）。
+#      实测（_scratch/hook-probe/pathform.sh）：Windows 形式字面量 / $HOME glob / cygpath 转换 / 手改转换**四种都能命中**，
+#      但仍然都试一遍 —— 换机器、换 shell 就不一定了。
+#
+# ★ 确实没有 node 时怎么提交：`SKIP_HYGIENE=1 git commit ...`（**显式**跳过，会被打印出来）。
+#   为什么不做成默认放行：那正是本次修的缺陷；为什么留逃生门：否则会逼人去用 --no-verify —— 那跳过的是**所有**钩子，
+#   比显式跳过这一道更难审计。
+#
+# ⚠️ 实现注意：探测**不许**包在 `$( )` 里 —— 命令替换是子 shell，"试过哪些位置"（TRIED）的累积会留在子 shell 里、
+#    父 shell 打印出来是空的（实测踩过）。所以这里全程用「同一层 shell + 一个 FOUND 变量」，不做捕获。
 
-if command -v node >/dev/null 2>&1; then
-  NODE=node
-elif [ -n "$DSH_NODE" ] && [ -x "$DSH_NODE" ]; then
-  NODE="$DSH_NODE"
+# 把 Windows 形式路径转成 POSIX 形式（cygpath 优先，没有就纯 sh 手改）。非 Windows 形式原样返回。
+to_posix() {
+  case "$1" in
+    [A-Za-z]:[\\/]*)
+      if command -v cygpath >/dev/null 2>&1; then
+        _c=$(cygpath -u "$1" 2>/dev/null)
+        if [ -n "$_c" ]; then printf '%s\n' "$_c"; return 0; fi
+      fi
+      _d=$(printf '%s' "$1" | cut -c1 | tr 'A-Z' 'a-z')
+      _r=$(printf '%s' "$1" | cut -c4- | tr '\\' '/')
+      printf '/%s/%s\n' "$_d" "$_r"
+      ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# 试一个候选路径：命中就设 FOUND、返回 0；否则把"试过的位置"追加到 TRIED、返回 1。
+TRIED=""
+FOUND=""
+try_path() {
+  [ -n "$1" ] || return 1
+  if [ -x "$1" ]; then FOUND="$1"; return 0; fi
+  _p=$(to_posix "$1")
+  if [ "$_p" != "$1" ] && [ -x "$_p" ]; then FOUND="$_p"; return 0; fi
+  TRIED="$TRIED
+             · $1"
+  return 1
+}
+
+# ── 探测（同一层 shell，不用命令替换；见文件头那条 ⚠️）────────────────────────
+if [ -n "${DSH_NODE:-}" ]; then
+  # ① 显式覆盖：设了就必须有效 —— 不猜、不悄悄换别的（否则你以为它在生效，其实没有）
+  if ! try_path "$DSH_NODE"; then
+    echo "[pre-commit] ❌ DSH_NODE 已设置但不可执行：$DSH_NODE" >&2
+    echo "             它是**显式覆盖**、优先于其它候选 ⇒ 这里直接失败，不悄悄换别的候选。" >&2
+    echo "             处置：改对路径 / unset DSH_NODE 让钩子自己探测 / 确需跳过用 SKIP_HYGIENE=1。" >&2
+    exit 1
+  fi
 else
-  echo "[pre-commit] ⚠️ 找不到 node，本地仓库卫生检查已跳过（CI 的 check:hygiene 仍会强制）。"
-  echo "            想本地生效：把 node 加进 PATH，或设置 DSH_NODE 指向 node 可执行文件。"
-  exit 0
+  # ② 内置运行时（$DSH_HOME 缺省 $HOME/.dsh）
+  for _base in "${DSH_HOME:-}" "$HOME/.dsh"; do
+    [ -n "$_base" ] || continue
+    _b=$(to_posix "$_base")
+    for _cand in "$_b"/dsh-runtimes/*/dependencies/node/bin/node "$_b"/dsh-runtimes/*/dependencies/node/bin/node.exe; do
+      try_path "$_cand" && break
+    done
+    [ -n "$FOUND" ] && break
+  done
+  # ③ PATH
+  if [ -z "$FOUND" ] && command -v node >/dev/null 2>&1; then FOUND=$(command -v node); fi
+  if [ -z "$FOUND" ]; then
+    TRIED="$TRIED
+             · PATH 上的 node（command -v node）"
+  fi
 fi
 
-"$NODE" tools/check-repo-hygiene.mjs --staged || {
+# ── 找不到 ⇒ 响亮失败（除非显式跳过）────────────────────────────────────────
+if [ -z "$FOUND" ]; then
+  if [ "${SKIP_HYGIENE:-}" = "1" ]; then
+    echo "[pre-commit] ⚠️ 找不到 node，且 SKIP_HYGIENE=1 ⇒ 本地仓库卫生检查被**显式**跳过。"
+    echo "             （CI 的 check:hygiene 仍会强制；本机若长期如此，建议 export DSH_NODE=<node 路径>）"
+    echo "             试过：$TRIED"
+    exit 0
+  fi
+  echo "[pre-commit] ❌ 找不到 node ⇒ 本地仓库卫生检查**无法执行**（不再静默放行）。" >&2
+  echo "             试过：$TRIED" >&2
+  echo "             处置（任选其一）：" >&2
+  echo "               ① export DSH_NODE=<node 可执行文件路径>   # 最省事，钩子优先用它" >&2
+  echo "               ② 把 node 加进 PATH（本仓 node 通常是内置运行时，默认不在 PATH 上）" >&2
+  echo "               ③ 本机确实没有 node ⇒ 显式跳过这一次：SKIP_HYGIENE=1 git commit …" >&2
+  echo "             （别用 --no-verify：那会连所有钩子一起跳过，且不留痕）" >&2
+  exit 1
+fi
+
+# ── 跑检查（强度不变：仍是 check-repo-hygiene 的 --staged 模式）──────────────
+echo "[pre-commit] 仓库卫生检查（--staged，node = $FOUND）"
+"$FOUND" tools/check-repo-hygiene.mjs --staged || {
   echo ""
   echo "提交被拦下：见上面的仓库卫生报告。清理后再提交（或 git commit --no-verify，不推荐）。"
   exit 1
