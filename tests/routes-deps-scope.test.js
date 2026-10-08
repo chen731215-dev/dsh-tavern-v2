@@ -10,10 +10,26 @@
  *   它比的是我自己枚举的两份清单，一个名字**两侧都没有**时它永远看不见。
  *   ⇒ 真正的判据必须**从函数体出发**枚举自由标识符，再逐个要求可解析。本文件就是它。
  *
- * 判据自带两条非空跑防护 + 一条反证：
+ * ★ 本判据自己被打过脸（a970c00 审核）：它漏掉了**三种漏名位置**、误报过**两种作用域内绑定**。
+ *   漏名的方向是危险的那一侧 —— routes.js 里已经有大量 `?` 与 `...`，而模板插值几乎必然出现在
+ *   错误消息里 ⇒ 在那三种位置上漏名会被**静态放绿**，冒烟只在"那条分支恰好被固定请求走到"时才兜得住。
+ *   三种**必须报红**的漏名位置（判据 ② 逐条钉住）：
+ *     ① 模板插值 `` `x${漏名}y` ``（旧实现把整个模板抹掉 ⇒ 插值里的代码全消失）
+ *     ② 三元真分支 `ctx ? 漏名 : json`（旧的「后面跟 `:` 就当属性键」规则误伤真分支）
+ *     ③ 展开运算符 `[...漏名]`（`prev === '.'` 的跳出规则把 `...` 的第三个点当成了成员访问）
+ *     ④ 无空格 `??` 右侧 `ctx??漏名`（旧的 `prev === '?'` 跳出规则；与 ③ 同族，一并钉住）
+ *   两种**不许报红**的作用域内绑定：
+ *     ⑤ `catch (err) { … }` 的形参 ⑥ 嵌套普通函数 `function inner(p) {…}` 的形参
+ *
+ * ⚠️ 已知过近似（不隐瞒）：`local` 是把「本区所有声明 / 形参 / catch 形参 / 嵌套函数形参」平铺成一个
+ *   集合用的，**没有按作用域分层**。代价是：若外层用到某个名字、而某个内层函数恰好也绑定了同名
+ *   形参，这个漏名会被挡住。收益是把上表 ⑤⑥ 两类假阳消掉。做成完全精确需要按作用域分层扫描
+ *   （内层函数体单独作为一个 scope、外层 locals 词法可见），属后续工作 —— 本轮**没有**做。
+ *
+ * 判据自带两条非空跑防护 + 反证：
  *   ① 必须真的解析出**足够多的**标识符（否则等于在看空集）；
  *   ② 必须真的扫到**多个** group 函数；
- *   ③ 反证：喂一个「用了未声明的名字」的合成样本，判据必须报红。
+ *   ③ 反证：喂一个「用了未声明的名字」的合成样本，判据必须报红（含上表四种位置逐条正反样本）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -27,37 +43,134 @@ const TARGET = path.join(REPO, 'lib', 'server', 'routes.js')
 const KEYWORDS = new Set(('const let var function return if else for while do break continue new typeof instanceof in of try catch finally throw delete void null true false undefined this switch case default import export from as await async yield class extends super static get set arguments').split(' '))
 const GLOBALS = new Set(('JSON Math Date Number String Boolean Array Object Promise Set Map WeakMap WeakSet RegExp Error TypeError RangeError SyntaxError parseInt parseFloat isNaN isFinite encodeURIComponent decodeURIComponent process console Buffer URL URLSearchParams TextEncoder TextDecoder globalThis Infinity NaN setTimeout clearTimeout setInterval clearInterval queueMicrotask structuredClone fetch AbortController').split(' '))
 
-/** 剥注释 / 字符串 / 模板 / **正则字面量**（正则不剥会把 `/…/g` 的 flag 当成标识符 —— 实测误报过）。 */
-export function codeOnly(text) {
-  const noBlock = String(text).replace(/\/\*[\s\S]*?\*\//g, ' ')
-  const noLine = noBlock.split('\n').map((l) => {
-    let cut = -1
-    for (let k = 0; k + 1 < l.length; k++) if (l[k] === '/' && l[k + 1] === '/' && l[k - 1] !== ':') { cut = k; break }
-    return cut >= 0 ? l.slice(0, cut) : l
-  }).join('\n')
-  const noStr = noLine.replace(/`(?:\\.|[^`\\])*`/g, '``').replace(/'(?:\\.|[^'\\])*'/g, "''").replace(/"(?:\\.|[^"\\])*"/g, '""')
-  let out = ''
-  for (let i = 0; i < noStr.length; i++) {
-    const c = noStr[i]
-    if (c !== '/') { out += c; continue }
-    let prev = ''
-    for (let q = i - 1; q >= 0; q--) { const pc = noStr[q]; if (pc === ' ' || pc === '\t') continue; prev = pc; break }
-    if (/[A-Za-z0-9_$)\]}]/.test(prev)) { out += c; continue }
-    let inClass = false
-    let k = i + 1
-    for (; k < noStr.length; k++) {
-      const rc = noStr[k]
-      if (rc === '\\') { k++; continue }
-      if (rc === '\n') break
-      if (rc === '[') inClass = true
-      else if (rc === ']') inClass = false
-      else if (rc === '/' && !inClass) break
+/** 跳过 `src[i]` 处的字符串字面量（`'` / `"`），返回**闭引号之后**的下标；未闭合则返回末尾。 */
+function skipQuoted(src, i) {
+  const q = src[i]
+  let j = i + 1
+  while (j < src.length) {
+    if (src[j] === '\\') { j += 2; continue }
+    if (src[j] === '\n') break
+    if (src[j] === q) return j + 1
+    j++
+  }
+  return j
+}
+
+/** 跳过 `src[i]` 处的模板字面量（含 `${…}` 里的嵌套模板），返回闭反引号之后的下标。 */
+function skipTemplate(src, i) {
+  let j = i + 1
+  while (j < src.length) {
+    if (src[j] === '\\') { j += 2; continue }
+    if (src[j] === '`') return j + 1
+    if (src[j] === '$' && src[j + 1] === '{') {
+      j += 2
+      let depth = 1
+      while (j < src.length && depth > 0) {
+        const c = src[j]
+        if (c === "'" || c === '"') { j = skipQuoted(src, j); continue }
+        if (c === '`') { j = skipTemplate(src, j); continue }
+        if (c === '{') depth++
+        else if (c === '}') depth--
+        j++
+      }
+      continue
     }
-    if (k >= noStr.length || noStr[k] !== '/') { out += c; continue }
-    k++
-    while (k < noStr.length && /[a-z]/i.test(noStr[k])) k++
-    out += ' '
-    i = k - 1
+    j++
+  }
+  return j
+}
+
+/**
+ * 剥注释 / 字符串 / **正则字面量**（正则不剥会把 `/…/g` 的 flag 当成标识符 —— 实测误报过）。
+ *
+ * ★ 模板字面量只剥**字面文本**，`${…}` 里的代码**保留**（旧实现整个抹掉 ⇒ 插值里的漏名看不见）。
+ *   例如 `` `a${expr}b` `` → `` ` expr ` ``。
+ */
+export function codeOnly(text) {
+  const src = String(text)
+  let out = ''
+  let i = 0
+  const n = src.length
+  // 正则 vs 除法只认「上一个**发出**的非空白字符」——必须在 out 上跟踪，
+  // 不能拿 src 的下标去索引 out（out 因剥注释/字符串/模板而更短，下标会错位 ⇒ 正则被当除法）。
+  let lastChar = ''
+  const emit = (s) => {
+    out += s
+    for (let q = s.length - 1; q >= 0; q--) { const ch = s[q]; if (ch === ' ' || ch === '\t') continue; lastChar = ch; break }
+  }
+  while (i < n) {
+    const c = src[i]
+    // 行注释（`https://` 里的 `//` 不算注释）
+    if (c === '/' && src[i + 1] === '/' && src[i - 1] !== ':') {
+      while (i < n && src[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      // 替换成一个空格（不是"删掉"）：`a/*x*​/b` 必须仍然是**两个** token，否则会并出一个假名字
+      emit(' ')
+      i += 2
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) { if (src[i] === '\n') emit('\n'); i++ }
+      i += 2
+      continue
+    }
+    if (c === "'" || c === '"') {
+      emit(c + c)
+      i = skipQuoted(src, i)
+      continue
+    }
+    if (c === '`') {
+      emit('`')
+      i++
+      while (i < n) {
+        const ch = src[i]
+        if (ch === '\\') { i += 2; continue }
+        if (ch === '`') { emit('`'); i++; break }
+        if (ch === '$' && src[i + 1] === '{') {
+          const open = i + 1
+          let j = open + 1
+          let depth = 1
+          while (j < n && depth > 0) {
+            const cj = src[j]
+            if (cj === "'" || cj === '"') { j = skipQuoted(src, j); continue }
+            if (cj === '`') { j = skipTemplate(src, j); continue }
+            if (cj === '/' && src[j + 1] === '/') { while (j < n && src[j] !== '\n') j++; continue }
+            if (cj === '/' && src[j + 1] === '*') { j += 2; while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++; j += 2; continue }
+            if (cj === '{') depth++
+            else if (cj === '}') { depth--; if (depth === 0) break }
+            j++
+          }
+          // ★ 插值内容当**代码**继续处理（递归），两侧补空格避免与字面文本粘连
+          emit(' ' + codeOnly(src.slice(open + 1, j)) + ' ')
+          i = j < n ? j + 1 : j
+          continue
+        }
+        emit(ch === '\n' ? '\n' : ' ')
+        i++
+      }
+      continue
+    }
+    if (c === '/') {
+      const prev = lastChar
+      if (/[A-Za-z0-9_$)\]}]/.test(prev)) { emit(c); i++; continue }
+      let inClass = false
+      let k = i + 1
+      for (; k < n; k++) {
+        const rc = src[k]
+        if (rc === '\\') { k++; continue }
+        if (rc === '\n') break
+        if (rc === '[') inClass = true
+        else if (rc === ']') inClass = false
+        else if (rc === '/' && !inClass) break
+      }
+      if (k >= n || src[k] !== '/') { emit(c); i++; continue }
+      k++
+      while (k < n && /[a-z]/i.test(src[k])) k++
+      emit(' ')
+      i = k
+      continue
+    }
+    emit(c)
+    i++
   }
   return out
 }
@@ -72,6 +185,61 @@ export function moduleBindings(src) {
   for (const m of src.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm)) out.add(m[1])
   for (const m of src.matchAll(/^(?:export\s+)?(?:const|let|var)\s+(\w+)/gm)) out.add(m[1])
   return out
+}
+
+/** 按**深度 0** 的逗号切分（形参表 / 解构模式用）。 */
+export function splitTopLevel(text) {
+  const out = []
+  let depth = 0
+  let cur = ''
+  for (const ch of String(text)) {
+    if ('([{'.includes(ch)) depth++
+    else if (')]}'.includes(ch)) depth--
+    if (ch === ',' && depth === 0) { out.push(cur); cur = ''; continue }
+    cur += ch
+  }
+  out.push(cur)
+  return out
+}
+
+/**
+ * 把「形参表 / 解构模式」里的**绑定名**收进 set。
+ * 只收绑定名：`{ a: b }` 收 `b`（`a` 是属性键）、`{ a }` 收 `a`、`[x, y]` 收 `x`/`y`、默认值右边不收。
+ */
+export function addBindingNames(set, text) {
+  for (const part of splitTopLevel(text)) {
+    const p = part.trim()
+    if (!p) continue
+    const head = p.split('=')[0].trim()
+    if (!head) continue
+    if (head[0] === '{' || head[0] === '[') {
+      const close = head[0] === '{' ? '}' : ']'
+      const at = head.lastIndexOf(close)
+      const inner = at > 0 ? head.slice(1, at) : head.slice(1)
+      for (const q of splitTopLevel(inner)) {
+        const t = q.trim()
+        if (!t) continue
+        const colon = t.indexOf(':')
+        const target = (colon >= 0 ? t.slice(colon + 1) : t).trim()
+        if (!target) continue
+        if (target[0] === '{' || target[0] === '[') addBindingNames(set, target)
+        else { const id = target.match(/^[A-Za-z_$][\w$]*/); if (id) set.add(id[0]) }
+      }
+      continue
+    }
+    const id = head.match(/^[A-Za-z_$][\w$]*/)
+    if (id) set.add(id[0])
+  }
+  return set
+}
+
+/** 该 token 是否处在「属性键 / 标签」位置 —— 只有这种位置的 `:` 才不是三元的分隔。 */
+export function isKeyPosition(body, idx) {
+  let before = ''
+  for (let q = idx - 1; q >= 0; q--) { const pc = body[q]; if (/\s/.test(pc)) continue; before = pc; break }
+  if (before === '{' || before === ',' || before === ';' || before === '}' || before === '') return true
+  const prevWord = (body.slice(0, idx).match(/([A-Za-z_$][\w$]*)\s*$/) || [])[1] || ''
+  return prevWord === 'case' || prevWord === 'default'
 }
 
 /** 逐个函数报告「无法解析的自由标识符」。返回 [{name, free:[…]}]（空数组 = 全部可解析）。 */
@@ -91,18 +259,31 @@ export function unresolvedIdentifiers(src) {
     }
     const body = codeOnly(lines.slice(i + 1, end).join('\n'))
     const local = new Set()
-    for (const p of m[2].split(',')) { const t = p.trim().split(/[=:]/)[0].trim(); if (t) local.add(t) }
+    addBindingNames(local, m[2])
     for (const d of body.matchAll(/(?:const|let|var|function|class)\s+(\w+)/g)) local.add(d[1])
-    for (const d of body.matchAll(/(?:const|let|var)\s*\{([^}]*)\}/g)) for (const n of d[1].split(',')) { const t = n.trim().split(/[=:]/).pop().trim(); if (/^\w+$/.test(t)) local.add(t) }
-    for (const d of body.matchAll(/\(([^()]*)\)\s*=>/g)) for (const p of d[1].split(',')) { const t = p.trim().split(/[=:]/)[0].trim(); if (/^\w+$/.test(t)) local.add(t) }
-    for (const d of body.matchAll(/(?:^|[\s(,])(\w+)\s*=>/gm)) local.add(d[1])
+    for (const d of body.matchAll(/(?:const|let|var)\s*(\{[^}]*\}|\[[^\]]*\])/g)) addBindingNames(local, d[1])
+    for (const d of body.matchAll(/\(([^()]*)\)\s*=>/g)) addBindingNames(local, d[1])
+    for (const d of body.matchAll(/(?:^|[\s(,])([A-Za-z_$][\w$]*)\s*=>/gm)) local.add(d[1])
+    // ★ 嵌套普通函数的形参（旧实现只收顶格那一个函数的形参 ⇒ 误报 inner 的 p）
+    for (const d of body.matchAll(/\bfunction\s*\*?\s*[A-Za-z_$][\w$]*\s*\(([^()]*)\)/g)) addBindingNames(local, d[1])
+    for (const d of body.matchAll(/=\s*function\s*\*?\s*[A-Za-z_$]?\s*\(([^()]*)\)/g)) addBindingNames(local, d[1])
+    // ★ catch 形参（旧实现不收 ⇒ 误报 err）
+    for (const d of body.matchAll(/\bcatch\s*\(([^)]*)\)/g)) addBindingNames(local, d[1])
     const free = new Set()
     for (const t of body.matchAll(/(\$?\w+)/g)) {
       const idx = t.index
       const prev = body[idx - 1] || ''
-      if (prev === '.' || /[\w$]/.test(prev) || prev === '?') continue
+      if (prev === '.') {
+        // ★ 展开运算符 `...name`：第三个点不是成员访问，name **是**真引用
+        const spread = body[idx - 2] === '.' && body[idx - 3] === '.'
+        if (!spread) continue
+      } else if (/[\w$]/.test(prev)) {
+        continue
+      }
+      // 注：旧实现还有一条 `prev === '?'` 的跳出规则，它会把**无空格**的 `ctx??漏名` 右侧一起吃掉，
+      // 与 `...` 那类同病 —— 已删（`?.` 成员访问由 prev === '.' 覆盖）。
       if (/^\d/.test(t[0])) continue
-      if (/^\s*:/.test(body.slice(idx + t[0].length).slice(0, 4))) continue
+      if (/^\s*:/.test(body.slice(idx + t[0].length).slice(0, 4)) && isKeyPosition(body, idx)) continue
       const n = t[0]
       if (local.has(n) || mod.has(n) || KEYWORDS.has(n) || GLOBALS.has(n)) continue
       free.add(n)
@@ -152,14 +333,57 @@ test('① routes.js 的每个 group 函数：自由标识符都必须可解析�
   )
 })
 
-test('② 反证：喂一个「用了未声明名字」的样本，判据必须报红', () => {
-  const good = 'function routesGroupX(ctx, deps) {\n  const { json } = deps\n  return [json]\n}'
-  assert.deepEqual(unresolvedIdentifiers(good), [], '正常样本不该报红')
-  const bad = 'function routesGroupX(ctx, deps) {\n  const { json } = deps\n  return [json, readBody]\n}'
-  const r = unresolvedIdentifiers(bad)
-  assert.equal(r.length, 1, '坏样本必须报红')
-  assert.deepEqual(r[0].free, ['readBody'], '必须点名漏掉的那个名字')
-  // 正则 / 字符串 / 注释里的词不算（否则会误报，把门禁变成噪声）
+// ════════════════════════════════════════════════════════════════════
+// ② 反证：三种漏名位置（+ 同族的无空格 `??`）必须报红；
+//    两种作用域内绑定（catch 形参 / 嵌套函数形参）不许报红。
+//    这 6 条缺一条，判据就可能漂回"静默放绿"或"假阳噪声"。
+// ════════════════════════════════════════════════════════════════════
+
+const SHELL = (inner) => 'function routesGroupX(ctx, deps) {\n  const { json } = deps\n' + inner + '\n}'
+
+test('② 反证：四种「漏名位置」必须全部报红（缺一种就是那一类被静默放绿）', () => {
+  const cases = [
+    ['①模板插值', '  const s = `x${missingTemplate}y`\n  return [json, s]', 'missingTemplate'],
+    ['②三元真分支', '  return [ctx ? missingTernaryTrue : json]', 'missingTernaryTrue'],
+    ['③展开运算符', '  return [...missingSpread, json]', 'missingSpread'],
+    ['④无空格 ?? 右侧', '  return [ctx??missingCoalesce]', 'missingCoalesce'],
+  ]
+  for (const [label, inner, want] of cases) {
+    const r = unresolvedIdentifiers(SHELL(inner))
+    assert.deepEqual(r.flatMap((x) => x.free), [want], '★ ' + label + ' 的漏名必须被报出（否则这一类会被静态放绿）')
+  }
+  // 对照：普通位置本来就是好的（判据不是靠"什么都报"蒙对的）
+  for (const [label, inner, want] of [
+    ['对象字面量值位', '  return { a: missingObjValue }', 'missingObjValue'],
+    ['函数调用实参', '  return [wrap(missingArg)]', 'wrap'],
+    ['默认值右侧', '  const { a = missingDefault } = deps\n  return [a]', 'missingDefault'],
+  ]) {
+    const r = unresolvedIdentifiers(SHELL(inner)).flatMap((x) => x.free)
+    assert.ok(r.includes(want), '★ ' + label + ' 的漏名也必须被报出，实际报出=' + JSON.stringify(r))
+  }
+})
+
+test('② 反证：两种「作用域内绑定」不许报红（假阳会把门禁变成噪声）', () => {
+  for (const [label, inner] of [
+    ['⑤catch 形参', '  try { return json } catch (err) { return err }'],
+    ['⑥嵌套函数形参', '  function inner(p) { return p }\n  return [json, inner]'],
+    ['⑥b 函数表达式形参', '  const f = function inner2(q) { return q }\n  return [json, f]'],
+    ['⑤b catch 解构形参', '  try { return json } catch ({ message }) { return message }'],
+    ['⑦箭头形参', '  const f = (aa, bb) => aa + bb\n  return [json, f]'],
+    ['⑧解构：键不算、值才算', '  const { json: jj, S: ss } = deps\n  return [jj, ss]'],
+  ]) {
+    assert.deepEqual(unresolvedIdentifiers(SHELL(inner)), [], '★ ' + label + ' 是作用域内绑定，不该报红')
+  }
+})
+
+test('②-c 反证：注释 / 正则 / 字符串里的词不算自由标识符', () => {
   const noisy = 'function routesGroupY(ctx) {\n  // readBody 出现在注释里\n  const re = /readBody/g\n  const s = "readBody"\n  return [re, s]\n}'
   assert.deepEqual(unresolvedIdentifiers(noisy), [], '注释/正则/字符串里的词不该被当成自由标识符')
+})
+
+test('②-d 反证：模板插值里的**合法**名字仍然解析得到（不是靠"插值一律报红"蒙的）', () => {
+  const ok = 'function routesGroupZ(ctx, deps) {\n  const { json } = deps\n  const s = `a${json.b}x`\n  return [s]\n}'
+  assert.deepEqual(unresolvedIdentifiers(ok), [], '插值里的合法引用不该报红')
+  const nested = 'function routesGroupW(ctx, deps) {\n  const { json } = deps\n  const s = `a${`b${json.c}`}d`\n  return [s]\n}'
+  assert.deepEqual(unresolvedIdentifiers(nested), [], '嵌套模板插值里的合法引用也不该报红')
 })
