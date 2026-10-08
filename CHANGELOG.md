@@ -26,6 +26,29 @@
 棘轮测试① 只查「新增」，不查「消失」—— 提取器改动若把某条漏掉，那边不会报。
 新增 `tests/capture-expr.test.js` ⑥：基线里每一条都必须**仍然被扫到**；有意消除请跑 `--update` 并说明。
 
+### 6. golden 的**来源**从「自述」升级为「机器结论」（复核方指出的命门）
+
+golden 差分是「重构没改行为」这套证据的命门 —— 若快照其实来自当前版本，它就退化成"自己跟自己比"。
+而快照文件本身**没有来源戳记**（实测 0 个元信息键），所以「在 `a816afd` 上生成」此前只能靠自述。
+
+- 新增 `tools/check-golden-origin.mjs`（`npm run check:golden-origin`）：在 `a816afd` 的干净 worktree 里
+  用 `UPDATE_GOLDEN=1` **重新生成**，与仓库里的 fixture **逐字节比**（只归一化 CRLF）。
+- 实测结果：**逐字节一致**（两边同为 3424 字节、11 个采集键）⇒ 来源声明成立，且此后**每次 CI 都会复查**。
+- 浅克隆会**响亮失败**并提示加 `fetch-depth: 0` —— 不做"取不到就跳过"（那是静默变绿）。
+- 已接入 CI 与 `npm run ci:local`（护栏 ④-b/④-d 仍全过）；留痕进 `docs/VERIFICATION.md` §二。
+
+### 7. 文档收口（六处过期 / 自相矛盾）
+
+- `AGENTS.md` §2 依赖图：原写「S2-B/C 待做」并列出**并不存在**的 `inject.js` / `relations.js` / `routes/`；
+  现改为与 §10 一致（已整块搬出；routes/ 尚未抽出属 S2-C2）。
+- `AGENTS.md` §6⑤：撤掉手抄的一组样式基线值（护栏没覆盖这一类；S3 一改样式就全过期），
+  改为指向 `tools/style-budget.json`。
+- `AGENTS.md` 头部版本与页脚「最后更新」同步到本版（原为 2.7.13 / 2.7.10）。
+- `AGENTS.md` §9：「CI 10/10 step」**对不上任何口径**（GitHub 记 11 步，工作流 7 个 step）⇒
+  改为「**5 个实质步骤全过**」并注明收尾步。
+- `tools/check-client-integrity.mjs` 注释里的「depth=1」与实测矛盾 ⇒ 改为「比同级一致性；现库实测 depth=2」。
+- `docs/VERIFICATION.md` §四：把「待裁定 / 本仓倾向 B」落成**已裁定选 A** + 四条约束 + 实现要点。
+
 ### 验证
 - 全量 **503 pass / 0 fail / 0 skipped（29 个文件）**（新增测试文件 7 项）
 - `check:innerhtml`：基线 **23 条 / 0 条新增**，分布 `innerHTML 22 / srcdoc 1`，清单外入口 0 处，sandbox 断言通过
