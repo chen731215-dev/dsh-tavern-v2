@@ -138,8 +138,8 @@ export function tokenProblems(defs, refs, registry = []) {
 /** 非空跑下限（口径：实测值见 `_scratch/s3/measure-s3b.mjs`；下限取实测的 ~80%）。
  *  ⚠️ 注释里的实测值是**时点快照**（会随批次变），别把它当契约；契约是"下限"本身。 */
 export const CLASS_FLOOR = 24          // 实测 30（时点 7117a40）
-export const RULE_FLOOR = 30           // 实测 51（时点 7117a40；加令牌规则后 +1）
-export const TOKEN_FLOOR = 0           // 令牌层本卡是"从 0 开始"建 ⇒ 下限随第一批令牌落地而抬（下一笔）
+export const RULE_FLOOR = 30           // 实测 52（时点：本批加入令牌规则之后）
+export const TOKEN_FLOOR = 4           // 实测 5（第一批颜色令牌）；**下限在这一批从 0 抬到 4** —— 兑现判据笔里那句承诺
 
 const BUNDLE = fs.readFileSync(BUNDLE_FILE, 'utf8')
 const CAND = carrierCandidates(BUNDLE)

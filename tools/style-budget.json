@@ -1,7 +1,8 @@
 {
+  "_note": "bareHex 331 → 336 是 S3 批1（只加不删：新增 5 个 --tv-color-* 令牌定义）的一次性上升 —— 令牌定义本身就是 5 个字面量；批2 起逐处替换会把裸 hex 降回来，届时同步下调。其余指标未动。",
   "inlineStyleAttr": 301,
   "inlineHandlerAttr": 0,
-  "bareHex": 331,
+  "bareHex": 336,
   "bareRgba": 150,
   "cssTextAssign": 59,
   "important": 0,
