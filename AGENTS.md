@@ -347,7 +347,9 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
   受限环境里 spawn 失败（EBUSY）也会落到这一档 —— **看到 `❔` 说明环境有问题，不是通过**。
   免费送出来的绿灯比红灯更危险。
 - **CI 环境 = 干净 checkout + 没有 DSH**。实测（2.7.12）：语法检查 54 文件通过，样式预算 / 客户端自检 /
-  innerHTML 棘轮 exit 0，全量测试 **481 pass / 0 fail / 3 skipped**。那 3 个 skipped 是
+  innerHTML 棘轮 exit 0，全量测试全绿（**数量以 `npm test` 输出为准 —— 曾在这里手抄 481，
+  而那是更早一个提交上的数：同一个提交链里 tooling-integrity 从 11 项长到 15 项，数字当场过期**）。
+  那 3 个 skipped 是
   `cordis-mount.test.js` 找不到 DSH 的 `app.asar` 时**自己 skip**（4 项里 skip 3 项，剩 1 项照跑）——
   合法跳过，空跑判据不会误报。
 - **CI 自己也有护栏**（`tests/tooling-integrity.test.js` ④-b/④-c/④-d）：每条 `run:` 必须能映射到
@@ -379,7 +381,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 
 1. **半自动的那步**（有 DSH 的机器上）——确认「能挂载」：
    ```
-   node --test tests/cordis-mount.test.js      # 期望 4 项全过；只看到 1 pass / 3 skipped 说明这台机器没 DSH
+   node --test tests/cordis-mount.test.js      # 期望 4 项全过；若摘要里出现 skipped 3 ⇒ 这台机器没 DSH
    ```
    有 DSH 时应是 `pass 4 / skipped 0`；若仍是 `skipped 3`，先设 `DSH_ASAR` 指向 DSH 的 `app.asar`。
 2. **手动那步**（真机 UI 冒烟，四条）：
@@ -407,7 +409,9 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | **S2-C2** | 从 `apply(ctx)` 里抽出装配步骤，让它只做装配 | ⬜ 待做 —— **这是剩下最大的一块** |
 | **S3 前端结构化** | `--tv-*` 语义令牌层 + 组件基元，**只加不删** | ⬜ 待做 |
 
-> 进度：各阶段的行数净减见上表；`lib/server/` 下模块清单见 §1 结构图（不在这里手抄数字）。
+> 进度：各阶段的行数净减见上表（那些数字是**该版本当时的**记录，不要当成现值）；
+> `lib/server/` 下模块清单见 §1 结构图。**活的行数一律不写进文档** —— 连"到底几行"本身都有两种口径：
+> `wc -l`（数换行符）与 `split(/\r?\n/).length`（多算一个尾部空元素）会差 1。
 > 剩下的大头只有 `apply(ctx)` 一个函数。
 
 **顺序建议：S1 → S4①（先有安全网）→ S2 → S3。**
@@ -471,6 +475,18 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 - **别用「字符窗口」定位代码**（`{0,220}` 这类）：窗口会被 `\r` 撑破 —— 本机工作树是 LF 时不报，
   干净 clone / CI（`core.autocrlf=true` ⇒ CRLF）上就假红。匹配前先 `.replace(/\r\n/g, '\n')`。
   ⇒ 同理：**验证要在「干净 checkout」里做**（`git worktree add --detach`），别只信本机工作树。
+- **别用「自写壳」替代现成的 runner**：本仓曾出现一个自写的 bash 壳去替代 `tools/run-each-test.mjs`，
+  结果**两次给出假数据**：① 壳里硬编码了主仓库路径 ⇒ 跑的是另一个目录；② `sed` 反向引用写成 `\3`
+  而只有 2 个捕获组 ⇒ 全部解析成 0（假「空跑」）。**结论对不代表方法对**：现成 runner 已经处理了
+  两种报告器格式（`# pass` / `ℹ pass`）与空跑判据，自己重写一遍只增加出错面。
+- **`git merge -s ours` 使用规则**：它**无条件丢弃对方整棵树**，对「对方有没有新提交」是盲的。
+  只允许用在「**tree 已证明相等**」的平行历史接续上，且用之前必须：`git fetch` 并验证
+  `git merge-base --is-ancestor <远端 tip> HEAD` 为真。**默认用普通 merge**（代价是解假冲突，
+  收益是不会静默丢东西）。
+  反例：若对方在 GitHub 网页上直接改过文件（会产生树不同的提交），「tree 相等」的前提就不成立。
+- **补丁脚本插入多行文本时，必须用目标文件自己的 EOL**：往 CRLF 文件里用 `\n` 插行会制造混合换行，
+  护栏 ⑥（tooling-integrity）会当场报红。**这个坑本仓已踩两次**，两次都是"手写补丁脚本"造成的；
+  写脚本时先探测：`const EOL = s.includes('\r\n') ? '\r\n' : '\n'`。
 - **GitHub 推送**：`github.com:443` 不稳定时走 `api.github.com`（blob → tree → commit → PATCH ref），
   **每次都要比对本地 tree 与远端返回 tree**；多提交一起推时 `LOCAL_BASE` 必须是远端已存在的那个提交。
 - **npm 发布后有 CDN 传播期**（约 35 秒 ~ 2.5 分钟）：抓包先验证 gzip 魔数 `1f 8b` 再 `gunzip`，
