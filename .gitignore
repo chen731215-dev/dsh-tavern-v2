@@ -20,3 +20,19 @@ desktop.ini
 
 # 本地临时脚本目录（含「从会话日志提取 token」性质的脚本，绝不能入库）
 _scratch/
+
+# ── 凭据 / 会话记录 / 用户数据：永不入库（2.7.14）──
+sessions/
+*.jsonl
+*.zstd
+*.jsonl.zstd
+.env
+.env.*
+.npmrc
+*token*
+*secret*
+*credential*
+tavern-data/
+*.bak
+*.backup
+*.old
