@@ -83,6 +83,7 @@ test('④ 正例：结构安全的形态必须放行（避免误报到没法用�
     'p.count',
     "(g.collapsed ? '' : 'transform:rotate(90deg);')",
     "data.sessions.map(function (s) { return esc(s.id); }).join('')",
+    '`<div>纯静态模板</div>`',
     'cleanedTotal',
   ]
   // cleanedTotal 是纯标识符 ⇒ 结构上判不出，**故意**归为可疑（靠基线人工过目）
@@ -90,9 +91,20 @@ test('④ 正例：结构安全的形态必须放行（避免误报到没法用�
   for (const s of SAFE) {
     assert.equal(segmentIsSafe(s), !EXPECT_SUSPECT.has(s), `段「${s}」的判定不对`)
   }
+  // 反例：带插值的模板字面量**不是**字面量 —— 它是拼接的另一种写法（2.7.13 收紧）
+  const UNSAFE = ['`<div>${x}</div>`', '`<b>' + '${userText}' + '</b>`']
+  for (const s of UNSAFE) {
+    assert.equal(segmentIsSafe(s), false, `★ 带插值的模板字面量被当成了安全字面量：${s}`)
+  }
   // 逐段切分本身也要可信
   assert.deepEqual(splitTopLevel("'a' + esc(b) + c"), ["'a' ", ' esc(b) ', ' c'])
   assert.deepEqual(splitTopLevel("(x ? 'a:b' : '')"), ["(x ? 'a:b' : '')"], '引号里的 + / : 不该被切开')
+})
+
+test('④-b 反证：模板字面量插值 sink 必须被点名（2.7.13 收紧）', () => {
+  const src = 'el.innerHTML = `<div class="n">${node.displayName}</div>`;'
+  const hits = findSuspects(src)
+  assert.equal(hits.length, 1, '对照：模板字面量插值必须被抓 —— 这曾是判据自己的盲区')
 })
 
 test('⑤ 基线必须能被解读：每条都带 分类 + 理由 + 证据，不许有「不明所以的白名单」', () => {

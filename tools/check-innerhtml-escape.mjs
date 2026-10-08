@@ -177,7 +177,18 @@ function findTopLevel(expr, delim, from = 0) {
   return -1
 }
 
-const isLiteral = (x) => /^('([^'\\]|\\.)*'|"([^"\\]|\\.)*"|`([^`\\]|\\.)*`|-?[\d.]+|true|false|null|undefined)$/.test(x.trim())
+/**
+ * 「字面量」的判定。
+ * ★ 模板字面量只有在**不含 ${ 插值**时才算字面量 —— `` `<div>${x}</div>` `` 是拼接的另一种写法，
+ *   不是字面量。实测旧写法把这种形态判成安全（当前仓库 0 处使用，收紧零成本；这是写回执时
+ *   又探测出来的一处盲区 —— 与「单段 RHS」「跨行续行」同属「判据自己的洞」）。
+ */
+export function isLiteral(x) {
+  const s = x.trim()
+  if (/^'([^'\\]|\\.)*'$/.test(s) || /^"([^"\\]|\\.)*"$/.test(s)) return true
+  if (/^`[^`]*`$/.test(s)) return !s.includes('${')
+  return /^-?[\d.]+$/.test(s) || /^(true|false|null|undefined)$/.test(s)
+}
 
 /** 这一段是不是「结构上不可能带 HTML」？ */
 export function segmentIsSafe(seg) {
