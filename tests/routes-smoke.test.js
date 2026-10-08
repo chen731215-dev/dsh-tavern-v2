@@ -112,7 +112,11 @@ _test.writeState(Object.assign({}, st0, {
 }))
 lib.apply(ctx)
 
-/** 打一条路由；返回 { method, path, status, hasResponse, thrown, body }。 */
+/** ⑦ 两个界的值：**与旧口径同一个 4000ms**（不许把"真挂住"调成"慢"）。 */
+const HANDLER_MS = 4000
+const RESPONSE_MS = 4000
+
+/** 打一条路由；返回 { method, path, status, hasResponse, handlerHang, thrown, body }。 */
 async function hit(route, method) {
   const q = method === 'GET' ? '?sessionId=' + encodeURIComponent(SID) + '&presetId=' + PID : ''
   const url = route.path + q
@@ -145,7 +149,7 @@ async function hit(route, method) {
       if (timer) clearTimeout(timer)
     }
   } catch (e) { thrown = e }
-  const body = await Promise.race([ended, new Promise((r) => setTimeout(() => r(null), 4000))])
+  const body = await Promise.race([ended, new Promise((r) => setTimeout(() => r(null), RESPONSE_MS))])
   await drainRejections()          // ★ ⑤：让本轮 fire-and-forget 的拒绝带着上下文被记下
   currentHit = null
   return {
@@ -195,7 +199,7 @@ test('① 非空跑：注册到的每一条路由都必须被真的打到（并�
   }
 })
 
-test('② 逐条打：每条路由都要有响应，且不许出现「缺依赖」类错误', () => {
+test('② 逐条打：每条路由都要有响应，且不许出现「缺依赖」类错误', (t) => {
   const records = []
   return (async () => {
     for (const route of routes) {
@@ -205,7 +209,18 @@ test('② 逐条打：每条路由都要有响应，且不许出现「缺依赖�
     const hitPaths = new Set(records.map((r) => r.path))
     assert.equal(hitPaths.size, routes.length, '★ 有路由没被打到：' + routes.map((r) => r.path).filter((p) => !hitPaths.has(p)).join(', '))
 
+    // ★ 可见性（⑤ 的验收要件）：node:test **自己也在监听** `unhandledRejection`，它会先把逃逸的拒绝
+    //   记成这条测试的失败，而**那条消息里没有归因**（"红了但看不出是谁"）。所以这里把归因打成
+    //   diagnostic —— diagnostic 在测试失败时照样会打印出来。
+    for (const u of unhandledRejections) {
+      t.diagnostic('逃逸拒绝归因：' + u.ctx + ' → ' + u.reason.split('\n')[0].slice(0, 200))
+    }
     const c = classifySmoke(records)
+    const busy = Object.keys(c).filter((k) => c[k].length > 0)
+    if (busy.length === 0) t.diagnostic('逐条命中 ' + records.length + ' 次；六个失败桶全为空')
+    for (const k of busy) {
+      t.diagnostic('失败桶 ' + k + '（' + c[k].length + ' 条）：' + c[k].slice(0, 6).map((r) => fmtPath(r) + (r.thrown ? ' → ' + String(r.thrown).split('\n')[0].slice(0, 120) : '')).join(' ｜ '))
+    }
     assert.deepEqual(
       c.dep.map((r) => fmtThrown(r, 140)),
       [],
