@@ -352,6 +352,11 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 - ⚠️ **触发 CI 要推分支，别推 main**：本仓本地 `main` 与 `origin/main` **内容一致但历史不同**
   （共同祖先只到 `2cea581`），直接推 `main` 会变成 force-push。
   `git push origin main:ci/<名字>` 即可（分支推送同样命中 `push` 触发器）。
+- ✅ **CI 已实跑绿**（2026-10-08）：分支 `ci/tooling-security-refactor` @ `87f5b6e`，
+  [run 37725561712](https://github.com/chen731215-dev/dsh-tavern-v2/actions/runs/37725561712) —— 10/10 step 全过，约 70 秒。
+  也就是说「重构等价」不再只有本机证据。
+- **看 CI 结果**：`node tools/ci-watch.mjs`（盯最新一次）或 `node tools/ci-watch.mjs <run-id>` ——
+  匿名读 API，不需要 token；退出码 0 = success。红了会逐 step 列出结论，便于定位。
 - 跑测试前有时需要 `DSH_ASAR`（指向 DSH 的 `app.asar`），`cordis-mount.test.js` 依赖它；
   找不到时那个文件会**自己 skip**（不当红灯），所以 CI 不需要装 DSH。
 
