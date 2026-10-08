@@ -8,13 +8,27 @@
  *   「静态集合相等」证明不了运行时真的解析到，所以要有这条**运行时**兜底。
  *   本文件先于搬家落地（AGENTS §5.1「先有安全网再动刀」）。
  *
- * 四条自证（缺一条就会变成「给了绿灯也没看」）：
+ * 六条自证（缺一条就会变成「给了绿灯也没看」）：
  *   ① 非空跑：必须真的打到**每一条**注册路由（断言行数 == 注册数），并按路径分组点名；
  *   ② 不碰用户数据：全程 tmpdir 的 DSH_HOME；
  *   ③ 断言口径是「**有响应**且不是依赖类错误」—— 不假装知道每条路由的业务正确性
  *      （那由各自的测试负责），但把 `ReferenceError` / `is not defined` /
  *      `is not a function` 单独判红，因为那正是漏传依赖的症状；
- *   ④ 反证见提交材料（从依赖里删掉 `readState` → 本文件必须报红）。
+ *   ④ 反证：`classifySmoke` 的分类用**合成样本**逐桶断言（见 ④），不许"桶是空的所以全绿"；
+ *   ⑤ **逃逸的拒绝必须带归因**（2026-10-08 补）：路由里"发出去就不管"的异步链
+ *      （fire-and-forget）抛错时走的是 `unhandledRejection`，node:test 会把它归到**测试文件**名下
+ *      —— 消息里没有"哪条路由/哪个方法"，于是"依赖类错误单独判红"这条路径根本没走到
+ *      （实测：删掉一个依赖时确实红了，但看不出是谁）。⇒ 这里挂 `process.on('unhandledRejection')`
+ *      记录，并把**命中上下文**（方法 + 路径）带进断言消息；每次命中后 drain 两个 setImmediate，
+ *      让本轮逃逸的拒绝在上下文还在时被记下。
+ *   ⑥ **"抛在响应之前"与"真挂住"分开断言**（2026-10-08 补）：旧实现把两者都塞进"4 秒无响应"
+ *      那一条，而病因完全不同（前者 = 路由没处理异常；后者 = 链路挂了/没 end）。
+ *      ⇒ 分类函数 `classifySmoke()` 拆成互不重叠的桶，各带自己的消息。
+ *   ⑦ **harness 自己有界**（2026-10-08 补，由反证变异C 撞出来）：旧口径 `await maybe` 对 handler
+ *      返回的 promise **没有任何超时界** ⇒ 一条 `() => new Promise(() => {})` 的路由会把**整个测试进程
+ *      永久挂住**（不是红，是 CI 挂到超时）。现在 handler promise 与响应各有一个 4000ms 界，
+ *      超时落进 `handlerHang` 桶（与"响应永不 end"的 `hung` 桶分开）。
+ *      ★ 界值没有放宽：仍是同一个 4000ms（把"真挂住"变成"慢"是不允许的）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -54,6 +68,18 @@ const SID = 'sid-smoke-0001'
   fs.writeFileSync(path.join(memDir, 'memory.md'), '# 记忆总结 [2026/10/1 10:00:00]\n冒烟记忆 SMOKE-MEM-3f9a\n', 'utf8')
 }
 
+// ── ⑤ 逃逸的拒绝：捕获 + 归因（上下文 = 当前命中的「方法 + 路径」）──
+let currentHit = null
+const unhandledRejections = []
+process.on('unhandledRejection', (reason) => {
+  unhandledRejections.push({
+    ctx: currentHit || '（上下文已过时：拒绝在 drain 之后才到达）',
+    reason: String((reason && reason.stack) || reason),
+  })
+})
+/** 让本轮逃逸的拒绝在上下文还在时被记下（两个 setImmediate 是实测够用的最小量） */
+const drainRejections = () => new Promise((r) => setImmediate(() => setImmediate(r)))
+
 const routes = []
 const handlers = {}
 const logged = []
@@ -86,7 +112,7 @@ _test.writeState(Object.assign({}, st0, {
 }))
 lib.apply(ctx)
 
-/** 打一条路由；返回 { method, status, hasResponse, thrown }。 */
+/** 打一条路由；返回 { method, path, status, hasResponse, thrown, body }。 */
 async function hit(route, method) {
   const q = method === 'GET' ? '?sessionId=' + encodeURIComponent(SID) + '&presetId=' + PID : ''
   const url = route.path + q
@@ -103,15 +129,31 @@ async function hit(route, method) {
     end(payload) { resolveEnd(String(payload == null ? '' : payload)) },
   }
   let thrown = null
+  let handlerHang = false
+  currentHit = method + ' ' + route.path
   try {
     const maybe = route.handler(req, res)
-    if (maybe && typeof maybe.then === 'function') await maybe
+    if (maybe && typeof maybe.then === 'function') {
+      // ★ ⑦ handler 返回的 promise 也必须**有界**：旧口径直接 `await maybe`，一旦某个 handler 返回
+      //   永不 settle 的 promise，**整个测试进程会永久挂住**（不是"红"，是 CI 挂到超时）。
+      //   实测（本轮反证变异C）：一条 `() => new Promise(() => {})` 的探针路由就能挂死整份测试。
+      let timer = null
+      await Promise.race([maybe, new Promise((r) => {
+        timer = setTimeout(() => { handlerHang = true; r(null) }, HANDLER_MS)
+        if (timer && timer.unref) timer.unref()
+      })])
+      if (timer) clearTimeout(timer)
+    }
   } catch (e) { thrown = e }
   const body = await Promise.race([ended, new Promise((r) => setTimeout(() => r(null), 4000))])
+  await drainRejections()          // ★ ⑤：让本轮 fire-and-forget 的拒绝带着上下文被记下
+  currentHit = null
   return {
     method,
+    path: route.path,
     status: res.statusCode,
     hasResponse: body !== null,
+    handlerHang,
     body: body === null ? '' : body,
     thrown: thrown ? String((thrown && thrown.stack) || thrown) : '',
   }
@@ -119,6 +161,28 @@ async function hit(route, method) {
 
 /** 「漏传依赖」的症状：这些模式一旦出现在抛错或响应体里，就是硬失败。 */
 const DEP_BUG_RE = /is not defined|is not a function|is not a constructor|ReferenceError|Cannot read properties of undefined \(reading '[^']*'\)/
+
+/**
+ * 把逐条命中的记录分进**互不重叠**的失败桶（④ 用合成样本逐桶断言它的分类正确）。
+ * 每个坏记录恰好落进一个桶；正常记录哪个桶都不进。
+ */
+export function classifySmoke(records) {
+  const dep = records.filter((r) => (r.thrown && DEP_BUG_RE.test(r.thrown)) || (r.body && DEP_BUG_RE.test(r.body)))
+  const rest = records.filter((r) => !dep.includes(r))
+  return {
+    dep,
+    threwBeforeResp: rest.filter((r) => !r.hasResponse && !!r.thrown),
+    // ★ ⑦ 两种"真挂住"要分开：`hung` = handler 返回了、但响应永不 end；
+    //   `handlerHang` = handler 返回的 promise 自己永不 settle（旧口径会把**测试进程**挂死）
+    hung: rest.filter((r) => !r.hasResponse && !r.thrown && !r.handlerHang),
+    handlerHang: rest.filter((r) => r.handlerHang),
+    threwAfterResp: rest.filter((r) => r.hasResponse && !!r.thrown),
+    badStatus: rest.filter((r) => r.hasResponse && (!Number.isInteger(r.status) || r.status < 200 || r.status > 599)),
+  }
+}
+
+const fmtThrown = (r, n) => r.method + ' ' + r.path + ' → ' + String(r.thrown || r.body).split('\n')[0].slice(0, n)
+const fmtPath = (r) => r.method + ' ' + r.path
 
 test('① 非空跑：注册到的每一条路由都必须被真的打到（并按路径点名）', () => {
   assert.ok(routes.length > 0, '★ 一条路由都没注册 —— 判据空跑')
@@ -131,34 +195,79 @@ test('① 非空跑：注册到的每一条路由都必须被真的打到（并�
   }
 })
 
-test('② 逐条打：每条路由都要有响应，且不许出现「缺依赖」类错误', async () => {
+test('② 逐条打：每条路由都要有响应，且不许出现「缺依赖」类错误', () => {
   const records = []
-  for (const route of routes) {
-    for (const method of ['GET', 'POST']) {
-      const r = await hit(route, method)
-      records.push(Object.assign({ path: route.path }, r))
+  return (async () => {
+    for (const route of routes) {
+      for (const method of ['GET', 'POST']) records.push(await hit(route, method))
     }
+    // ① 每条路由都被打到了（每条各两次）
+    const hitPaths = new Set(records.map((r) => r.path))
+    assert.equal(hitPaths.size, routes.length, '★ 有路由没被打到：' + routes.map((r) => r.path).filter((p) => !hitPaths.has(p)).join(', '))
+
+    const c = classifySmoke(records)
+    assert.deepEqual(
+      c.dep.map((r) => fmtThrown(r, 140)),
+      [],
+      '★ 出现「缺失依赖」类错误（ReferenceError / not a function / 读不到属性）—— 搬家时漏传了依赖',
+    )
+    // ★ ⑥ 两条分开：抛在响应之前 ≠ 真挂住（病因不同，消息也不同）
+    assert.deepEqual(
+      c.threwBeforeResp.map((r) => fmtThrown(r, 160)),
+      [],
+      '★ 这些请求「抛在响应之前」：路由没处理异常就抛出，客户端拿不到任何响应',
+    )
+    assert.deepEqual(
+      c.hung.map(fmtPath),
+      [],
+      '★ 这些请求「真挂住（响应永不 end）」：4 秒内既没有响应、也没有抛错',
+    )
+    assert.deepEqual(
+      c.handlerHang.map(fmtPath),
+      [],
+      '★ 这些路由的 handler 返回的 promise 4 秒内没有 settle —— 旧口径在这里会挂死整个测试进程（不是红，是挂）',
+    )
+    assert.deepEqual(
+      c.threwAfterResp.map((r) => fmtThrown(r, 160)),
+      [],
+      '★ 这些路由已给出响应、但随后又抛出未处理异常',
+    )
+    assert.deepEqual(
+      c.badStatus.map((r) => fmtPath(r) + ' status=' + r.status),
+      [],
+      '★ 状态码不是合法 HTTP 码',
+    )
+    // ★ ⑤ 逃逸的拒绝：必须带「哪条路由 / 哪个方法」——否则 node:test 只会把它记在测试文件名下
+    assert.deepEqual(
+      unhandledRejections.map((u) => u.ctx + ' → ' + u.reason.split('\n')[0].slice(0, 160)),
+      [],
+      '★ 出现逃逸的未处理拒绝（fire-and-forget 链抛错）—— 上列每条都带命中归因',
+    )
+  })()
+})
+
+test('④ 反证：classifySmoke 必须把四类失败分对桶（不许"桶是空的所以全绿"）', () => {
+  const rec = (o) => Object.assign({ method: 'GET', path: '/api/tavern/x', status: 200, hasResponse: true, handlerHang: false, body: '', thrown: '' }, o)
+  const cases = [
+    ['缺依赖（抛出）', rec({ hasResponse: false, thrown: 'ReferenceError: json is not defined\n  at ...' }), 'dep'],
+    ['缺依赖（响应体里）', rec({ body: '{"error":"readState is not a function"}' }), 'dep'],
+    ['抛在响应之前', rec({ hasResponse: false, thrown: 'Error: boom\n  at ...' }), 'threwBeforeResp'],
+    ['真挂住（响应永不 end）', rec({ hasResponse: false, thrown: '' }), 'hung'],
+    ['handler 永不 settle', rec({ hasResponse: false, handlerHang: true }), 'handlerHang'],
+    ['响应后又抛', rec({ hasResponse: true, thrown: 'Error: late\n  at ...' }), 'threwAfterResp'],
+    ['非法状态码', rec({ hasResponse: true, status: 0 }), 'badStatus'],
+  ]
+  for (const [label, r, want] of cases) {
+    const c = classifySmoke([r])
+    const buckets = Object.keys(c).filter((k) => c[k].length > 0)
+    assert.deepEqual(buckets, [want], '★ 「' + label + '」应当**只**落进 ' + want + ' 桶，实际 ' + JSON.stringify(buckets))
   }
-  // ① 每条路由都被打到了（每条各两次）
-  const hitPaths = new Set(records.map((r) => r.path))
-  assert.equal(hitPaths.size, routes.length, '★ 有路由没被打到：' + routes.map((r) => r.path).filter((p) => !hitPaths.has(p)).join(', '))
-
-  // ③ 依赖类错误：抛出的 / 或响应体里带出来的，都要判红
-  const depBugs = records.filter((r) => (r.thrown && DEP_BUG_RE.test(r.thrown)) || (r.body && DEP_BUG_RE.test(r.body)))
-  assert.deepEqual(
-    depBugs.map((r) => r.method + ' ' + r.path + ' → ' + (r.thrown || r.body).split('\n')[0].slice(0, 140)),
-    [],
-    '★ 出现「缺失依赖」类错误（ReferenceError / not a function / 读不到属性）—— 搬家时漏传了依赖',
-  )
-  // 同步抛错 = 路由没自己处理异常，同样判红（附原文前 160 字）
-  const unhandled = records.filter((r) => r.thrown && !DEP_BUG_RE.test(r.thrown))
-  assert.deepEqual(unhandled.map((r) => r.method + ' ' + r.path + ' → ' + r.thrown.split('\n')[0].slice(0, 160)), [])
-
-  // ③ 每条都要有「真响应」：拿到响应体，状态码是合法数字
-  const noResp = records.filter((r) => !r.hasResponse)
-  assert.deepEqual(noResp.map((r) => r.method + ' ' + r.path), [], '★ 这些请求在 4 秒内没有任何响应（挂住/未 end）')
-  const badStatus = records.filter((r) => !Number.isInteger(r.status) || r.status < 200 || r.status > 599)
-  assert.deepEqual(badStatus.map((r) => r.method + ' ' + r.path + ' status=' + r.status), [], '★ 状态码不是合法 HTTP 码')
+  // 分区性：正常记录哪个桶都不进；坏记录恰好一个桶
+  const good = rec({})
+  assert.deepEqual(Object.keys(classifySmoke([good])).filter((k) => classifySmoke([good])[k].length > 0), [], '正常记录不该进任何失败桶')
+  // 对照：真的缺依赖时，这条分类确实会红（而不是恒真）
+  const all = [rec({ hasResponse: false, thrown: 'TypeError: x is not a function' })]
+  assert.equal(classifySmoke(all).dep.length, 1, '对照：缺依赖必须被认出来')
 })
 
 test('③ 清理：临时 DSH_HOME 不在用户真实目录里，且夹具没被写坏', () => {
