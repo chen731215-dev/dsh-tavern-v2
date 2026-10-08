@@ -227,11 +227,30 @@ export function segmentIsSafe(seg) {
  */
 export function captureExpr(lines, startLine, startCol) {
   const endsOpen = (t) => /[+,\-*/%&|?:]$/.test(t.trim())
+  /** 下一行是不是「表达式续行」？必须排除注释行 ——
+   *  JSDoc 的 `* ...` 与行注释 `// ...` 都以运算符字符开头，误判会把注释吃进表达式（假阳性）。 */
+  const startsOpen = (t) => {
+    const x = String(t).trim()
+    if (x === '' || x.startsWith('//') || x.startsWith('/*') || x.startsWith('*')) return false
+    return /^[+,\-/%&|?:]/.test(x)
+  }
+  /** 该位置是否落在正则字面量里（`/` 出现在"期待表达式"的位置才算正则起点）。
+   *  为什么要它：`/['"]/` 里的引号会污染引号状态跟踪，导致捕获文本吃掉行尾 `;`。 */
+  const regexStartsAt = (line, k) => {
+    if (line[k] !== "/") return false
+    for (let q = k - 1; q >= 0; q--) {
+      const pc = line[q]
+      if (pc === " " || pc === "\t") continue
+      return !/[A-Za-z0-9_$)\]}]/.test(pc)   // 前面是值/右括号 ⇒ 这是除号；否则是正则起点
+    }
+    return true
+  }
   let text = ''
   let depth = 0
   let quote = ''
   for (let li = startLine; li < Math.min(startLine + 12, lines.length); li++) {
-    const line = li === startLine ? String(lines[li]).slice(startCol) : lines[li]
+    const line = li === startLine ? String(lines[li]).slice(startCol) : String(lines[li])
+    let cut = -1                                  // 行尾注释的起点（本轮修复 ②）
     for (let k = 0; k < line.length; k++) {
       const c = line[k]
       if (quote) {
@@ -240,20 +259,61 @@ export function captureExpr(lines, startLine, startCol) {
         text += c
         continue
       }
+      // 正则字面量：整段跳过（本轮修复 ③）
+      if (c === '/' && line[k + 1] !== '/' && line[k + 1] !== '*' && regexStartsAt(line, k)) {
+        text += c
+        let inClass = false
+        for (k++; k < line.length; k++) {
+          const rc = line[k]
+          text += rc
+          if (rc === '\\') { if (k + 1 < line.length) { text += line[k + 1]; k++ } continue }
+          if (rc === '[') inClass = true
+          else if (rc === ']') inClass = false
+          else if (rc === '/' && !inClass) break
+        }
+        continue
+      }
+      // 行尾注释：到行末为止都不算表达式（本轮修复 ②）
+      if (c === '/' && line[k + 1] === '/') { cut = k; break }
       if (c === '"' || c === "'" || c === '`') { quote = c; text += c; continue }
       if (c === '(' || c === '[' || c === '{') depth++
       else if (c === ')' || c === ']' || c === '}') {
-        if (depth === 0) return text.trim()   // ② 越界闭括号：表达式到此为止
+        if (depth === 0) return text.trim()     // ② 越界闭括号：表达式到此为止
         depth--
       } else if (c === ';' && depth === 0) {
-        return text.trim()                    // ① 顶层分号：表达式到此为止
+        return text.trim()                      // ① 顶层分号：表达式到此为止
       }
       text += c
     }
-    if (depth <= 0 && !quote && !endsOpen(text)) return text.trim()  // ③
+    const next = lines[li + 1] === undefined ? '' : String(lines[li + 1])
+    // ③ 续行判断：括号/引号未闭合、行尾是顶层运算符，或**下一行以顶层运算符开头**
+    //    （最后这条是复核方 2026-10-08 的发现：旧实现只认"行尾"，`= esc(a)` 换行 `+ raw;` 会整段漏判）
+    if (depth <= 0 && !quote && !endsOpen(text) && !startsOpen(next)) return text.trim()
     text += '\n'
   }
   return text.trim()
+}
+
+/**
+ * 找出**不在字符串字面量里**的 sink 匹配。
+ * 为什么要它：`const msg = "el.innerHTML = " + esc(x)` 里的 sink 文本只是普通字符串，
+ * 旧实现会把它当成真 sink，产出垃圾段（复核方 2026-10-08 报的假阳性形态）。
+ * 做法：逐字符走到匹配位置，数引号；落在字符串里就返回 null。
+ * @returns {RegExpMatchArray|null}
+ */
+function insideStringSink(line, re) {
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
+  let m
+  while ((m = g.exec(line))) {
+    let q = ''
+    for (let k = 0; k < m.index; k++) {
+      const c = line[k]
+      if (q) { if (c === '\\') { k++; continue } if (c === q) q = '' ; continue }
+      if (c === '"' || c === "'" || c === '`') q = c
+    }
+    if (!q) return m
+  }
+  return null
 }
 
 /**
@@ -267,7 +327,7 @@ export function findSuspects(src) {
   for (let i = 0; i < lines.length; i++) {
     if (isCommentLine(lines[i])) continue
     for (const sink of SINKS) {
-      const m = lines[i].match(sink.re)
+      const m = insideStringSink(lines[i], sink.re)
       if (!m) continue
       const expr = captureExpr(lines, i, m.index + m[0].length)
       if (!expr) continue
