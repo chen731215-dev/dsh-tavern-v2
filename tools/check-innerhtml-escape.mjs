@@ -390,6 +390,61 @@ export function bodyInterpolationsUnsafe(src, fnName) {
   return issues
 }
 
+/**
+ * 「值来源」结构断言 —— 针对 sink 右边是**变量/参数**的情况。
+ *
+ * 为什么需要它：sink 那一层只看到一个词（`statusEl.innerHTML = msg` 或 `setStatus(html, …)`），
+ * 真正要守的是**这个值是怎么拼出来的**。`mustContain` 只能钉住"某些片段还在"，
+ * 挡不住"往同一条拼装链里新加一个未转义片段"（钉的片段都还在 ⇒ 照样全绿）。
+ * 这正是复核方 2026-10-08 对 `param-by-callers` 类条目提出的要求：
+ * **「往同一条链里新加一个未转义片段必须报红」**。
+ *
+ * 判定规则（刻意窄，且写在这里供审计）：从**声明行**到**调用行**之间，
+ * 每一条对该变量的赋值/累加语句，其表达式按顶层 `+` 分段后，每段必须是：
+ *   · 字面量 / esc 函数族 / 计数器（`.length` · `.count`）；或
+ *   · 数字型惯用法：`xxx || 0`（计数兜底）或纯数字。
+ * ⚠️ **已知窄口径**：`(d.note || 0)` 这种"标识符 + `|| 0`"会被当成数字 —— 若该位置将来真的放文本数据，
+ *    要**改这条判据**，而不是放宽它。
+ *
+ * 证据失效（找不到声明行/调用行）⇒ 返回一条 issue（**不许静默通过**）。
+ * @returns {string[]} 违规说明（空数组 = 通过）
+ */
+export const ORIGINS = [
+  {
+    file: 'lib/client.manager.bundle.js',
+    name: '全局正则面板的状态行：statusEl ← html',
+    varName: 'html',
+    decl: 'var html = \'✅ 导入完成',
+    call: 'setStatus(html',
+    why: '入参 html 由「导入完成」计数与 esc(...) 拼成；改 textContent 会把 <br><span> 标记当文字显示，故保留 innerHTML + 值来源断言',
+  },
+]
+
+/** 数字型惯用法：`xxx || 0` 兜底、或纯数字、或计数属性。 */
+const numberish = (s) => /^\(?\s*[A-Za-z_$][\w$.]*\s*\|\|\s*0\s*\)?$/.test(s) || /\.(length|count)$/.test(s) || /^-?[\d.]+$/.test(s)
+
+export function valueOriginUnsafe(src, spec) {
+  const lines = String(src).split(/\r?\n/)
+  const di = lines.findIndex((l) => l.includes(spec.decl))
+  if (di < 0) return [spec.name + '：找不到声明行「' + spec.decl + '」—— 证据失效（函数被重构/改名？请同步 ORIGINS）']
+  const ci = lines.findIndex((l, i) => i >= di && l.includes(spec.call))
+  if (ci < 0) return [spec.name + '：找不到调用行「' + spec.call + '」—— 证据失效（请同步 ORIGINS）']
+  const assignRe = new RegExp('\\b' + spec.varName + '\\s*(?:\\+=|=(?!=))')
+  const issues = []
+  for (let k = di; k <= ci; k++) {
+    const l = lines[k]
+    if (isCommentLine(l)) continue
+    const m = l.match(assignRe)
+    if (!m) continue
+    const expr = l.slice(m.index + m[0].length).replace(/;\s*$/, '')
+    for (const seg of splitTopLevel(expr)) {
+      const t = seg.trim()
+      if (t === '' || isLiteral(t) || segmentIsSafe(t) || numberish(t)) continue
+      issues.push(spec.name + ':' + (k + 1) + '  未转义片段 ' + JSON.stringify(t.slice(0, 90)))
+    }
+  }
+  return issues
+}
 /** 清单外的注入入口（返回到命中的行）。 */
 export function findUnlistedSinks(src) {
   const lines = String(src).split(/\r?\n/)
@@ -469,6 +524,19 @@ if (isMain) {
   if (sandboxIssues.length) {
     console.error('  ❌ srcdoc 的 sandbox 断言不通过：')
     for (const i of sandboxIssues) console.error('     ' + i)
+    process.exit(1)
+  }
+
+  // ④ 值来源断言：sink 右边是变量时，守「它怎么拼出来的」（清单见 ORIGINS）
+  const originIssues = []
+  for (const spec of ORIGINS) {
+    const abs = path.join(REPO, spec.file)
+    if (!fs.existsSync(abs)) { originIssues.push(spec.file + ' 不存在（ORIGINS 证据失效）'); continue }
+    for (const i of valueOriginUnsafe(fs.readFileSync(abs, 'utf8'), spec)) originIssues.push(spec.file + ' → ' + i)
+  }
+  if (originIssues.length) {
+    console.error('  ❌ 值来源断言不通过（拼装链里出现未转义片段）：')
+    for (const i of originIssues) console.error('     ' + i)
     process.exit(1)
   }
 
