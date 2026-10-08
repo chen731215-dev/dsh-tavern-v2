@@ -26,7 +26,7 @@
 | 步骤 | 结果 |
 |---|---|
 | `npm run check` | ✅ 语法全通过（54 个文件） |
-| `npm test` | ✅ 481 pass / 0 fail / 3 skipped |
+| `npm test` | ✅ 全绿（数量以输出为准 —— 这里原本手抄了 481，是更早提交上的数，已过期） |
 | `npm run check:style` | ✅ exit 0 |
 | `npm run check:integrity` | ✅ 三件套全通过 |
 | `npm run check:innerhtml` | ✅ 基线 7 条 / 0 新增 |

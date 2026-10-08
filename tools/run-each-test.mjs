@@ -60,9 +60,16 @@ for (const f of files) {
   console.log((ok ? '✅ ' : vacuous ? '❔ ' : '❌ ') + f.padEnd(38) + 'pass=' + String(pass).padStart(4) + '  fail=' + fail +
     (skipped ? '  skip=' + skipped : '') + (vacuous ? '   ← 0 项断言（空跑，判失败）' : ''))
   if (!ok) {
-    // 只把失败行拉出来，避免整段输出淹没汇总
-    const lines = text.split('\n').filter((l) => /✖|AssertionError|Error:/.test(l)).slice(0, 6)
-    for (const l of lines) console.log('     ' + l.trim().slice(0, 160))
+    if (vacuous) {
+      // ★ 空跑时「最后几行」才是诊断信息：崩溃/子进程没起来时，错误在结尾而不在 ✖ 行里。
+      //   （复核意见：只打 ✖|AssertionError|Error: 会让「崩溃」和「真空跑」分不开。）
+      console.log('     ↓ 子进程输出末尾（判断是崩溃还是真的没跑）:')
+      for (const l of text.split('\n').slice(-5)) console.log('       ' + l.trim().slice(0, 160))
+    } else {
+      // 只把失败行拉出来，避免整段输出淹没汇总
+      const lines = text.split('\n').filter((l) => /✖|AssertionError|Error:/.test(l)).slice(0, 6)
+      for (const l of lines) console.log('     ' + l.trim().slice(0, 160))
+    }
   }
 }
 console.log('\n──────────────────────────────────────────────')

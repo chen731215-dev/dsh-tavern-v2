@@ -40,6 +40,8 @@ export const DOC_COUNT_PATTERNS = [
   { re: /\d+\s*(?:个)?文件\s*[/／]\s*\d+\s*项/, why: '手抄「N 文件 / N 项」基线' },
   { re: /\.test\.js`?\s*[（，,]\s*\d+\s*项/, why: '手抄某个测试文件的项数' },
   { re: /^│.*#.*\d+\s*行/m, why: '结构树里手抄行数' },
+  { re: /\d+\s*pass\b/, why: '手抄测试通过数（会随每次改动当场过期）' },
+  { re: /\d+\s*fail\b/, why: '手抄测试失败数' },
 ]
 
 /** 返回文本里命中的「手抄数字」违规（空数组 = 干净） */
@@ -234,6 +236,8 @@ test('⑤-b 反证：坏样本必须被判据抓住', () => {
     '├── tests/  # 25 个测试文件 / 468 项断言',
     '| x | y |  ✅ 完成（`tests/client-integrity.test.js`，20 项）',
     '│   ├── bindings.js  # 绑定分类（216 行）',
+    '全量测试：481 pass / 0 fail / 3 skipped',
+    '跑完得到 488 pass，0 fail',
   ]
   for (const s of samples) {
     assert.ok(docCountOffences(s).length > 0, '判据漏了坏样本：' + s)
