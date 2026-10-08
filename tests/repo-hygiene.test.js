@@ -57,9 +57,58 @@ test('③ 反证：路径规则必须挡住会话日志 / 凭据文件 / 备份'
   }
 })
 
+test('⑦ 反证：**单字符**用户名也必须被抓（旧写法 {2,} 会让它穿闸门）', () => {
+  const BS = String.fromCharCode(92)
+  const bad = [
+    'const p = ' + String.fromCharCode(34) + 'C:' + BS + 'Users' + BS + 'm' + BS + 'AppData' + BS + 'x' + String.fromCharCode(34),
+    'const q = ' + String.fromCharCode(34) + '/Users/' + 'm' + '/x' + String.fromCharCode(34),
+  ]
+  for (const src of bad) {
+    const tmp = path.join(REPO, '.hygiene-probe.tmp')
+    fs.writeFileSync(tmp, src, 'utf8')
+    try {
+      const hits = scan(['.hygiene-probe.tmp']).filter((x) => x.kind === 'content/machine-home-path')
+      assert.ok(hits.length >= 1, '★ 单字符用户名的本机路径穿闸门了：' + JSON.stringify(src))
+    } finally { fs.unlinkSync(tmp) }
+  }
+})
+
 test('④ 占位符不算（文档与提示文案里的示意写法不该误报）', () => {
   for (const s of ['<home>/.dsh', 'C:' + BS + 'Users' + BS + '...', 'C:/Users/<name>/x']) {
     assert.deepEqual(probe(s).filter((i) => i.kind === 'content/machine-home-path'), [], '占位符不该判红：' + JSON.stringify(s))
+  }
+})
+
+test('⑥ 反误报：跨字符串边界的拼接不许被判成凭据（2026-10-08 移植到 muv 第一跑就撞到）', () => {
+  const Q = String.fromCharCode(39)
+  // 命中过的形态：`…token=' + rtProbe.hasFit + '…` —— 值跨越了一对引号，其实是拼接
+  const cases = [
+    'log(' + Q + ' 引导脚本含专属 token=' + Q + ' + rtProbe.hasFit + ' + Q + ' 尾' + Q + ')',
+    'const apiKey = ' + Q + ' + process.env.K + ' + Q,
+  ]
+  for (const src of cases) {
+    const tmp = path.join(REPO, '.hygiene-probe.tmp')
+    fs.writeFileSync(tmp, src, 'utf8')
+    try {
+      const out = scan(['.hygiene-probe.tmp']).filter((x) => x.kind === 'content/auth-assignment')
+      assert.deepEqual(out, [], '★ 拼接式写法被误判成凭据：' + JSON.stringify(src))
+    } finally { fs.unlinkSync(tmp) }
+  }
+
+  // ★ 正向断言（审核方要求）：**收紧不许把真凭据一起漏掉**。
+  //   反例来源：我第一版把值里的 `+` 一律禁掉 ⇒ base64/JWT 里含 `+` 的真凭据不再被抓。
+  const mustCatch = [
+    'const apiKey = ' + Q + 'AAAAB3NzaC1yc2E+AAAABBBBCCCC' + Q,        // 含 + 的 base64 式凭据
+    'const password = ' + Q + 'correct horse battery staple' + Q,     // 含空格的密码短语
+    'const _authToken = ' + Q + 'abcdefghijklmnopqrst' + Q,           // 纯单字面量
+  ]
+  for (const src of mustCatch) {
+    const tmp = path.join(REPO, '.hygiene-probe.tmp')
+    fs.writeFileSync(tmp, src, 'utf8')
+    try {
+      const hits = scan(['.hygiene-probe.tmp']).filter((x) => x.kind === 'content/auth-assignment')
+      assert.ok(hits.length >= 1, '★ 真凭据被判漏（收紧过头）：' + JSON.stringify(src))
+    } finally { fs.unlinkSync(tmp) }
   }
 })
 
