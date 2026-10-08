@@ -34,8 +34,11 @@ import { fileURLToPath } from 'node:url'
  *       `panelHTML` 的 markup 里（且锚点链的容器最终指向面板）。
  *   ⚠️ 为什么必须升格成判据（而不是留在脚本里）：我批2 的材料就是用「**全局** last-write-wins 的变量→id 表」
  *      得出的，`st` 在文件后段还有别的绑定被后写覆盖 ⇒ 归属**蒙对了**才过；方法会随人漂，判据不会。
- *   ⚠️ 本文件里的括号配平用**自带的小遮罩**（只服务本判据的括号计数）—— 与 slice-anchors 的那份实现无关，
- *      不引另一个 test 文件（那会把它的用例也注册进本进程）。
+ *   ⚠️ 本文件里的括号配平用**自带的小遮罩**（只服务本判据的括号计数）—— 不引另一个 test 文件（那会把它的用例
+ *      也注册进本进程）。它与 `tests/slice-anchors.test.js` 的 `maskComments` **同源**（同样的引号/注释/正则规则）：
+ *      **改一处必须同步另一处**；若将来出现第三个消费者，抽到 `tests/_helpers/mask.mjs`（非 `.test.js` ⇒ 不被 runner 当测试）。
+ *      ★ 它的正则跳过不是装饰：漏了它，`/['"]/` 里的引号会让字符串状态错位 ⇒ 整份文本被当成"字符串里"
+ *        ⇒ `function panelHTML(` 再也找不到（判据整体失明，实测踩过）。
  */
 function maskForBraces(text) {
   const s = String(text)
@@ -147,7 +150,9 @@ export function tvUsageSites(bundleText) {
     }
     const m = l.match(/([A-Za-z_$][\w$]*)\.style\./)
     const chain = m ? (() => {
-      const b = nearestBinding(lines, m[1], i - 1)
+      // ★ 从**本行**开始向上找绑定（含本行）：`var x = document.getElementById('y'); x.style.color = …` 是常见写法，
+      //   从 i-1 起找会把这种"同一行先绑定后使用"判成"无绑定" ⇒ 假红（实测：我自己的正对照夹具就这么红的）。
+      const b = nearestBinding(lines, m[1], i)
       return b ? resolveBindingChain(lines, b.expr, b.line - 1) : null
     })() : null
     const id = chain && chain.selector ? chain.selector.slice(1) : null
@@ -445,6 +450,17 @@ test('③-b 反证：把一处 JS 绑定改到**面板外**的元素 ⇒ 必须�
   const s3 = tvUsageSites(synthetic)
   assert.equal(s3.problems.length, 1, '面板外的使用点必须报一条，实际=' + JSON.stringify(s3.problems))
   assert.match(s3.problems[0], /L4/)
+  // ★ 反证③（reviewer 的 I2 形态，最容易被下限蒙过去的一种）：**新增**一个"面板外的 JS 使用点"，
+  //   且总数仍然 ≥ 下限 ⇒ 必须红，而且红的原因**不能**是下限 ⇒ 证明是**逐点判定**在起作用。
+  const added = BUNDLE + "\nvar probeOut = document.getElementById('dsh-tavern-float-hint'); probeOut.style.color = 'var(--tv-color-danger)';\n"
+  const s4 = tvUsageSites(added)
+  assert.ok(s4.sites.length > USAGE_FLOOR, '夹具前提：新增后使用点数（' + s4.sites.length + '）必须仍 ≥ 下限（' + USAGE_FLOOR + '），否则这条反证会被下限接住')
+  assert.equal(s4.problems.length, 1, '面板外的新增使用点必须报一条，实际=' + JSON.stringify(s4.problems))
+  assert.match(s4.problems[0], /无法证明在面板子树内/, '红必须来自逐点归属判定（不是下限）')
+  assert.match(s4.problems[0], /--tv-color-danger/, '必须点名令牌')
+  // 对照：**同样的新增行**若绑到面板**内**的元素 ⇒ 不该红（证明上一条不是"见到新增就红"）
+  const addedIn = BUNDLE + "\nvar probeIn = document.getElementById('tavern-status'); probeIn.style.color = 'var(--tv-color-danger)';\n"
+  assert.deepEqual(tvUsageSites(addedIn).problems, [], '绑到面板内元素的新增点不该红')
 })
 
 test('②-b 反证：把定义挪到 `:root` ⇒ 报红；作用域内 ⇒ 放行；引用未定义 ⇒ 报红；登记表漂移 ⇒ 报红', () => {
