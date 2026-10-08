@@ -163,9 +163,14 @@ function isRegexStart(line, k) {
   return true
 }
 
-/** 从正则起点 `/`（含）扫到结束，返回结束下标（含 flags 的最后一个字符）；不是正则或未闭合返回 k+1。 */
+/**
+ * 从正则起点 `/`（含）扫到结束，返回结束下标（含 flags 的最后一个字符）。
+ * ★ **不是正则时返回 -1**（而不是 k+1）—— 曾经的哨兵写成 k+1，而调用点判的是 `end > i`，
+ *   那是**恒真**的，于是每个除号都被当成正则起点、该行往后的 sink 全部失明。
+ *   这是第二轮独立复核抓到的回归（旧实现反而在除号上是对的）。
+ */
 function regexEndAt(line, k) {
-  if (!isRegexStart(line, k)) return k + 1
+  if (!isRegexStart(line, k)) return -1
   let inClass = false
   let i = k + 1
   for (; i < line.length; i++) {
@@ -201,7 +206,7 @@ function eachCodeChar(line, cb) {
     if (c === '"' || c === "'" || c === '`') { quote = c; cb(c, i, { inLiteral: true, depth }); continue }
     if (c === '/') {
       const end = regexEndAt(line, i)
-      if (end > i) {                       // 是正则字面量：整段按字面量处理
+      if (end >= 0) {                      // 是正则字面量：整段按字面量处理
         quote = '/'
         cb(c, i, { inLiteral: true, depth })
         continue
@@ -490,6 +495,24 @@ export function captureExpr(lines, startLine, startCol) {
  * 做法：逐字符走到匹配位置，数引号；落在字符串里就返回 null。
  * @returns {RegExpMatchArray|null}
  */
+/**
+ * 一行里**所有**不在字面量里的 sink 匹配（逐个返回）。
+ * 为什么要它：同一行可能有第二个 sink（`el.innerHTML = esc(a); el.innerHTML += raw;`），
+ *   `String.match` 只给第一个 ⇒ 后面的裸拼永远不被判（第二轮复核 N5）。
+ */
+function allSinkMatches(line, re) {
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
+  const out = []
+  let m
+  while ((m = g.exec(line))) {
+    let inside = false
+    eachCodeChar(line, (c, i, ctx) => { if (i === m.index) inside = ctx.inLiteral })
+    if (!inside) out.push(m)
+    if (m[0] === '') g.lastIndex++        // 空匹配防死循环
+  }
+  return out
+}
+
 function insideStringSink(line, re) {
   const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
   let m
@@ -514,8 +537,9 @@ export function findSuspects(src) {
   for (let i = 0; i < lines.length; i++) {
     if (isCommentLine(lines[i])) continue
     for (const sink of SINKS) {
-      const m = insideStringSink(lines[i], sink.re)
-      if (!m) continue
+      // ★ 逐个匹配：同一行可能有第二个 sink（`el.innerHTML = esc(a); el.innerHTML += raw;`），
+      //   只取第一个会让后面的裸拼永远不被判（第二轮复核 N5）。
+      for (const m of allSinkMatches(lines[i], sink.re)) {
       const expr = captureExpr(lines, i, m.index + m[0].length)
       if (!expr) continue
       const segs = splitOperators(expr)
@@ -536,6 +560,7 @@ export function findSuspects(src) {
         kind: sink.kind,
         parts: bad.map((s) => s.trim().replace(/\s+/g, ' ')),
       })
+      }   // ← 逐个匹配的循环闭合（N5）
     }
   }
   return out
