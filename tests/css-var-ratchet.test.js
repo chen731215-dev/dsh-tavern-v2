@@ -31,21 +31,35 @@ const BUNDLE_FILE = path.join(REPO, 'lib', 'client.manager.bundle.js')
 //    `git add` 当场被拒。**不要**用 `git add -f` 绕过（那等于把凭据守卫踩过去）；改名字才是正解。
 const BASELINE_FILE = path.join(REPO, 'tools', 'css-var-baseline.json')
 
-/** 载体的结束标记：`].join('')` 单行（数组里含 `]`（如 `input[type=checkbox]`）⇒ 不能数方括号）。 */
-const CARRIER_END = '].join(\'\')'
-
 /**
- * 取出 `var TAVERN_CSS = [ … ].join('')` 的**数组内容**（不含标记本身）；载体找不到 ⇒ null。
- * ★ 必须用「起始行 + 结束标记行」定界：CSS 里 `input[type=checkbox]` 这类 `]` 会让"数方括号"当场歪掉。
+ * 载体的结束标记：`].join('');` 单行（数组里含 `]`（如 `input[type=checkbox]`）⇒ 不能数方括号）。
+ * ★★ 这个标记在仓库里**不是唯一的**（实测：另有面板 markup 那个数组也以 `].join('');` 收尾，
+ *    只是缩进不同）⇒ 边界必须用「**与起始行同缩进**」来消歧，并且**要求恰好一条** ——
+ *    否则"把真结束标记改一个字符"（例如 `].join("")`）会让判据**静默绑到后面那个数组**，
+ *    于是一边看着大 6 倍、语义完全不同的文本，一边全绿（这是 reviewer 在 `7117a40` 上抓到的最小复现）。
  */
-export function extractCssCarrier(bundleText) {
+const CARRIER_END = "].join('');"
+
+/** 载体起始行之后的**全部**结束标记候选（按缩进分组），供"边界必须唯一"的判据点名。 */
+export function carrierCandidates(bundleText) {
   const lines = String(bundleText).split(/\r?\n/)
   const start = lines.findIndex((l) => /^\s*var\s+TAVERN_CSS\s*=\s*\[\s*$/.test(l))
-  if (start < 0) return null
-  let end = -1
-  for (let i = start + 1; i < lines.length; i++) if (lines[i].trim().startsWith(CARRIER_END)) { end = i; break }
-  if (end < 0) return null
-  return lines.slice(start + 1, end).join('\n')
+  if (start < 0) return { start: -1, indent: null, ends: [], sameIndent: [] }
+  const indent = (lines[start].match(/^\s*/) || [''])[0]
+  const ends = []
+  for (let i = start + 1; i < lines.length; i++) if (lines[i].trim() === CARRIER_END) ends.push(i)
+  const sameIndent = ends.filter((i) => (lines[i].match(/^\s*/) || [''])[0] === indent)
+  return { start, indent, ends, sameIndent }
+}
+
+/**
+ * 取出 `var TAVERN_CSS = [ … ].join('')` 的**数组内容**（不含标记本身）。
+ * **fail-closed**：起点找不到 / 同缩进候选不是**恰好 1 条** ⇒ 返回 null（调用方据此报红，绝不静默换面）。
+ */
+export function extractCssCarrier(bundleText) {
+  const { start, sameIndent } = carrierCandidates(bundleText)
+  if (start < 0 || sameIndent.length !== 1) return null
+  return String(bundleText).split(/\r?\n/).slice(start + 1, sameIndent[0]).join('\n')
 }
 
 /** 按 `}` 切 CSS 规则 → `[{ selector, body, index }]`（`selector` 已 trim）。
@@ -121,12 +135,14 @@ export function tokenProblems(defs, refs, registry = []) {
   return out
 }
 
-/** 非空跑下限（口径：实测值见 `_scratch/s3/measure-s3b.mjs`；下限取实测的 ~80%）。 */
-export const CLASS_FLOOR = 24          // 实测 30
-export const RULE_FLOOR = 30           // 实测 38 条规则
-export const TOKEN_FLOOR = 0           // 令牌层本卡是"从 0 开始"建 ⇒ 下限随第一批令牌落地而抬（笔2）
+/** 非空跑下限（口径：实测值见 `_scratch/s3/measure-s3b.mjs`；下限取实测的 ~80%）。
+ *  ⚠️ 注释里的实测值是**时点快照**（会随批次变），别把它当契约；契约是"下限"本身。 */
+export const CLASS_FLOOR = 24          // 实测 30（时点 7117a40）
+export const RULE_FLOOR = 30           // 实测 51（时点 7117a40；加令牌规则后 +1）
+export const TOKEN_FLOOR = 0           // 令牌层本卡是"从 0 开始"建 ⇒ 下限随第一批令牌落地而抬（下一笔）
 
 const BUNDLE = fs.readFileSync(BUNDLE_FILE, 'utf8')
+const CAND = carrierCandidates(BUNDLE)
 const CARRIER = extractCssCarrier(BUNDLE)
 // ★ 基线**允许不存在**（首次生成基线时要用本文件的纯函数；缺基线会由 ① 的下限断言报红 —— 不许静默空跑）。
 const BASELINE = fs.existsSync(BASELINE_FILE)
@@ -137,17 +153,60 @@ const CLASSES = CARRIER ? extractCssClassNames(CARRIER) : new Set()
 const DEFS = CARRIER ? extractTokenDefs(CARRIER) : []
 const REFS = CARRIER ? extractTokenRefs(CARRIER) : new Set()
 
+test('①-0 载体边界必须**唯一**（fail-closed：不许静默绑到后面那个结束标记上）', (t) => {
+  t.diagnostic('起始行 L' + (CAND.start + 1) + '（缩进 ' + JSON.stringify(CAND.indent) + '）· 结束标记候选 ' +
+    JSON.stringify(CAND.ends.map((i) => i + 1)) + ' · 其中同缩进 ' + JSON.stringify(CAND.sameIndent.map((i) => i + 1)))
+  assert.ok(CAND.start >= 0, '找不到 `var TAVERN_CSS = [ … ]` 起始行 —— 判据空跑（载体改名了？）')
+  assert.equal(
+    CAND.sameIndent.length, 1,
+    '★ 结束标记 ' + JSON.stringify(CARRIER_END) + ' 在起始行之后有 ' + CAND.sameIndent.length + ' 处与起始行同缩进（L' +
+    CAND.sameIndent.map((i) => i + 1).join(', L') + '）—— 边界不可靠（fail-closed，不许静默换面）',
+  )
+  assert.ok(CARRIER, '载体取不出来 —— 判据空跑')
+})
+
 test('① CSS 类名只加不删：基线集合必须仍是现状的子集（点名到类名）', (t) => {
   assert.ok(CARRIER, '找不到 `var TAVERN_CSS = [ … ].join(\'\')` 载体 —— 判据空跑（载体改名了？）')
   t.diagnostic('载体 ' + CARRIER.length + ' 字符 · CSS 规则 ' + RULES.length + ' 条 · 类名 ' + CLASSES.size + ' 个 · 基线 ' + BASELINE.classes.length + ' 个')
+  // 载体必须真的是"面板样式"（不是别的数组）：结构性 sanity（防"绑错面还全绿"）
+  assert.ok(CARRIER.includes('#tavern-manager'), '★ 载体里没有 `#tavern-manager` —— 取到的不是面板样式（绑错面了）')
   // 非空跑：解析面必须真的非空（否则"子集"会恒真）
   assert.ok(RULES.length >= RULE_FLOOR, '只解析出 ' + RULES.length + ' 条 CSS 规则（下限 ' + RULE_FLOOR + '）—— 判据空跑')
   assert.ok(CLASSES.size >= CLASS_FLOOR, '只解析出 ' + CLASSES.size + ' 个类名（下限 ' + CLASS_FLOOR + '）—— 判据空跑')
   assert.ok(BASELINE.classes.length >= CLASS_FLOOR, '基线只登记了 ' + BASELINE.classes.length + ' 个类名（下限 ' + CLASS_FLOOR + '）')
   const missing = missingClassNames(BASELINE.classes, CLASSES, BASELINE.classRemovals)
   assert.deepEqual(missing, [], '★ 这些 CSS 类名被删掉了（"只加不删"是 S3 的硬约束）：\n  ' + missing.join('\n  ') +
-    '\n（确有必要删的，请在 tools/css-token-baseline.json 的 classRemovals 里登记【类名 + 理由】）')
+    '\n（确有必要删的，请在 tools/css-var-baseline.json 的 classRemovals 里登记【类名 + 理由】）')
   assert.deepEqual(removalProblems(BASELINE.classRemovals, CLASSES), [], '★ 删除声明自身有问题（缺理由 / 已陈旧）')
+})
+
+test('①-c 反证（reviewer 的最小复现）：真结束标记改一个字符 ⇒ **必须红**，不许绑到后面那个数组', () => {
+  // 复现：把 TAVERN_CSS 自己的 `].join('');` 改成 `].join("");`（很常见的引号/格式化改动）——**只在内存里改**
+  const mutated = BUNDLE.replace('    ' + CARRIER_END, '    ].join("");')
+  assert.notEqual(mutated, BUNDLE, '替换必须真的发生（否则这条反证是空跑）')
+  const c = carrierCandidates(mutated)
+  assert.equal(c.sameIndent.length, 0, '改掉真边界后，同缩进候选应为 0，实际=' + JSON.stringify(c.sameIndent))
+  assert.equal(extractCssCarrier(mutated), null, '★ 边界不可靠时必须**取不出载体**（调用方据此报红）；' +
+    '若这里返回了文本，就是"静默绑到下一个 `].join(\'\')`"那个洞')
+  // 对照（旧口径的洞）：旧谓词是 `trim().startsWith("].join('')")`（**连引号一起**）——
+  // 真边界被改成 `].join("")` 之后它就落空，于是一路绑到**后面那个数组**的结束标记上（语义完全不同的一段）。
+  const lines = mutated.split(/\r?\n/)
+  const OLD_PREDICATE = (l) => l.trim().startsWith(CARRIER_END)     // = 7117a40 的实现
+  const oldStyleEnd = lines.findIndex((l, i) => i > c.start && OLD_PREDICATE(l))
+  assert.equal(oldStyleEnd, CAND.ends[1],
+    '旧口径落空后会绑到"后面那个数组"（实测 L' + (CAND.ends[1] + 1) + '）——说明这条反证不是重复劳动')
+  assert.ok(!CARRIER.includes('tavern-save'), '对照：错误那段里含面板 markup（真载体里没有）')
+})
+
+test('①-d 正对照 / 唯一性反证：别处有第二处标记但**缩进不同** ⇒ 照常绿；同缩进多一处 ⇒ 必须红', () => {
+  // 正对照：真实文件里就存在第二处 `].join('');`（面板 markup 那个数组，缩进不同）—— 现状必须取到正确载体
+  assert.ok(CAND.ends.length >= 2, '期望真实文件里存在第二处标记（否则这条对照是空的），实际=' + JSON.stringify(CAND.ends))
+  assert.ok(CARRIER.includes("'#tavern-manager .t-card{"), '对照：取到的必须是真 CSS 载体')
+  assert.ok(!CARRIER.includes('tavern-save'), '对照：载体里不该含面板 markup（那是另一个数组）')
+  // 唯一性反证：再插一条**同缩进**的标记 ⇒ 必须判为"边界不可靠"
+  const extra = BUNDLE.replace('    ' + CARRIER_END, '    ' + CARRIER_END + '\n    ].join(\'\');')
+  assert.equal(carrierCandidates(extra).sameIndent.length, 2, '同缩进多一处 ⇒ 候选应为 2')
+  assert.equal(extractCssCarrier(extra), null, '★ 同缩进候选不唯一 ⇒ 必须取不出载体（fail-closed）')
 })
 
 test('①-b 反证：删一个既有类名必须报红并点名；**新增**类名不许报红（这才是"只加不删"的语义）', () => {
