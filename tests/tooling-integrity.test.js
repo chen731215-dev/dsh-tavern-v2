@@ -71,6 +71,25 @@ export function textFiles(repo = REPO) {
   return out.sort()
 }
 
+/** 从 CI 工作流里抽出所有 `run:` 命令（`runs-on:` 不会被误匹配） */
+export function workflowRunCommands(text) {
+  return [...String(text).matchAll(/^[ \t]*run:[ \t]*(.+?)[ \t]*$/gm)].map((m) => m[1].trim())
+}
+
+/** 哪些命令无法映射到 package.json 的脚本（`npm test` 是内建别名，放行） */
+export function unmappedCommands(cmds, scripts) {
+  return cmds.filter((c) => {
+    if (c === 'npm test') return false
+    const m = c.match(/^npm run ([A-Za-z0-9:_-]+)$/)
+    return !(m && Object.prototype.hasOwnProperty.call(scripts, m[1]))
+  })
+}
+
+/** 把 `a && b && c` 形式的脚本拆成命令数组 */
+export function chainCommands(script) {
+  return String(script).split('&&').map((s) => s.trim()).filter(Boolean)
+}
+
 // ════════════════════════════════════════════════════════════════
 // ① 测试清单必须来自目录，不是手抄
 // ════════════════════════════════════════════════════════════════
@@ -152,6 +171,48 @@ test('④ CI 工作流必须存在且覆盖全部护栏', () => {
   assert.deepEqual(missing, [], 'CI 缺这些步骤：' + missing.join(' / '))
   assert.ok(/runs-on:/.test(s), 'CI 没有 runs-on')
   assert.ok(/pull_request/.test(s), 'CI 未在 PR 上触发')
+})
+
+test('④-b CI 里每条 `run:` 都必须能映射到 package.json 的脚本（防重命名漂移）', () => {
+  const cmds = workflowRunCommands(read(WORKFLOW))
+  assert.ok(cmds.length >= 5, '只从工作流里解析出 ' + cmds.length + ' 条 run —— 判据空跑或格式变了')
+  const bad = unmappedCommands(cmds, pkg.scripts)
+  assert.deepEqual(bad, [], '★ 这些 CI 命令映射不到 package.json 脚本（改了名却没改工作流）：\n  ' + bad.join('\n  '))
+})
+
+test('④-c CI 不许被 continue-on-error 之类的手段中和', () => {
+  const s = read(WORKFLOW)
+  assert.ok(!/continue-on-error/.test(s), '★ 工作流里出现 continue-on-error —— 护栏会被静默中和')
+  assert.ok(!/\|\|\s*true/.test(s), '★ 工作流里出现 `|| true` —— 失败会被吞掉')
+})
+
+test('④-d `npm run ci:local` 必须与 CI 跑**同一组**命令（本地镜像不许和 CI 漂）', () => {
+  const local = chainCommands(pkg.scripts['ci:local'] || '')
+  assert.ok(local.length >= 5, 'ci:local 不存在或步骤太少：' + JSON.stringify(pkg.scripts['ci:local']))
+  const ci = workflowRunCommands(read(WORKFLOW))
+  const onlyLocal = local.filter((c) => !ci.includes(c))
+  const onlyCi = ci.filter((c) => !local.includes(c))
+  assert.deepEqual(
+    { onlyLocal, onlyCi },
+    { onlyLocal: [], onlyCi: [] },
+    '★ 本地镜像与 CI 不一致 —— 会出现「本地绿、CI 红」：\n  只在本地跑：' + JSON.stringify(onlyLocal) +
+      '\n  只在 CI 跑：' + JSON.stringify(onlyCi),
+  )
+})
+
+test('④-e 反证：命令抽取与映射判据必须能报出坏样本', () => {
+  const wf = [
+    '      - name: ok',
+    '        run: npm run check',
+    '    runs-on: windows-latest',
+    '      - name: bad',
+    '        run: npm run check:typo',
+  ].join('\n')
+  const cmds = workflowRunCommands(wf)
+  assert.deepEqual(cmds, ['npm run check', 'npm run check:typo'], '抽取结果不对：' + JSON.stringify(cmds))
+  assert.deepEqual(unmappedCommands(cmds, { check: 'x' }), ['npm run check:typo'], '判据没抓住不存在的脚本')
+  assert.deepEqual(unmappedCommands(['npm test'], {}), [], 'npm test 是内建别名，不该被判成未映射')
+  assert.deepEqual(chainCommands('npm run a && npm test'), ['npm run a', 'npm test'])
 })
 
 // ════════════════════════════════════════════════════════════════
