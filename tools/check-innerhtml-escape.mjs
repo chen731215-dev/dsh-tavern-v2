@@ -308,7 +308,12 @@ export function segmentIsSafe(x, d = 0) {
   if (fn) return statementsSafe(fn[1], d + 1)
   // 箭头函数：形参不参与 HTML 构造 ⇒ 只判**函数体**（`x => esc(x.a)` 是安全的）
   const arrow = s.match(/^(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*([\s\S]+)$/)
-  if (arrow) return segmentIsSafe(arrow[1], d + 1)
+  if (arrow) {
+    const body = arrow[1].trim()
+    // ★ 块体箭头（`x => { return esc(x); }`）也要走语句级判定（第五轮修 M1：原先只认表达式体）
+    if (body.startsWith('{') && body.endsWith('}')) return statementsSafe(body.slice(1, -1), d + 1)
+    return segmentIsSafe(body, d + 1)
+  }
   // 顶层三元：条件只决定"选哪支"，两支各自才可能带 HTML ⇒ 只判两支
   const q = findTopLevel(s, '?')
   if (q > 0) {
@@ -321,7 +326,7 @@ export function segmentIsSafe(x, d = 0) {
   if (/^(?:esc|escAttr|escapeHtml|htmlEscapeStr)\s*\(/.test(s) && closesAtEnd(s, s.indexOf('('))) return true
   // 模板字面量：逐个 ${…} 递归
   if (s.startsWith('`') && s.endsWith('`') && s.length > 1) {
-    const interps = [...s.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1])
+    const interps = templateInterps(s)
     if (!interps.length) return true
     return interps.every((t) => splitOperators(t).every((p) => segmentIsSafe(p, d + 1)))
   }
@@ -347,7 +352,9 @@ export function segmentIsSafe(x, d = 0) {
     // 但集合方法链（map/filter/forEach/reduce/join）的接收者**不是**被拼进 HTML 的数据 ——
     // 它的元素由回调处理，而回调体上面已经递归判过了 ⇒ 这类豁免；其余一律按裸标识符处理。
     const outside = stripGroups(s)
-    const collectionChain = /\.(map|filter|forEach|reduce|join)\s*\(/.test(s)
+    // ★ 只有带回调的集合方法才豁免接收者（元素由回调处理、而回调体已判过）；
+    //   `.join(` 单独出现不算 —— 否则 `items.join('')` 这种「接收者元素直接进 HTML」会放行（第三轮复核 N2）。
+    const collectionChain = /\.(map|filter|forEach|reduce|flatMap)\s*\(/.test(s)
     const outsideNoCallee = outside.replace(/[A-Za-z_$][\w$]*\s*\.\s*[A-Za-z_$][\w$]*\s*(?=\()/g, '')
     if (collectionChain) {
       // 集合方法链：把「接收者+方法」整条链（到每个 ( 之前）都去掉 —— 元素已由回调处理
@@ -361,11 +368,46 @@ export function segmentIsSafe(x, d = 0) {
 }
 
 /** 语句块安全判定：按 `;`/换行切分，逐句去掉 `return`/`var` 等前缀后递归。 */
+/**
+ * 语句块安全判定：按 `;`/换行切分，逐句判定。
+ *
+ * ★ 第五轮修 M2（复核方给的最小反例）：
+ *   ① `var h = esc(a) + 'b'` 这类**赋值**只判**右侧**（左值是名字，不是数据）；
+ *   ② 本体内被赋值过的名字，在**后续**语句里视为安全（把 `h` 换成 `0` 再判）——
+ *      这样「函数体里先算局部变量再拼接」不再误报，也能撤掉为它加的那几条基线。
+ */
 function statementsSafe(body, d) {
-  return String(body).split(/;|\n/).map((x) => x.trim()).filter(Boolean).every((st) => {
-    const t = st.replace(/^(?:return|throw|var|let|const)\s+/, '').replace(/;\s*$/, '').trim()
-    return t === '' || segmentIsSafe(t, d)
-  })
+  const stmts = String(body).split(/;|\n/).map((x) => x.trim()).filter(Boolean)
+  const locals = []
+  const bad = []
+  for (let i = 0; i < stmts.length; i++) {
+    let t = stmts[i].replace(/^(?:return|throw|var|let|const)\s+/, '').replace(/;\s*$/, '').trim()
+    const assign = t.match(/^([A-Za-z_$][\w$]*)\s*(?:=|\+=)\s*([\s\S]+)$/)
+    if (assign) {
+      const rhs = assign[2]
+      if (!segmentIsSafe(rhs, d + 1)) bad.push(t)
+      locals.push(assign[1])
+      continue
+    }
+    // 后续语句里，已赋值的名字按数字（安全）处理；字符串里的替换无副作用
+    for (const name of locals) t = t.replace(new RegExp('\\b' + name + '\\b', 'g'), '0')
+    if (t !== '' && !segmentIsSafe(t, d)) bad.push(stmts[i])
+  }
+  return bad.length === 0
+}
+
+/** 提取模板字面量里的 `${…}` 内容（**括号配平**，容忍嵌套 `}` 与对象字面量 —— 第五轮修 M4）。 */
+function templateInterps(str) {
+  const out = []
+  for (let i = 0; i + 1 < str.length; i++) {
+    if (str[i] !== '$' || str[i + 1] !== '{') continue
+    let depth = 0
+    for (let k = i + 1; k < str.length; k++) {
+      if (str[k] === '{') depth++
+      else if (str[k] === '}') { depth--; if (depth === 0) { out.push(str.slice(i + 2, k)); i = k; break } }
+    }
+  }
+  return out
 }
 
 /** 下标 openIdx 处的 `(` 是否正好在**串尾**闭合（用于识别"整段就是一个调用"）。 */
