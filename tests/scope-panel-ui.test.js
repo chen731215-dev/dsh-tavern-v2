@@ -145,6 +145,23 @@ async function runPanel(o = {}) {
 const posts = (fetchLog) => fetchLog.filter((f) => f.opts && f.opts.method === 'POST' && f.url === '/api/tavern/state')
   .map((f) => JSON.parse(f.opts.body))
 
+/**
+ * ★ 状态行断言的**受控文案**（task-19 顺手第二件：把残留的 2 条"绑 emoji 可见文案"的断言解耦）。
+ *
+ * 口径（与本文件既有的「断 `data-scope-mode` 稳定标识，不绑可见文案」同源，只是状态行没有稳定标识）：
+ *   · 断言**不再包含 emoji** —— 产品里换/去 emoji 不再让测试红（emoji 是装饰，不是契约）；
+ *   · 文案本身**集中在这一个常量表**里：真改文案时只改这里一处，而不是散落在断言里；
+ *   · 计数（"已排除 N 个目录" / "N 个会话 / M 个工作区"）用**模板函数**表达 —— 断的是"状态行把数字渲染出来了"，
+ *     这才是这两条断言的判据意图。
+ * ⚠️ 残留边界（如实）：它仍绑**文案**（措辞改了要更新这里）——要彻底解耦需要产品给状态行加稳定标识
+ *   （`data-scope-status` 之类），但本件按 Lead 的口径"只动测试断言、不动产品契约"，故留在此处记账。
+ */
+const SC = {
+  global: '所有会话生效中',
+  excluded: (n) => '（已排除 ' + n + ' 个目录）',
+  allowlist: (s, c) => '白名单模式：' + s + ' 个会话 / ' + c + ' 个工作区',
+}
+
 // ════════════════════════════════════════════════════════════════
 // 面板 HTML / 挂载
 // ════════════════════════════════════════════════════════════════
@@ -167,7 +184,8 @@ test('挂载：三个按钮各挂且只挂一个 click handler，初次加载即
   assert.equal((els['#tavern-scope-session'].listeners.click || []).length, 1)
   assert.equal((els['#tavern-scope-cwd'].listeners.click || []).length, 1)
   assert.ok(fetchLog.some((f) => f.url === '/api/tavern/state' && (!f.opts || !f.opts.method)), '初次加载应 GET state')
-  assert.match(els['#tavern-scope2-status'].textContent, /🌍/)
+  // ★ 初次加载必须把状态行**渲染出来**：断"受控文案"（不含 emoji），见文件头的 SC 口径
+  assert.ok(els['#tavern-scope2-status'].textContent.includes(SC.global), '初次加载应渲染 global 状态行')
 })
 
 // ════════════════════════════════════════════════════════════════
@@ -309,9 +327,12 @@ test('对照臂：chips × 被改坏（把剩余数组发成空数组）后，�
 // ════════════════════════════════════════════════════════════════
 test('状态行：global → 所有会话生效中（含排除数）；allowlist 非空 → 名单计数', async () => {
   const a = await runPanel({ state: { mode: 'global', disabledCwds: ['C:/1', 'C:/2'] } })
-  assert.match(a.els['#tavern-scope2-status'].textContent, /🌍 所有会话生效中（已排除 2 个目录）/)
+  // ★ 受控文案（不含 emoji）：断"模式文案 + 排除计数被渲染出来"，见文件头的 SC 口径
+  assert.ok(a.els['#tavern-scope2-status'].textContent.includes(SC.global + SC.excluded(2)),
+    'global 状态行应含模式文案与排除数，实际=' + JSON.stringify(a.els['#tavern-scope2-status'].textContent))
   const b = await runPanel({ state: { mode: 'allowlist', allowCwds: ['C:/a'], allowSessions: ['s1', 's2'] } })
-  assert.match(b.els['#tavern-scope2-status'].textContent, /📁 白名单模式：2 个会话 \/ 1 个工作区/)
+  assert.ok(b.els['#tavern-scope2-status'].textContent.includes(SC.allowlist(2, 1)),
+    'allowlist 状态行应含两个计数，实际=' + JSON.stringify(b.els['#tavern-scope2-status'].textContent))
 })
 test('状态行：allowlist 两名单皆空 → 红色警示 + 一键开启指引', async () => {
   const { els } = await runPanel({ state: { mode: 'allowlist', allowCwds: [], allowSessions: [] } })
@@ -327,6 +348,35 @@ test('对照臂：空白名单警示文案被删掉后，同一断言必须失�
     const { els } = await runPanel({ src, state: { mode: 'allowlist' } })
     assert.match(els['#tavern-scope2-status'].textContent, /⚠️ 还没有任何会话能用到酒馆/)
   })
+})
+
+// ════════════════════════════════════════════════════════════════
+// 反证：状态行断言**解耦 emoji**（task-19 顺手第二件）
+//
+// 两支必须都真跑（本会话铁律："只证明该红的会红不够，还要证明该绿的会绿"）：
+//   ① 去掉产品里的 emoji ⇒ **新断言仍绿**（它不再绑 emoji）
+//   ② 同一份"去掉 emoji"的源码上，**旧形态（绑 emoji）**断言 ⇒ 必须失败（证明旧的确实脆）
+// ════════════════════════════════════════════════════════════════
+test('反证①：把产品状态行的 emoji 去掉 ⇒ 新断言仍绿（判据不再绑 emoji）', async () => {
+  const src = mutate(fs.readFileSync(BUNDLE, 'utf8'),
+    "elStatus.textContent = '🌍 所有会话生效中'", "elStatus.textContent = '所有会话生效中'")
+  const { els } = await runPanel({ src, state: { mode: 'global', disabledCwds: ['C:/1', 'C:/2'] } })
+  const text = els['#tavern-scope2-status'].textContent
+  assert.ok(!text.includes('🌍'), '对照臂前提：产品侧的 emoji 真的被去掉了，实际=' + JSON.stringify(text))
+  assert.ok(text.includes(SC.global + SC.excluded(2)), '★ 去掉 emoji 后新断言必须仍然成立')
+})
+
+test('反证②：把产品状态行的 emoji 去掉 ⇒ **旧形态（绑 emoji）**断言必须失败（证明旧的确实脆）', async () => {
+  const src = mutate(fs.readFileSync(BUNDLE, 'utf8'),
+    "elStatus.textContent = '🌍 所有会话生效中'", "elStatus.textContent = '所有会话生效中'")
+  const { els } = await runPanel({ src, state: { mode: 'global', disabledCwds: ['C:/1', 'C:/2'] } })
+  const text = els['#tavern-scope2-status'].textContent
+  await assert.rejects(
+    async () => { assert.match(text, /🌍 所有会话生效中（已排除 2 个目录）/) },
+    '★ 旧断言（绑 emoji）在 emoji 被去掉后**必须**失败 —— 这就是它被替换的理由',
+  )
+  // 对照：同一份文本上，新形态仍成立 ⇒ 差别确实只来自"要不要绑 emoji"
+  assert.ok(text.includes(SC.global + SC.excluded(2)), '对照：同一份文本，新形态仍成立')
 })
 
 // ════════════════════════════════════════════════════════════════
