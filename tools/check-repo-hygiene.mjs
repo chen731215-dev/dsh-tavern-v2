@@ -32,9 +32,15 @@ export const CONTENT_RULES = [
   // ⚠️ 占位符不算：`xxx` / `...` / `user` / `<name>` 是文档与提示文案里的示意写法
   //   （实测本仓客户端里就有 `<home>/.dsh`，RELEASE_NOTES 里有 `<home>`）。
   //   同时吃两种写法：源码里的 `C:\\Users\\`（转义后双反斜杠）与真实路径 `C:\Users\`，以及 POSIX 的 `/Users/<name>/`。
-  { id: 'machine-home-path', re: /[A-Za-z]:\\{1,2}Users\\{1,2}(?!xxx|\.\.\.|user\b|username\b|<)[A-Za-z0-9_.-]{2,}|\/Users\/(?!xxx|\.\.\.|user\b|username\b|<)[A-Za-z0-9_.-]{2,}/, why: '本机绝对路径（含真实用户名）' },
+  // ★ 用户名段必须是 {1,}（不是 {2,}）：本机用户名就是**单字符**（`C:\\Users\\<单字符>\\…`），
+  //   旧的 {2,} 会让它**直接穿过闸门**（2026-10-08 tavern-dev 的最小复现）。
+  { id: 'machine-home-path', re: /[A-Za-z]:\\{1,2}Users\\{1,2}(?!xxx|\.\.\.|user\b|username\b|<)[A-Za-z0-9_.-]{1,}|\/Users\/(?!xxx|\.\.\.|user\b|username\b|<)[A-Za-z0-9_.-]{1,}/, why: '本机绝对路径（含真实用户名）' },
   { id: 'session-id-ish', re: /\bsession[._-]?(?:id)?["'\s:=]+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i, why: '真实会话 id' },
-  { id: 'auth-assignment', re: /["']?(?:token|_authToken|password|passwd|api[_-]?key)["']?\s*[:=]\s*["'][^"']{16,}["']/i, why: '疑似把凭据写进配置/代码' },
+  // ⚠️ 判据口径（2026-10-08，经 tavern-reviewer 复核修正）：
+  //   · 值里**允许 `+`** —— base64 / JWT 字母表就含 `+`，禁掉它会漏掉真凭据（我第一版就是这么错的）；
+  //   · 只否决**「空白 + 加号」这个拼接签名**（`token=' + x + '`），它才是误报的成因；
+  //   · 残留边界（如实）：真值里恰好出现「空格+`+`」的会漏判；无空白的拼接（`token='+x+'`）仍可能误报。
+  { id: 'auth-assignment', re: /["']?(?:token|_authToken|password|passwd|api[_-]?key)["']?\s*[:=]\s*["'](?![^"'\r\n]*[ \t]\+)[^"'\r\n]{16,}["']/i, why: '疑似把凭据写进配置/代码' },
 ]
 
 /** 文件名规则：这些路径**不该被跟踪**（与 .gitignore 互补，且能挡住 `git add -f`）。 */
