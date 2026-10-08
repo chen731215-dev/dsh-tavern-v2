@@ -4,6 +4,57 @@
 > [`docs/archive/CHANGELOG-pre-2.6.md`](./docs/archive/CHANGELOG-pre-2.6.md)。
 > 根目录只保留 **v2.6.0 起的当前批次**，更早的请去上面那个文件。
 
+## v2.7.13 (2026-10-08) — 🛡️ 棘轮扩成 sink 清单 + 修掉两处既有裸拼（v2.7.2 起就有）
+
+复核方指出「棘轮只认 `.innerHTML` 一种出口」—— 谁加了 `insertAdjacentHTML` / `outerHTML` /
+`document.write` / `createContextualFragment` / `srcdoc`，棘轮照样全绿。这与「`render-escape` ③
+按变量名写死」是同一类病，只高了一层。落地的过程中，**新判据自己就抓出了两处既有真洞**。
+
+### 1. sink 清单化（6 种，每种同一套结构判据）
+`innerHTML`(=/+=)、`outerHTML`(=)、`srcdoc`(=)、`insertAdjacentHTML`、`document.write`、
+`createContextualFragment`。另加 `UNLISTED_SINKS`：`insertAdjacentElement` / `document.writeln` /
+`dangerouslySetInnerHTML` / `outerHTML +=` / `DOMParser` / `eval(` / `new Function(` ——
+谁新开了清单外的注入入口，直接报红（否则棘轮会「全绿但没在看」）。
+
+### 2. `srcdoc` 的缓解写成**断言**
+srcdoc 是整份文档、转义无从下手，唯一缓解是 iframe 的 `sandbox`。现在：有 srcdoc ⇒ 必须存在
+`sandbox`；且取值里**不许**出现 `allow-same-origin`（否则 iframe 与主页面同源，srcdoc 就真成了注入点）。
+配了两个方向的对照测试。
+
+### 3. 顺带发现并修掉旧判据的**两个覆盖洞**（这比 sink 清单更重要）
+- **跨行拼接的续行整段漏判**：旧提取器只看拼接的首行（「括号未闭合才往下一行吃」），
+  于是 `st.innerHTML = 首行字面量 + …` 的**续行里有什么它一概不知**。
+- **单段 RHS 整行跳过**：旧实现 `segs.length < 2 → continue`，把 `el.innerHTML = 动态值`
+  （只有一段、恰恰最危险）整行放过。
+
+这两个洞加起来，实测曾静默放过 **26 行** —— 其中 **2 处是真洞，v2.7.2（重构前）就存在**：
+- 「保存成功」提示把 **`presetName`（用户自建预设名）** 与 **`agentPresetName`** 裸拼进 `innerHTML`
+- 违禁词编辑弹窗把 **`bannedWords.join(逗号)`（用户自填违禁词）** 裸拼进 `<textarea>`
+  （可用 `</textarea>` 破出 —— 与 #14 点名的世界书 textarea 同一 class）
+
+均已加 `esc(...)` 修掉，并补进回归测试。**这两处不是本次重构引入的**（a816afd 与 HEAD 逐字节同在），
+是旧判据看不见它们。
+
+### 4. 基线 7 → 23（覆盖扩大的一次性扩张，逐条带分类 + 证据）
+分类：`static-template` 1 / `numeric` 6 / `ternary-literals` 1 / `upstream-escaped` 11 /
+`param-by-callers` 2 / `sandboxed-doc` 1 / `dom-roundtrip` 1。**每条都必须给出机器可验证的证据**：
+要么 `mustContain`（片段必须仍在，复查失败即报红），要么 `builder`（对指定函数体做「不许出现未转义插值」
+的结构断言 —— 例如 `panelHTML()`：sink 那层只看到一个词，真正要守的是它 483 行的体内）。
+同文本重复行（`box.innerHTML = h;` ×2、`detailPanel.innerHTML = html;` ×2）加了同文本序号 `occ` 进键，
+否则棘轮分不清「消掉一条」还是「另一条还在」。
+
+### 5. 新护栏 ⑧⑨⑨⑩⑪（变异验证全过，见 `docs/VERIFICATION.md` §一 18~24）
+⑧ 六种 sink 各塞一个样本必须全部被点名；⑨ 清单外入口必须报红；⑩ srcdoc 的 sandbox 双向断言；
+⑪ 往静态模板塞未转义插值必须报红（sink 那层看不见它）。
+
+### 6. 文档裁定落地
+- golden 的 `EXEMPT` 措辞改为「**S2-C2 的前置条件**」：复核方核实 `apply` 本体在 `a816afd→HEAD`
+  只改了 5 行（全是 `S.` 前缀改写），装配体不是这轮动的对象 —— 但 **apply 文本没变 ≠ 行为没变**
+  （它调用的 1847 行被搬走了），风险由对账工具（选 A）覆盖。
+- `AGENTS.md` §12 补两条：行数护栏只管「现值型文档」（CHANGELOG 的历史记录不该清）；
+  「npm 能 spawn / node child_process 不能」是某些受限沙箱的属性，不是仓库属性。
+
+---
 ## v2.7.12 (2026-10-08) — 🔁 让 CI 可本地复现 + 三条防漂护栏
 
 > 承接 2.7.11：CI 是「唯一的自动化强制点」，所以它自己也需要护栏与本地复现路径。
