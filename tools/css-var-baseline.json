@@ -38,6 +38,10 @@
     "--tv-color-danger",
     "--tv-color-on-accent",
     "--tv-color-success",
-    "--tv-color-warn"
+    "--tv-color-warn",
+    "--tv-space-lg",
+    "--tv-space-md",
+    "--tv-space-sm",
+    "--tv-space-xs"
   ]
 }

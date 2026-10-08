@@ -167,8 +167,9 @@ export function tvUsageSites(bundleText) {
   return { sites, panelRange: range, panelIds, problems }
 }
 
-/** ③ 的非空跑下限（实测 17，时点 be756f7；随后续批次只增）。 */
-export const USAGE_FLOOR = 17
+/** ③ 的非空跑下限（**随批次抬**；契约是"下限"本身，数字只是时点快照）。
+ *  17（时点 be756f7：只有颜色令牌的引用）→ **54**（时点批3b：+37 处 gap 令牌引用）。 */
+export const USAGE_FLOOR = 54
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BUNDLE_FILE = path.join(REPO, 'lib', 'client.manager.bundle.js')
