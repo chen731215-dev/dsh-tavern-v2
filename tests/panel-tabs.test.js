@@ -17,6 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
+import { extractMarkupGroupsEx } from '../tools/check-client-integrity.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const BUNDLE = path.resolve(HERE, '..', 'lib', 'client.manager.bundle.js')
@@ -44,7 +45,14 @@ function extractFnSource(bundleText, signature) {
  * 所以这里按 <div> 深度只取深度 1 的卡片标题。
  */
 const CARDS = (() => {
-  const src = extractFnSource(text, 'function panelHTML(')
+  // ★ 取材走**共享提取器**（`tools/check-client-integrity.mjs`）：面板里 t-row 的标签自 S3 起由
+  //   `tvRowOpen` / `tvRowClose` 基元发射 ⇒ 自己按行趟函数源码会取错（**形态一改就漂**：
+  //   开标签从数组行挪进段内的字面量表、数组里换成调用，`depth === 1` 就再也命中不到顶层卡片）。
+  //   工具已学会把基元还原成字节 ⇒ 这里拿到的是与迁移前**等价**的 markup 文本。**形态再变只改工具那一处。**
+  const groups = extractMarkupGroupsEx(text).groups
+  assert.equal(groups.length, 1, '★ 面板 markup 分组数应为 1，实际 ' + groups.length +
+    ' —— 取材一旦取错组会以"看似正常"的方式失明（本会话反复治的静默族）')
+  const src = groups[0].markup
   const out = []
   let depth = 0
   let pending = null            // 顶层卡片开标签时记下它的 data-tv-tab
