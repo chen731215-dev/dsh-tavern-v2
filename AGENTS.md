@@ -482,6 +482,15 @@ S2-C2 抽装配前补上；随后那段组装被抽进 `lib/server/assemble.js`�
 `type`：`feat` / `fix` / `refactor` / `docs` / `style` / `perf` / `chore`
 
 **提交前清单**
+- [ ] **本地钩子已启用**（每个克隆一次）：`git config core.hooksPath .githooks`
+      —— 它在提交前跑 `check:hygiene --staged`，把凭据 / 会话记录 / 本机路径 / BOM 挡在**提交**之前。
+      · **它会自己找 node**：`DSH_NODE`（显式覆盖，设了就必须有效）→ 内置运行时
+        （`$DSH_HOME`，缺省 `$HOME/.dsh`）下 `dsh-runtimes/*/dependencies/node/bin/node[.exe]` → PATH。
+        本仓 node 常**不在 PATH 上**；旧版钩子这时会**静默跳过**（本地这道闸门长期是关的 —— 实测每笔提交都这样），
+        现在改成**报错 + 列出试过哪些位置**。
+      · 本机确实没有 node：`SKIP_HYGIENE=1 git commit …`（**显式**跳过，会被打印出来）。
+        **不要用 `--no-verify`** —— 它连所有钩子一起跳过，且不留痕。
+      · CI 的 `check:hygiene` 仍是**唯一强制点**（推之后跑）；钩子只是把同一个检查提前到本地。
 - [ ] `npm run check` 通过（全仓语法，扫目录，不是只检查改的那个）
 - [ ] `npm test` 全绿（逐文件独立判红；有红项会列出文件名）
 - [ ] 改过客户端 UI 的话顺手 `npm run check:integrity`
