@@ -38,7 +38,73 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const REPO = path.resolve(HERE, '..')
 export const BASELINE_FILE = path.join(HERE, 'innerhtml-baseline.json')
 
-export const TARGETS = ['lib/client.manager.bundle.js', 'lib/index.js']
+/**
+ * 扫描目标：字面路径 **或 glob**（只认 `**`（跨目录）与 `*`（单段））。
+ *
+ * ★ 为什么要 glob（task-14 / 第四块）：`document.getElementById("ps-body").innerHTML=h`
+ *   这条 sink 随 `/api/tavern/settings` 路由从 `lib/index.js` 搬进 `lib/server/routes.js`。
+ *   扫描面若不跟着扩，棘轮会**静默把这条 sink 移出覆盖** —— 实测那一刻它报的是
+ *   「✅ 已消除：lib/index.js … 基线 24 条，0 条新增」并 **exit 0**：
+ *   巡检面收窄却全绿，正是本仓最反对的形态（"免费送出来的绿灯比红灯更危险"）。
+ */
+export const TARGETS = ['lib/client.manager.bundle.js', 'lib/index.js', 'lib/server/**/*.js']
+
+/**
+ * 展开后的文件数下限（当前实测 **21** = 1 bundle + 1 index.js + 19 个 `lib/server/*.js`；
+ * 口径：`expandTargets().files.length`，见 `--json`/测试 ⑫）。
+ * ★ 它挡的是「有人把 TARGETS 削到只剩一两个文件，棘轮照样全绿」——glob 的 0 命中规则
+ *   只护得住单个条目，护不住"整条被删掉"。
+ */
+export const MIN_TARGET_FILES = 15
+
+/** glob → 正则（`**​/` 允许匹配零层，所以 `lib/server/**​/*.js` 命中的包含 `lib/server/routes.js`）。 */
+function globToRe(pat) {
+  const s = pat.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*\//g, '\u0000')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\u0000/g, '(?:.*/)?')
+  return new RegExp('^' + s + '$')
+}
+
+/** 递归列出 root 下的 .js（仓库相对、正斜杠、排序）。 */
+function listJsFiles(root) {
+  const out = []
+  const walk = (rel) => {
+    let ents = []
+    try { ents = fs.readdirSync(rel ? path.join(root, rel) : root, { withFileTypes: true }) } catch { return }
+    for (const e of ents) {
+      const p = rel ? rel + '/' + e.name : e.name
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith('.js')) out.push(p)
+    }
+  }
+  walk('')
+  return out.sort()
+}
+
+/**
+ * 展开扫描目标。**glob 命中 0 个文件 ⇒ 记一条 problem**（fail-closed：宁可红，
+ * 也不许静默缩小巡检面）——这正是"把面扩了但一条没看"的第一道拦。
+ * @returns {{files: string[], problems: string[]}}
+ */
+export function expandTargets(targets = TARGETS, root = REPO) {
+  const files = []
+  const problems = []
+  for (const t of targets) {
+    if (!t.includes('*')) { files.push(t); continue }
+    const hit = listJsFiles(root).filter((f) => globToRe(t).test(f))
+    if (!hit.length) {
+      problems.push('目标「' + t + '」命中 0 个文件 —— 扫描面失效（fail-closed，不许静默缩小巡检范围）')
+      continue
+    }
+    files.push(...hit)
+  }
+  const uniq = [...new Set(files)].sort()
+  if (uniq.length < MIN_TARGET_FILES) {
+    problems.push('展开后只有 ' + uniq.length + ' 个文件（下限 ' + MIN_TARGET_FILES + '）—— 巡检面被削过')
+  }
+  return { files: uniq, problems }
+}
 
 /**
  * 受覆盖的 HTML sink 清单。**每种都走同一套结构判据** —— 不给任何一种开后门。
@@ -759,9 +825,17 @@ export function checkSrcdocSandbox(src, suspects = findSuspects(src)) {
   return issues
 }
 
+/**
+ * 扫描若干文件里的可疑行。
+ * ★ 目标先过 `expandTargets`：**glob 命中 0 或巡检面被削小 ⇒ 直接抛**
+ *   （fail-closed —— 否则 `scanFiles(TARGETS)` 会把 `lib/server/**​/*.js` 当成"路径不存在"静默跳过，
+ *    于是调用方看到的仍是"全绿"，而实际上新文件一条都没扫）。
+ */
 export function scanFiles(files) {
+  const { files: expanded, problems } = expandTargets(files)
+  if (problems.length) throw new Error('扫描目标展开失败（fail-closed）：\n  ' + problems.join('\n  '))
   const all = []
-  for (const f of files) {
+  for (const f of expanded) {
     const abs = path.isAbsolute(f) ? f : path.join(REPO, f)
     if (!fs.existsSync(abs)) continue
     const rel = path.relative(REPO, abs).replace(/\\/g, '/')
@@ -774,12 +848,20 @@ export function scanFiles(files) {
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (isMain) {
   const argv = process.argv.slice(2)
-  const actual = scanFiles(TARGETS)
+  // ★ 目标先展开一次：glob 命中 0 / 面被削小 ⇒ fail-closed（见 expandTargets 注释）
+  const EXPANDED = expandTargets()
+  if (EXPANDED.problems.length) {
+    console.error('  ❌ 扫描目标展开失败（fail-closed —— 不许静默缩小巡检面）：')
+    for (const p of EXPANDED.problems) console.error('     ' + p)
+    process.exit(1)
+  }
+  const TARGET_FILES = EXPANDED.files
+  const actual = scanFiles(TARGET_FILES)
   if (argv.includes('--json')) { console.log(JSON.stringify(actual, null, 2)); process.exit(0) }
 
   // ① 清单外入口：先查这个，因为它是「棘轮没在看」的问题
   const unlisted = []
-  for (const f of TARGETS) {
+  for (const f of TARGET_FILES) {
     const abs = path.join(REPO, f)
     if (!fs.existsSync(abs)) continue
     for (const u of findUnlistedSinks(fs.readFileSync(abs, 'utf8'))) unlisted.push({ file: f, ...u })
@@ -792,7 +874,7 @@ if (isMain) {
 
   // ② srcdoc 的 sandbox 断言
   let sandboxIssues = []
-  for (const f of TARGETS) {
+  for (const f of TARGET_FILES) {
     const abs = path.join(REPO, f)
     if (!fs.existsSync(abs)) continue
     const src = fs.readFileSync(abs, 'utf8')

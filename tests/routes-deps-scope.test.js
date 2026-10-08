@@ -422,11 +422,18 @@ export function parseDepsBag(src) {
   return keys
 }
 
-/** 解析 routes.js 里**全部** `const { … } = deps` 的键并集（不许硬编码"两块" —— 还会继续加组）。 */
+/** 解析 routes.js 里**全部** `const { … } = deps` 的键并集（不许硬编码"两块" —— 还会继续加组）。
+ *  ★ 内容类 `[^{};]*`（task-14/第四块加）：原来的 `[\s\S]*?` 会**跨语句**匹配 ——
+ *    实测：`/api/tavern/worldbook/open` 的路由体里有一处
+ *    `const { exec } = await import('node:child_process')`（group2/3 体里），
+ *    正则从那个 `const {` 一路吃到**下一个 `} = deps`**（= 下一个组函数的头），
+ *    于是那一组的键全部丢失 ⇒ 判据 ⑤ 报出假漂移 `buildWorldbookText`（"袋里有、没人解构"）。
+ *    解构模式里不可能出现 `{` `}` `;`，故按这个字符集收紧即精确。
+ *    另：调用方（⑤）会断言 `blocks.length === 组函数个数` —— 这类"少解了一组"不许再静默。 */
 export function parseDestructuredDeps(src) {
   const keys = new Set()
   const blocks = []
-  for (const b of String(src).matchAll(/const\s*\{([\s\S]*?)\}\s*=\s*deps/g)) {
+  for (const b of String(src).matchAll(/const\s*\{([^{};]*)\}\s*=\s*deps/g)) {
     const local = b[1].split(',').map((x) => x.trim()).filter((x) => /^[A-Za-z_$][\w$]*$/.test(x))
     blocks.push(local)
     for (const k of local) keys.add(k)
@@ -481,13 +488,47 @@ export function groupStructureProblems(src) {
 test('⑤ 袋 ↔ 解构【双向】契约：解构了没传 / 传了没解构 都要红', (t) => {
   const bag = parseDepsBag(INDEX_SRC)
   const { keys, blocks } = parseDestructuredDeps(ROUTES_SRC)
-  t.diagnostic('routeDeps 袋键 ' + (bag ? bag.size : 0) + '；解构块 ' + blocks.length + ' 个、并集键 ' + keys.size)
+  const groupCount = (ROUTES_SRC.match(/^function routesGroup\d+\(/gm) || []).length
+  t.diagnostic('routeDeps 袋键 ' + (bag ? bag.size : 0) + '；解构块 ' + blocks.length + ' 个（组函数 ' + groupCount + ' 个）、并集键 ' + keys.size)
   // 非空跑下限：两侧都必须真的解析出东西 —— "两侧都 0"会恒等绿（同类事故在 0ef48d8 抓过一次）
   assert.ok(bag && bag.size >= 40, '袋只解析出 ' + (bag ? bag.size : 0) + ' 个键 —— 判据空跑或解析器坏了')
   assert.ok(keys.size >= 40, '解构只解析出 ' + keys.size + ' 个键 —— 判据空跑或解析器坏了')
   assert.ok(blocks.length >= 1, '一个解构块都没扫到')
+  // ★ task-14：**每个组函数恰好一个解构块** —— 少解一组会让"并集"缺掉那一组的键，
+  //   而缺键的后果是判据报**假漂移**（"袋里有、没人解构"），指不到真正的原因。
+  assert.equal(blocks.length, groupCount, '★ 解构块数（' + blocks.length + '）≠ 组函数数（' + groupCount + '）—— 解析器跨语句吃掉了某一组的键')
   const bad = depsContractProblems(bag, keys)
   assert.deepEqual(bad, [], '★ 袋与解构的契约破了（这一条静态就能看出来，不必等冒烟）：\n  ' + bad.join('\n  '))
+})
+
+test('⑤-c 反证：组体里出现别的 `const { … } = …` 不许把下一组的键吃掉（task-14 暴露的解析器洞）', () => {
+  const FIXTURE = [
+    'function routesGroup1(ctx, deps) {',
+    '  const { alpha, beta } = deps',
+    '  return [{',
+    "    path: '/api/tavern/one',",
+    "    handler: async () => { const { exec } = await import('node:child_process'); return exec },",
+    '  }]',
+    '}',
+    'function routesGroup2(ctx, deps) {',
+    '  const { gamma } = deps',
+    '  return []',
+    '}',
+  ].join('\n')
+  const { keys, blocks } = parseDestructuredDeps(FIXTURE)
+  assert.equal(blocks.length, 2, '必须解析出两个组头，实际=' + blocks.length)
+  assert.deepEqual([...keys].sort(), ['alpha', 'beta', 'gamma'], '两组键都要在并集里，实际=' + JSON.stringify([...keys]))
+  // 对照：**旧口径**（`[\s\S]*?` 跨语句 + 同样的切分逻辑）在同一夹具上会把第二组的键**丢掉**
+  //   —— 机制：`function routesGroup2(ctx, deps) {` 里的逗号把 token 切开，
+  //   于是 `gamma` 与 `deps) { const {` 粘在一起、过不了 `/^[A-Za-z_$][\w$]*$/` ⇒ 整组少一个键。
+  const oldKeys = new Set()
+  let oldBlocks = 0
+  for (const b of FIXTURE.matchAll(/const\s*\{([\s\S]*?)\}\s*=\s*deps/g)) {
+    oldBlocks++
+    for (const x of b[1].split(',').map((t) => t.trim()).filter((t) => /^[A-Za-z_$][\w$]*$/.test(t))) oldKeys.add(x)
+  }
+  assert.equal(oldBlocks, 2, '旧口径在这份夹具上也匹配 2 次（次数一样，但第二块的内容是错的）')
+  assert.ok(!oldKeys.has('gamma'), '旧口径确实会漏掉 gamma（这就是本笔判据 ⑤ 报假漂移的机制），实际=' + JSON.stringify([...oldKeys]))
 })
 
 test('⑤-b 反证：删键必须**在静态判据上**红并点名到键（与审核方实验同形）', () => {

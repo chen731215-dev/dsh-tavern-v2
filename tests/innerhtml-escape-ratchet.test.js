@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 import {
   findSuspects, scanFiles, segmentIsSafe, splitTopLevel,
   findUnlistedSinks, checkSrcdocSandbox, bodyInterpolationsUnsafe,
-  SINKS, TARGETS, BASELINE_FILE,
+  SINKS, TARGETS, BASELINE_FILE, expandTargets, MIN_TARGET_FILES,
 } from '../tools/check-innerhtml-escape.mjs'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -245,4 +245,41 @@ test('⑪ 静态模板的结构断言：往 panelHTML 里塞未转义插值必�
   // 反证：esc 过的插值不许误报
   const okMutated = bundle.replace('function panelHTML() {', "function panelHTML() {\n      var probe = '<div>' + esc(untrustedUserName) + '</div>';")
   assert.deepEqual(bodyInterpolationsUnsafe(okMutated, 'panelHTML'), [], 'esc 过的插值不许误报')
+})
+
+// ════════════════════════════════════════════════════════════════
+// ⑫ 扫描面守恒（task-14 / 第四块）：`TARGETS` 支持 glob，且**收窄巡检面必须响亮**
+//
+// 为什么加这一条：`ps-body").innerHTML=h` 这条 sink 随 `/api/tavern/settings` 路由从
+// `lib/index.js` 搬进了 `lib/server/routes.js`。扫描面若不跟着扩，棘轮会**静默**把它移出覆盖 ——
+// 实测那一刻它报的是「✅ 已消除：lib/index.js … 基线 24 条，0 条新增」并 **exit 0**：
+// 收窄却全绿，正是本仓最反对的形态。所以这里把三件事都钉成判据：
+//   ① 真实 TARGETS 展开后**必须**包含搬迁目的地（`lib/server/routes.js`）；
+//   ② glob 命中 0 个文件 ⇒ problem（fail-closed），且 `scanFiles` 对它是**抛**而不是静默跳过；
+//   ③ 展开后文件数有下限（挡住"把整条目标删掉"）。
+// ════════════════════════════════════════════════════════════════
+test('⑫ 扫描面必须真的扩到 lib/server（glob 0 命中 / 面被削小 ⇒ fail-closed，不许静默缩小）', () => {
+  const real = expandTargets()
+  assert.deepEqual(real.problems, [], '★ 真实 TARGETS 不该有 problem：' + JSON.stringify(real.problems))
+  assert.ok(real.files.length >= MIN_TARGET_FILES, '展开后只有 ' + real.files.length + ' 个文件（下限 ' + MIN_TARGET_FILES + '）')
+  for (const f of ['lib/client.manager.bundle.js', 'lib/index.js', 'lib/server/routes.js']) {
+    assert.ok(real.files.includes(f), '★ ' + f + ' 不在扫描面内 —— 棘轮会静默失去它')
+  }
+  // 现实现场：那条搬走的 sink 必须落在扫描面里，而且**带新文件归属**
+  const actual = scanFiles(TARGETS)
+  assert.ok(
+    actual.some((e) => e.file === 'lib/server/routes.js' && /ps-body/.test(e.line)),
+    '★ 搬进 lib/server 的 sink 没被扫到 —— 巡检面收窄了却全绿（这正是本笔要堵的形态）',
+  )
+  // 反证①：glob 指到不存在的目录 ⇒ 两条独立规则各自报（0 命中 + 展开后不足下限），且点名那个目标
+  const gone = expandTargets(['lib/no-such-dir/**/*.js'])
+  assert.equal(gone.files.length, 0, '坏 glob 不该展开出文件')
+  assert.equal(gone.problems.length, 2, '实际=' + JSON.stringify(gone.problems))
+  assert.match(gone.problems[0], /^目标「lib\/no-such-dir\/\*\*\/\*\.js」命中 0 个文件/)
+  assert.match(gone.problems[1], /下限 /)
+  // 反证②：削到只剩一个文件 ⇒ 下限必须报（glob 的 0 命中规则护不住"整条被删掉"）
+  assert.ok(expandTargets(['lib/index.js']).problems.some((p) => /下限 /.test(p)), '削小巡检面必须报')
+  // 反证③：`scanFiles` 对坏 glob 必须**抛**（不许当"路径不存在"静默跳过）
+  assert.throws(() => scanFiles(['lib/no-such-dir/**/*.js']), /命中 0 个文件/, 'scanFiles 必须 fail-closed')
+  assert.throws(() => scanFiles(['lib/index.js']), /下限 /, 'scanFiles 也必须挡住被削小的面')
 })
