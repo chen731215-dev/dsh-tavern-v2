@@ -59,6 +59,52 @@ export const PATH_RULES = [
 const MAX_SCAN = 2 * 1024 * 1024
 const looksBinary = (buf) => buf.includes(0)
 
+/**
+ * ★ UTF-8 BOM（EF BB BF）：**形态维度**的违规，不是"文本扫不了"。
+ *   判定它的**真实理由**（照 muv 侧 §44.11 的裁决，两条都不是"传说"）：
+ *     ① 主因 = 「**预先批准逐字内容**」的形态保证会被破坏 —— 本会话真的发生过一次：
+ *        用带 BOM 的写文件方式改配置 ⇒ 首行被前置 3 个字节 ⇒ 落地形态 ≠ 被批准的"只改一行"形态；
+ *     ② 次因 = BOM 是**尚未纳入任何判据的形态维度**：本仓有多个按源码文本做判据的消费者
+ *        （切片锚点、内容断言、逐字切片……），行首/逐字匹配在第 1 行会有**不可见偏差**。
+ *        今天无实际影响（`check-syntax` 走 Node 解析，Node 会剥 BOM）——但那是"恰好"，不是判据。
+ *   ⚠️ 一条**已撤回**的旧论证：曾写"BOM 贴着 .gitignore 第一条模式 ⇒ 第 1 行规则静默失效"。
+ *      实测**未复现**（git 2.55：带与不带 BOM 的 .gitignore 命中结果一致）⇒ 不要再引用它设计判据。
+ *   ⚠️ 也**不要**宣称"BOM 会让 git 忽略首行配置"之类的机制解释 —— 本仓规矩：任何机制解释上材料前先做一次
+ *      能证伪它的实验（这一条就是被实测否证的实例）。
+ */
+export const hasUtf8Bom = (b) => b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf
+
+/** ★ BOM 判据的**非空跑下限**：本轮必须真的在这么多 blob 头上工作过（见 scan 末尾的报红）。
+ *  tavern 实测已跟踪 109 个 ⇒ 取 50 既挡住"过小夹具/空跑"，又不会因合法地少文件而误红。 */
+export const MIN_BLOB_HEADS = 50
+
+/**
+ * ★ **形态判据必须以 blob 为准**（与已立的 EOL 纪律一致：形态判据不许只看工作树）。
+ *   工作树会被 `core.autocrlf` / `.gitattributes` / `working-tree-encoding` 改写，而 **blob 才是"真正提交进去的东西"**。
+ *   实现：`git ls-files -s` 一次拿全部 blob sha（不逐文件求 sha），再逐个取 blob 的前 3 字节。
+ *   ⚠️ 同进程内**缓存**：每次调用要对每个文件 spawn 一次 `git cat-file`（109 个 ≈ 1 秒），
+ *      而测试会多次调用 `scan()` ⇒ 不缓存会让套件平白慢几十秒。
+ *      反证夹具**不走这条路**：它在临时仓库里以**子进程**运行门禁 ⇒ 每个夹具都是新进程、不受缓存影响
+ *      （所以"新增带 BOM 的已跟踪文件 ⇒ 必须报红"这条仍是真反证）。
+ * @returns {Map<string, Buffer>|null} 仓库相对路径 → 该文件 blob 的前 3 字节；拿不到 ⇒ null（调用方必须出声）
+ */
+let blobHeadsCache = null
+export function blobHeads() {
+  if (blobHeadsCache) return blobHeadsCache
+  const r = spawnSync('git', ['ls-files', '-s', '-z'], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  if (r.status !== 0) return null
+  const out = new Map()
+  for (const rec of r.stdout.split('\0').filter(Boolean)) {
+    const m = /^\d+ ([0-9a-f]{40}) \d+\t([\s\S]*)$/.exec(rec)
+    if (!m) continue
+    const rel = m[2].replace(/\\/g, '/')
+    const b = spawnSync('git', ['cat-file', 'blob', m[1]], { cwd: REPO, maxBuffer: 64 * 1024 * 1024 })
+    if (b.status === 0 && b.stdout) out.set(rel, b.stdout.subarray(0, 3))
+  }
+  blobHeadsCache = out
+  return out
+}
+
 function trackedFiles() {
   const r = spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   if (r.status !== 0) return null
@@ -73,6 +119,9 @@ function stagedFiles() {
 /** 扫一批文件（路径为仓库相对路径）。@returns 违规列表 */
 export function scan(files, { readFromIndex = false } = {}) {
   const issues = []
+  // ★ 形态判据走 blob（见 blobHeads 注释）；取不到就**出声**（不许静默把"没看"当成"看了没问题"）
+  const heads = blobHeads()
+  if (!heads) console.error('⚠️ 拿不到 blob 头（git ls-files -s 失败）⇒ 本轮 BOM 判据**没在做事**')
   for (const rel of files) {
     const norm = rel.replace(/\\/g, '/')
     for (const p of PATH_RULES) if (p.re.test(norm)) issues.push({ file: norm, kind: 'path/' + p.id, why: p.why })
@@ -86,12 +135,31 @@ export function scan(files, { readFromIndex = false } = {}) {
         buf = fs.readFileSync(path.join(REPO, norm))
       }
     } catch { continue }
+    if (heads && heads.has(norm) && hasUtf8Bom(heads.get(norm))) {
+      issues.push({
+        file: norm,
+        kind: 'form/utf8-bom',
+        why: 'UTF-8 BOM（EF BB BF）——形态维度：会破坏「逐字批准」的形态核对，也让按源码文本做的判据在第 1 行有不可见偏差',
+      })
+    }
     if (buf.length > MAX_SCAN || looksBinary(buf)) continue
     const text = buf.toString('utf8')
     for (const c of CONTENT_RULES) {
       const m = text.match(c.re)
       if (m) issues.push({ file: norm, kind: 'content/' + c.id, why: c.why, hit: String(m[0]).slice(0, 12) + '…' })
     }
+  }
+  // ★★ **非空跑下限**：BOM 判据必须证明"它真的在若干个 blob 头上工作过"。
+  //   否则一句「没报 BOM」可能只是「根本没在看」——本仓把这类叫"空跑恒真"，与"免费绿灯"同族。
+  //   放在 `scan()` 里（而不是 CLI 的成功分支）⇒ **任何**调用路径上都生效；小夹具上会**响亮报红**。
+  const checked = heads ? heads.size : 0
+  if (checked < MIN_BLOB_HEADS) {
+    issues.push({
+      file: '(非空跑下限)',
+      kind: 'form/bom-coverage',
+      why: 'BOM 判据只检查了 ' + checked + ' 个 blob 头（要求 ≥ ' + MIN_BLOB_HEADS + '）⇒ 本轮的「没报 BOM」可能只是「没在看」'
+        + '（过小的仓库/夹具？）',
+    })
   }
   return issues
 }
@@ -112,10 +180,16 @@ if (isMain) {
   if (issues.length) {
     console.error('❌ 仓库卫生检查不通过（' + issues.length + ' 处）—— ' + (staged ? '这次提交被拦下了' : '仓库里不该有这些东西') + '：')
     for (const i of issues) console.error('   ' + i.file + '  [' + i.kind + '] ' + i.why + (i.hit ? '  ' + i.hit : ''))
-    console.error('\n   凭据请立刻吊销/轮换（GitHub PAT、npm token）；会话记录/用户数据请移出仓库并 gitignore。')
+    // 按**命中类别**给对应的处置建议（早期版本一律印"凭据请吊销"，对 BOM 这类形态违规是误导）
+    const kinds = new Set(issues.map((i) => String(i.kind).split('/')[0]))
+    if (kinds.has('content')) console.error('\n   凭据请立刻吊销/轮换（GitHub PAT、npm token 等）。')
+    if (kinds.has('path')) console.error('\n   会话记录/用户数据请移出仓库并 gitignore。')
+    if (kinds.has('form')) console.error('\n   形态类（BOM 等）：核对"落地形态 = 被批准的形态"；'
+      + '去掉开头 3 字节后**必须 git add** 才生效（判据以 blob 为准，报的是"提交进去的东西"）。')
     process.exit(1)
   }
-  console.log('✅ 仓库卫生检查通过：' + files.length + ' 个' + (staged ? '暂存' : '已跟踪') + '文件，无凭据/会话记录/本机路径')
+  console.log('✅ 仓库卫生检查通过：' + files.length + ' 个' + (staged ? '暂存' : '已跟踪') + '文件，无凭据/会话记录/本机路径/BOM'
+    + '（BOM 判据以 blob 为准，本轮检查 ' + (blobHeads() ? blobHeads().size : 0) + ' 个 blob 头）')
 }
 
 void REPO
