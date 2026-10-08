@@ -7,7 +7,7 @@
 > 见 §5「服务端分层」。那条规矩正是把 index.js 堆成巨型单文件的原因。
 
 - **包名**：`dsh-tavern`（**不是** `@local/dsh-tavern`）
-- **版本**：2.7.13
+- **版本**：2.7.14
 - **模块系统**：ES Modules（`import` / `export`，禁止 `require` / `module.exports`）
 - **服务端入口**：`lib/index.js`（分层进度见 §1 结构图 / §5；**行数与模块数一律不写进文档**，手抄必漂）
 - **客户端入口**：`lib/client.manager.bundle.js`
@@ -80,11 +80,9 @@ dsh-tavern/
 钩子 + 装配        lib/index.js
                      ├── lib/server/{constants,util,zstd,text,prompt,
                      │              worldbook,preset-decl,session-log,
-                     │              summary,dsh-conn}.js                ← S2-A 已完成（单向依赖）
-                     ├── lib/server/{state,presets,bindings,inject,
-                     │              relations,skills}.js                ← S2-B/C 待做
+                     │              summary,dsh-conn}.js 等）  ← 已整块搬出（S2-A ~ S2-C1，单向依赖）
                      ├── lib/utils.js
-                     └── lib/server/routes/*.js
+                     └── 路由仍注册在 index.js（routes/ 尚未抽出，属 S2-C2）
 HTTP API  ←────→  lib/client.manager.bundle.js（平台注入，经 ctx.webServer 与服务端通信）
 tests/*.test.js ─→ lib/index.js 的 `_test` 导出 + lib/utils.js
 tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
@@ -221,9 +219,8 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
    → `tests/panel-tabs.test.js`
 5. **样式预算**：`inlineHandlerAttr`（客户端）与 `inlineHandlerAttrServer`（服务端）**恒为 0**；`important` 恒为 0；
    其余指标**只许降不许升**。→ `tests/style-budget.test.js`
-   当前基线：`inlineStyleAttr 301`、`bareHex 331`、`bareRgba 150`、`cssTextAssign 59`、
-   `distinctColorLiterals 53`、`distinctFontSizes 12`、`distinctRadii 8`、`distinctPaddings 42`、
-   `distinctZIndex 8`、`styleTags 0`。
+   基线值**不写在这里**（写了必漂 —— 反例：本节曾手抄一组值，S3 一改样式就全过期）：
+   一律查 `tools/style-budget.json`（现状）或跑 `npm run check:style -- --json`。
 6. **转义只有一套实现**：所有 HTML 转义都必须走 `esc()`（客户端 `client.manager.bundle.js` L12）。
    `escapeHtml` / `htmlEscapeStr` / `escAttr` 都只允许是它的**薄封装**（`return esc(s)`）。
    **禁止**再写第二套 `replace(/&/g,'&amp;')` —— 第二份实现迟早会漂（`escAttr` 曾漂成空操作、
@@ -363,7 +360,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
   为什么要记这段：普通 3-way merge 在本仓会**在 7 个文件上假冲突**（同内容不同 SHA 造成的），
   手工解一遍纯属浪费时间且有出错风险。
 - ✅ **CI 已实跑绿**（2026-10-08）：分支 `ci/tooling-security-refactor` @ `87f5b6e`，
-  [run 37725561712](https://github.com/chen731215-dev/dsh-tavern-v2/actions/runs/37725561712) —— 10/10 step 全过，约 70 秒。
+  [run 37725561712](https://github.com/chen731215-dev/dsh-tavern-v2/actions/runs/37725561712) —— **5 个实质步骤全过**（GitHub 记为 11 步，含 Set up job / Complete job 等收尾步），约 70 秒。
   也就是说「重构等价」不再只有本机证据。
 - **看 CI 结果**：`node tools/ci-watch.mjs`（盯最新一次）或 `node tools/ci-watch.mjs <run-id>` ——
   匿名读 API，不需要 token；退出码 0 = success。红了会逐 step 列出结论，便于定位。
@@ -538,5 +535,5 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 
 ---
 
-**最后更新**：2026-10-08（2.7.10）
+**最后更新**：2026-10-08（2.7.14）
 **维护者**：chen731215-dev

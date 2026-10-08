@@ -7,7 +7,8 @@
  *
  *   ① 悬空 id 扫描   checkDanglingIds(src)   —— JS 里引用的 id 在 markup 里不存在
  *   ② 标签配平       checkTagBalance(src)    —— 把 markup 字面量拼起来做栈式配对
- *   ③ 卡片嵌套深度   checkCardDepth(src)     —— 一级卡片必须在 depth=1，没被容器误吞
+ *   ③ 卡片嵌套深度   checkCardDepth(src)     —— 所有一级卡片必须**同一层**、没被容器误吞
+ *      （比的是**同级一致性**，不是绝对层数：现库实测 depth=2，因为面板外层还有容器）
  *
  * 用法：
  *   node tools/check-client-integrity.mjs                 # 检查默认客户端 bundle
