@@ -9,7 +9,7 @@
 #   · tests/cordis-mount.test.js 找不到 DSH 的 app.asar 时会**自己 skip**（不当红灯），
 #     所以 runner 上不需要安装 DSH。
 #
-# 本仓零运行时依赖（package.json 没有 dependencies），因此不需要 npm ci。
+# 无**构建期**依赖：`dsh-muv-*` 是运行时同伴插件（测试不 import，走 ctx/HTTP），故不需要 npm ci。
 name: check
 
 on:

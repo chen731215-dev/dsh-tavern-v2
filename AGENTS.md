@@ -228,7 +228,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 7. **`innerHTML` 裸拼只许减不许增**：判据不看变量名 —— `.innerHTML` 右边按顶层 `+` 分段，
    逐段要求「字面量 / esc 函数族 / 含 esc 的 map·join 链 / `.length`·`.count` / 两支都是字面量的三元」。
    → `tools/check-innerhtml-escape.mjs`（`npm run check:innerhtml`）+ `tests/innerhtml-escape-ratchet.test.js`
-   基线 `tools/innerhtml-baseline.json`（7 条）。
+   基线条数**不写在这里**（写了必漂）：跑 `npm run check:innerhtml` 看输出。
    **为什么单列一条**：`render-escape.test.js` 的 ③ 是按**变量名写死**的模式，对「新建一条渲染路径」是盲的；
    而"合并两个渲染函数""抽统一拼装 helper"恰恰最容易漏掉某一路来源（PR #13 真实翻车：转义了
    `e.source`/`e.target`，漏了 `label`）。**动渲染相关代码后必须跑这一条。**

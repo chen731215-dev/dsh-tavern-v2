@@ -1,8 +1,8 @@
 // ════════════════════════════════════════════════════════════════
 // 仓库卫生闸门（tools/check-repo-hygiene.mjs）的常驻测试
 //
-// ① 当前已跟踪文件干净  ② 每条内容规则都能抓自己的坏样本（防永真）
-// ③ 路径规则挡住 git add -f ④ 占位符不误报 ⑤ 规则表不许空 why
+// ⚠️ 本文件**按设计**要包含各类坏样本，所以样本一律用**片段拼接 + fromCharCode** 构造：
+//   否则闸门会把测试自己当成真凭据拦下（实测踩过 private-key / session-id / _authToken 三条）。
 // ════════════════════════════════════════════════════════════════
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -12,9 +12,10 @@ import { spawnSync } from 'node:child_process'
 import { scan, CONTENT_RULES, PATH_RULES, REPO } from '../tools/check-repo-hygiene.mjs'
 
 const BS = String.fromCharCode(92)
+const DQ = String.fromCharCode(34)
 const tracked = () => {
   const r = spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-  return r.status === 0 ? r.stdout.split('\0').filter(Boolean) : []
+  return r.status === 0 ? r.stdout.split(String.fromCharCode(0)).filter(Boolean) : []
 }
 const probe = (src) => {
   const tmp = path.join(REPO, '.hygiene-probe.tmp')
@@ -29,15 +30,15 @@ test('① 当前已跟踪文件必须干净（无凭据 / 无会话记录 / 无�
   assert.deepEqual(issues.map((i) => i.file + ' [' + i.kind + ']'), [], '★ 仓库里有不该入库的东西')
 })
 
-test('② 反证：每条内容规则都必须能抓到自己的坏样本（不许永真）', () => {
+test('② 反证：每条内容规则都能抓到自己的坏样本（样本片段拼接，不许永真）', () => {
   const samples = {
-    'github-pat': 'const t = "ghp_' + 'A'.repeat(36) + '"',
-    'npm-token': '_authToken=npm_' + 'b'.repeat(36),
-    'openai-style-key': 'const k = "sk-' + 'c'.repeat(24) + '"',
-    'private-key': '-----BEGIN RSA PRIVATE KEY-----',
-    'machine-home-path': 'const p = "C:' + BS + 'Users' + BS + 'someone"',
-    'session-id-ish': 'sessionId: 550e8400-e29b-41d4-a716-446655440000',
-    'auth-assignment': 'const _authToken = "abcdefghijklmnopqrst"',
+    'github-pat': 'const t = ' + DQ + 'ghp_' + 'A'.repeat(36) + DQ,
+    'npm-token': '_auth' + 'Token=' + 'npm_' + 'b'.repeat(36),
+    'openai-style-key': 'const k = ' + DQ + 'sk-' + 'c'.repeat(24) + DQ,
+    'private-key': '-----BEGIN ' + 'RSA PRIVATE KEY-----',
+    'machine-home-path': 'const p = ' + DQ + 'C:' + BS + 'Users' + BS + 'someone' + DQ,
+    'session-id-ish': 'session' + 'Id: ' + '550e8400-e29b-41d4-a716-446655440000',
+    'auth-assignment': 'const _auth' + 'Token = ' + DQ + 'abcdefghijklmnopqrst' + DQ,
   }
   for (const rule of CONTENT_RULES) {
     const src = samples[rule.id]
@@ -48,7 +49,7 @@ test('② 反证：每条内容规则都必须能抓到自己的坏样本（不�
 })
 
 test('③ 反证：路径规则必须挡住会话日志 / 凭据文件 / 备份', () => {
-  for (const f of ['sessions/abc/session.v4.jsonl.zstd', '.env', '.npmrc', 'my-token.json', 'tavern-data/x', '_scratch/foo.mjs', 'lib/index.js.bak']) {
+  for (const f of ['sessions/abc/x.jsonl.zstd', '.env', '.npmrc', 'my-token.json', 'tavern-data/x', '_scratch/foo.mjs', 'lib/index.js.bak']) {
     assert.ok(scan([f]).some((i) => i.kind.startsWith('path/')), '★ 路径规则没拦住：' + f)
   }
   for (const f of ['lib/index.js', 'tests/core.test.js', 'AGENTS.md']) {
@@ -56,9 +57,9 @@ test('③ 反证：路径规则必须挡住会话日志 / 凭据文件 / 备份'
   }
 })
 
-test('④ 占位符不算（文档里的示意写法不该误报）', () => {
+test('④ 占位符不算（文档与提示文案里的示意写法不该误报）', () => {
   for (const s of ['<home>/.dsh', 'C:' + BS + 'Users' + BS + '...', 'C:/Users/<name>/x']) {
-    assert.deepEqual(probe(s).filter((i) => i.kind === 'content/machine-home-path'), [], '占位符不该被判为本机路径：' + JSON.stringify(s))
+    assert.deepEqual(probe(s).filter((i) => i.kind === 'content/machine-home-path'), [], '占位符不该判红：' + JSON.stringify(s))
   }
 })
 
