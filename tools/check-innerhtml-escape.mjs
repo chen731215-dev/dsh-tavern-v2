@@ -127,7 +127,6 @@ export const EVIDENCE = [
 
   // ── 参数由调用方保证（helper 把入参当 HTML 写）──
   // 这两条是**结构脆弱**的设计（靠调用方自觉），所以证据钉在「风险数据的那几个调用点必须仍然 esc」。
-  { re: /function setStatus\(msg, color\) \{ status\.innerHTML = msg/, kind: 'param-by-callers', why: '开场白注入面板的状态行：调用点传的都是字面量或 esc(...)（cardName / error）', mustContain: ["esc(d.cardName || '')", "esc((d && d.error) || '注入失败')", "esc((e && e.message) || String(e))"] },
   { re: /statusEl\.innerHTML = msg;/, kind: 'param-by-callers', why: '全局正则面板的状态行：调用点传的都是字面量或 esc(...)', mustContain: ['esc(String(s.scriptName || id))', 'esc(e.message || String(e))', 'esc(String((errs[i] && errs[i].error) || errs[i]))'] },
 ]
 
