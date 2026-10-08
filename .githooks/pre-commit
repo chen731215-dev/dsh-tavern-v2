@@ -1,8 +1,23 @@
 #!/bin/sh
 # 提交前拦一道：不允许把凭据 / 会话记录 / 本机路径提交进仓库。
 # 启用（每个克隆做一次）：git config core.hooksPath .githooks
-node tools/check-repo-hygiene.mjs --staged || {
+#
+# ★ 找不到 node 时**放行并告警**（fail-open）：本仓的 node 是内置运行时，不在 PATH 上很常见；
+#   此时本地这道闸门降级，由 CI 步骤 npm run check:hygiene 兜底（那才是强制点）。
+#   为什么不用 exit 1：那会把没配 PATH 的人**所有**提交都拦死，反而逼人去用 --no-verify。
+
+if command -v node >/dev/null 2>&1; then
+  NODE=node
+elif [ -n "$DSH_NODE" ] && [ -x "$DSH_NODE" ]; then
+  NODE="$DSH_NODE"
+else
+  echo "[pre-commit] ⚠️ 找不到 node，本地仓库卫生检查已跳过（CI 的 check:hygiene 仍会强制）。"
+  echo "            想本地生效：把 node 加进 PATH，或设置 DSH_NODE 指向 node 可执行文件。"
+  exit 0
+fi
+
+"$NODE" tools/check-repo-hygiene.mjs --staged || {
   echo ""
-  echo "提交被拦下：见上面的仓库卫生报告。若确实要提交，请先清理或改用 git commit --no-verify（不推荐）。"
+  echo "提交被拦下：见上面的仓库卫生报告。清理后再提交（或 git commit --no-verify，不推荐）。"
   exit 1
 }

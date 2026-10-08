@@ -141,7 +141,9 @@ const ESCAPE_CALL = /\b(?:esc|escAttr|escapeHtml|htmlEscapeStr|encodeURIComponen
 const isCommentLine = (l) => /^\s*(\/\/|\*|\/\*)/.test(l)
 
 /**
- * ★ 共享扫描原语 —— **全工具只有这一处数引号**。
+ * ★ 共享扫描原语 —— `splitTopLevel` / `findTopLevel` / `insideStringSink` / `findUnlistedSinks` **都走这一处**。
+ *   ⚠️ 例外：`captureExpr` 仍自带一份引号/正则状态机（历史原因，行为正确但属重复实现）；
+ *      第三轮复核指出「全工具只有这一处」这句话与事实不符，故如实标注。
  *
  * 为什么必须唯一：2026-10-08 的对抗性复核证明，captureExpr / splitTopLevel / insideStringSink
  * 三处各自数引号时，正则字面量里的引号（`/['"]/`）只会污染"没被改到的那两处"，
@@ -299,7 +301,8 @@ export function segmentIsSafe(x, d = 0) {
   // 计数 / 纯数字 / `xxx || 0` 兜底
   if (/\.(length|count)$/.test(s)) return true
   if (/^-?[\d.]+$/.test(s)) return true
-  if (/^\(?\s*[A-Za-z_$][\w$.]*\s*\|\|\s*0\s*\)?$/.test(s)) return true
+  // ★ 不再接受 `(x || 0)`：字符串 x 为真时原样注入（第三轮复核 N3）。
+  //   计数型兜底的判定挪到「值来源」断言（ORIGINS）里，那里能看拼装上下文。
   // 具名/匿名函数表达式：形参与声明不参与拼接 ⇒ 只判**函数体**（`function (s) { return esc(s.id); }` 安全）
   const fn = s.match(/^function\b[^{]*\{([\s\S]*)\}$/)
   if (fn) return statementsSafe(fn[1], d + 1)
@@ -442,7 +445,7 @@ export function captureExpr(lines, startLine, startCol) {
   let text = ''
   let depth = 0
   let quote = ''
-  for (let li = startLine; li < Math.min(startLine + 12, lines.length); li++) {
+  for (let li = startLine; li < Math.min(startLine + 40, lines.length); li++) {   // ★ 12 → 40：13 行以上的拼接曾被静默截断（第三轮复核 N6）
     const line = li === startLine ? String(lines[li]).slice(startCol) : String(lines[li])
     let cut = -1                                  // 行尾注释的起点（本轮修复 ②）
     for (let k = 0; k < line.length; k++) {
@@ -632,7 +635,9 @@ export const ORIGINS = [
   },
 ]
 
-/** 数字型惯用法：`xxx || 0` 兜底、或纯数字、或计数属性。 */
+/** 数字型惯用法（`值来源` 断言专用）：`xxx || 0` 兜底、纯数字、计数属性。
+ *  ⚠️ 它**只**用于 ORIGINS 的拼装链检查（那里能看上下文）；`segmentIsSafe` 已不再接受 `|| 0`
+ *     —— 那会让 `(name || 0)` 这种文本值放行（第三轮复核 N3）。 */
 const numberish = (s) => /^\(?\s*[A-Za-z_$][\w$.]*\s*\|\|\s*0\s*\)?$/.test(s) || /\.(length|count)$/.test(s) || /^-?[\d.]+$/.test(s)
 
 export function valueOriginUnsafe(src, spec) {
