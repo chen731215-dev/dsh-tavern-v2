@@ -1,5 +1,27 @@
 # Changelog
 
+## v2.7.16 (2026-10-08) — 🧱 S2-C2（部分）：`tavern:card` 的正文组装搬进 `lib/server/assemble.js`
+
+`apply(ctx)` 的 `tavern:card` text 回调原先把「取数据」和「拼正文」混在同一个函数里。本版把**拼正文**
+那一半搬到新模块 `lib/server/assemble.js`（导出 `assembleCardBody(deps)`），`lib/index.js` 只留装配：
+
+- 注册段 → 判闸门（会话隔离 / 生效范围 / 预设决议 / 子 Agent 继承）→ 调 `assembleCardBody` →
+  记 `sectionSizes.card` / `sectionSizes.wb` → `observeInjection` 观测。
+- 依赖一律**显式传参**（`ROOT` / `readState` / `readWorldbook` / `sanitizePromptText` …），
+  新模块**不** import `lib/index.js`（AGENTS §5 第 5 条：禁止循环依赖）。
+- 搬运方式：整块**逐字搬** —— 只按新层级重排缩进，并把原本就地算出的 `mode` 改成入参。
+  分两笔落地：第一笔只搬「纯拼接」那一行（字节级等价显然成立），第二笔才搬各部件的计算。
+
+**未搬走（切片锚点，仍在 `lib/index.js`）**：`★ 记忆总结注入` 块、`tavern:nsfw` 注册段、
+`flushPromptStats(); return ''` 与 `sectionSizes.nsfw`、`try { observeInjection(…) } catch {}`。
+
+**行为等价**：产物逐字节不变 —— `tests/golden-host-assembly.test.js`（宿主侧回归网）与
+`tests/golden-prompt.test.js` 都绿，**fixture 未改动**（不是靠改快照换来的绿）。
+
+**后半段未做**：`apply(ctx)` 里的 HTTP 路由注册尚未抽出，仍属 S2-C2。
+
+> 验证数字不写在这里（写了必漂）：以 `npm test` / `npm run check:*` 输出为准。
+
 ## v2.7.15 (2026-10-08) — 🛡️ 落库边界净化：让写进库的数据本身就是干净的
 
 议题：`docs/issues/2026-10-08-parseSummaryOutput-边界净化.md`（原「待决策」，本版落地）。
