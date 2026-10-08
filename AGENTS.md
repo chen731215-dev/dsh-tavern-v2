@@ -268,6 +268,9 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
     而插件注入的脚本跑在**持有 DSH 本地 API 凭据**的那个源里（无凭据调 API 返回 401）。
     ⇒ **必须假设「转义是第一道、也是唯一一道防线」**，不要指望 CSP 兜底。
     这条前提一旦变化（DSH 给主 UI 加了 CSP），回来改这一条。
+13. **CI 绿 ≠ 真机能跑**：`cordis-mount.test.js` 是唯一真的挂载插件的测试，而在没有 DSH 的机器上
+   （含 CI）它 **4 项 skip 3 项**。所以「插件还能不能在真实 DSH 里加载并工作」这件事
+   **CI 覆盖不到**，发布前必须走真机冒烟 → §9.1。这是结构性盲区，别指望靠改配置补上。
 
 ---
 
@@ -349,9 +352,13 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
   合法跳过，空跑判据不会误报。
 - **CI 自己也有护栏**（`tests/tooling-integrity.test.js` ④-b/④-c/④-d）：每条 `run:` 必须能映射到
   `package.json` 的脚本、不许出现 `continue-on-error` / `|| true`、`ci:local` 必须与工作流同命令集。
-- ⚠️ **触发 CI 要推分支，别推 main**：本仓本地 `main` 与 `origin/main` **内容一致但历史不同**
-  （共同祖先只到 `2cea581`），直接推 `main` 会变成 force-push。
-  `git push origin main:ci/<名字>` 即可（分支推送同样命中 `push` 触发器）。
+- ✅ **两条历史已接续**（2.7.12，merge commit `3a24a77`）：本地 `main` 与 `origin/main` 此前是
+  **两条平行历史**（远端那批是当年用「API 重建 blob→tree→commit」推的 ⇒ 同内容不同 SHA），
+  共同祖先只到 `2cea581`；现在用 `-s ours` 把对方接为第二父提交（**零内容变化**，
+  依据是两个提交的 `^{tree}` 同为 `85390b25…`）⇒ **`git push origin main` 现在是 fast-forward**，
+  不需要分支、也不需要 force。
+  为什么要记这段：普通 3-way merge 在本仓会**在 7 个文件上假冲突**（同内容不同 SHA 造成的），
+  手工解一遍纯属浪费时间且有出错风险。
 - ✅ **CI 已实跑绿**（2026-10-08）：分支 `ci/tooling-security-refactor` @ `87f5b6e`，
   [run 37725561712](https://github.com/chen731215-dev/dsh-tavern-v2/actions/runs/37725561712) —— 10/10 step 全过，约 70 秒。
   也就是说「重构等价」不再只有本机证据。
@@ -359,6 +366,30 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
   匿名读 API，不需要 token；退出码 0 = success。红了会逐 step 列出结论，便于定位。
 - 跑测试前有时需要 `DSH_ASAR`（指向 DSH 的 `app.asar`），`cordis-mount.test.js` 依赖它；
   找不到时那个文件会**自己 skip**（不当红灯），所以 CI 不需要装 DSH。
+
+### 9.1 发布前真机冒烟（**CI 覆盖不到的那一环**）
+
+`cordis-mount.test.js` 是**唯一真的把插件挂进 DSH** 的测试。CI（以及任何没有 DSH 的机器）上它
+是 **4 项 skip 3 项**（那 3 项就是「真挂载」那部分），所以：
+
+> **CI 绿 ≠ 插件能在真 DSH 里加载并工作。** 这是结构性盲区，不是配置问题 ——
+> 让 CI 装上 DSH 不现实，所以这一环**只能由真机确认**。
+
+发布前按顺序做两步：
+
+1. **半自动的那步**（有 DSH 的机器上）——确认「能挂载」：
+   ```
+   node --test tests/cordis-mount.test.js      # 期望 4 项全过；只看到 1 pass / 3 skipped 说明这台机器没 DSH
+   ```
+   有 DSH 时应是 `pass 4 / skipped 0`；若仍是 `skipped 3`，先设 `DSH_ASAR` 指向 DSH 的 `app.asar`。
+2. **手动那步**（真机 UI 冒烟，四条）：
+   - [ ] 面板能打开（设置页里酒馆面板正常渲染，无空白/报错）
+   - [ ] 预设列表正常（列出、切换、名称显示正确）
+   - [ ] 切预设**不串台**（切完新会话/当前会话绑定的是刚选的那个预设，不是上一个）
+   - [ ] 记忆与关系网**正常注入**（总结/记忆段落进提示词，关系网按既有行为渲染）
+
+**证据要留痕**：在做发布的那次 CHANGELOG 条目里写一行「真机冒烟：通过（版本 / 日期）」——
+否则半年后没人知道到底跑没跑过，跟 CI 的「静默不跑」是同一类问题。
 
 ---
 
@@ -415,6 +446,12 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 - [ ] 没有引入循环依赖
 - [ ] 没有把绝对路径 / token / 会话 id 写进仓库
 - [ ] CHANGELOG.md 同步（用户可见改动）+ 版本号同步
+
+**发布前清单**（不是每次提交，是每次发 npm / 合主线）
+- [ ] §9.1 的真机冒烟：`cordis-mount` 在本机 `pass 4 / skipped 0`，且四条 UI 冒烟通过
+- [ ] 冒烟结论写进该版本的 CHANGELOG 条目（版本 / 日期 / 结论）
+- [ ] 发布后 35 秒 ~ 2.5 分钟是 CDN 传播期：抓包先验 gzip 魔数 `1f 8b` 再解压
+- [ ] GitHub Release body 直接取 CHANGELOG 对应段落；发布包不含 `tools/`、`tests/`
 
 ---
 
