@@ -7,7 +7,7 @@
 > 见 §5「服务端分层」。那条规矩正是把 index.js 堆成巨型单文件的原因。
 
 - **包名**：`dsh-tavern`（**不是** `@local/dsh-tavern`）
-- **版本**：2.7.15
+- **版本**：2.7.16
 - **模块系统**：ES Modules（`import` / `export`，禁止 `require` / `module.exports`）
 - **服务端入口**：`lib/index.js`（分层进度见 §1 结构图 / §5；**行数与模块数一律不写进文档**，手抄必漂）
 - **客户端入口**：`lib/client.manager.bundle.js`
@@ -25,6 +25,7 @@ dsh-tavern/
 ├── lib/
 │   ├── index.js                     # 服务端入口 ★ 仍在分层中，见 §5
 │   ├── server/                      # ★ 已从 index.js 整块搬出的服务端模块（2.7.4 起）
+│   │   ├── assemble.js              #   tavern:card 段正文组装（apply 只留装配 + 体积快照/观测），见 §5.1
 │   │   ├── state.js                 #   ★ 可变运行时状态 S + 路径镜像 P / syncPaths()，见 §5.3
 │   │   ├── constants.js             #   跨模块共享常量
 │   │   ├── util.js                  #   无状态纯工具
@@ -100,7 +101,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | 功能 | 搜索关键字 |
 |---|---|
 | Home 解析 | `resolveDshHome`（优先级：显式配置 → `$DSH_HOME` → `~/.dsh`） |
-| 提示词注入段 | **实际只有 2 个** `ctx.systemPrompt.section(`：`tavern:card`（`order: -999999`）与 `tavern:nsfw`（**order: -1**）。<br>§3 早先版本把 `tavern:wb` / `tavern:memory` / `tavern:relations` / `tavern:skills` 也列成独立段 —— **那是错的**（2026-10-08 实测：`grep systemPrompt.section` 只有 2 处）。<br>其余内容全部**拼进 `tavern:card` 的 `cardOut`**：<br>`sanitizePromptText(summaryText + header + text + wbText + memoryText + styleText + netText + toolsRestriction + relationsText + skillsText)`<br>⚠️ 其中 `summaryText` / `memoryText` 来自 `readSessionMemory()`，**是模型输出、且原样进系统提示**；`relationsText` 只含计数（见 `buildRelationsHintText`）。 |
+| 提示词注入段 | **实际只有 2 个** `ctx.systemPrompt.section(`：`tavern:card`（`order: -999999`）与 `tavern:nsfw`（**order: -1**）。<br>§3 早先版本把 `tavern:wb` / `tavern:memory` / `tavern:relations` / `tavern:skills` 也列成独立段 —— **那是错的**（2026-10-08 实测：`grep systemPrompt.section` 只有 2 处）。<br>其余内容全部**拼进 `tavern:card` 的 `cardOut`**（组装步骤已下沉到 `lib/server/assemble.js`，见 §5.1）：<br>`sanitizePromptText(summaryText + header + text + wbText + memoryText + styleText + netText + toolsRestriction + relationsText + skillsText)`<br>⚠️ 其中 `summaryText` / `memoryText` 来自 `readSessionMemory()`，**是模型输出、且原样进系统提示**；`relationsText` 只含计数（见 `buildRelationsHintText`）。 |
 | 体积快照 | `flushPromptStats()`（**必须每条返回路径都调用**）、`sectionSizes` |
 | HTTP 路由 | `ctx.webServer.register(`、`/api/tavern/` |
 | 预设 CRUD / 声明 | `writePresetFiles`、`agent.cordis.yml`、`prefix:`（**不是 `text:`**）、禁止 `complete: true` |
@@ -173,6 +174,10 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | `core` P0-6 / `nsfw-slot` ⑪⑫ | `apply` 内 `tavern:nsfw` 注册段（须含 `isTavernSession(` `decideInjectionScope(` `order: -1`）、`flushPromptStats(); return ''`、`sectionSizes.nsfw = body.length` |
 | `inject-observe` [12] | `apply` 内 `try { observeInjection({…}) } catch {}` 与 `writeInjectObserveRecord` 的静默 try/catch |
 | `memory-isolation` | `apply` 内 `★ 记忆总结注入` 块（到 `} catch {}` 为止） |
+
+> ⚠️ **S2-C2 已搬走的那半边**：`tavern:card` 的**正文组装**现在在 `lib/server/assemble.js`
+> （`assembleCardBody(deps)`，依赖全部显式传参、不反向 import `index.js`）。上表这些块**不在**
+> 被搬走的范围内 —— 记忆总结块、`tavern:nsfw` 段、`observeInjection` 观测点都留在 `apply(ctx)` 里。
 
 ### 5.2 两个差点咬人的坑（搬代码块时必看）
 
@@ -400,8 +405,9 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 - `tests/fixtures/golden-prompt.json` 是**在重构前那一版（`a816afd`）上生成的**产物快照；
 - 测试在当前版本上重跑同一组固定 fixture，要求**逐字节一致** ⇒ 任何一处组装语义被改坏，立刻报红。
 
-⚠️ **它有明确的边界**：`apply(ctx)` 内部的真实组装（装配体还在 apply 里 —— 但 apply 本体在 a816afd→HEAD 只改了 5 行、且全部是 `S.` 前缀改写，详见 docs/VERIFICATION.md；把它抽成函数是 **S2-C2 的前置条件**，届时补这一环的 golden）、
-`prompt-stats` 的数值、UI 交互、时序并发、LLM 失败路径 —— 都不在覆盖范围内，
+⚠️ **它有明确的边界**：`apply(ctx)` 内部的真实组装**另有一张网**（`tests/golden-host-assembly.test.js`，
+S2-C2 抽装配前补上；随后那段组装被抽进 `lib/server/assemble.js`，要求产物逐字节不变）、
+`prompt-stats` 的数值、UI 交互、时序并发、LLM 失败路径 —— 后四项不在覆盖范围内，
 豁免清单写在测试文件的 `EXEMPT` 常量里并有护栏防它缩水。**不要把它当成「全覆盖」。**
 
 真机那一环仍见 §9.1；历次「变异 → 报红」的对照记录见 `docs/VERIFICATION.md`。
@@ -419,7 +425,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | **S2-B2a** | 非路径可变状态收进 `lib/server/state.js` 的 `S` | ✅ **2.7.7 完成** |
 | **S2-B2b** | 路径 `let` 的单向镜像 `P` + `syncPaths()`，含路径镜像护栏 | ✅ **2.7.8 完成** |
 | **S2-C1** | 搬出首批路径依赖函数（dsh-conn / session-read / session-migrate / state-io） | ✅ **2.7.8 完成** |
-| **S2-C2** | 从 `apply(ctx)` 里抽出装配步骤，让它只做装配 | ⬜ 待做 —— **这是剩下最大的一块** |
+| **S2-C2** | 从 `apply(ctx)` 里抽出装配步骤，让它只做装配 | 🟡 **部分完成**：`tavern:card` 的正文组装已抽进 `lib/server/assemble.js`；**路由**注册仍未抽出（后半段另立） |
 | **S3 前端结构化** | `--tv-*` 语义令牌层 + 组件基元，**只加不删** | ⬜ 待做 |
 
 > 进度只看状态列的 ✅。**行数与个数一律不写进文档**（复核方 2026-10-08 的要求）：
@@ -427,7 +433,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 > ② 连「到底几行」本身都有两种口径 —— `wc -l`（数换行符）与 `split(/\r?\n/).length`（多算一个尾部空元素）差 1，
 > 写进文档只会引来 ±1 的争论，而它不携带任何信息（要查就现跑 `wc -l`）。
 > 护栏已覆盖这三类数字（`tests/tooling-integrity.test.js` ⑤）。`lib/server/` 的模块清单见 §1 结构图。
-> 剩下的大头只有 `apply(ctx)` 一个函数。
+> 剩下的大头：`apply(ctx)` 里还压着**路由注册**（见 §2 依赖图末行），属 S2-C2 后半段。
 
 **顺序建议：S1 → S4①（先有安全网）→ S2 → S3。**
 
@@ -536,5 +542,5 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 
 ---
 
-**最后更新**：2026-10-08（2.7.15）
+**最后更新**：2026-10-08（2.7.16）
 **维护者**：chen731215-dev
