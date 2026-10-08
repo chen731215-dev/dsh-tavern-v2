@@ -289,12 +289,21 @@ export function isLiteral(x) {
  *     · `(raw + esc(a))` / `esc(a) && raw` / `? esc(a) : raw`
  *     · `f(esc(a), raw)`（实参里混一个裸值）
  *     · `.map(x => esc(x.a) + x.b)`（PR #13 那一类）
+ *   ⚠️ **有意保留的误报（M5）**：函数/箭头「参数」一律当数据判（如 list.map((x,i) => 下标拼接) 里的 i）。
+ *      为什么不豁免：参数类型不可知，把参数当数字会**重新打开**真洞 —— arr.map(x => 拼 x) 这类正是要抓的
+ *      （第三轮复核 E4）。代价是少数下标拼接式写法被判红，它们进基线并带证据。
  *   现在的要求：**纯 esc 调用**才算安全；组 / 实参 / 三元各分支 / 模板插值 / 链内表达式
  *   一律**递归**检查，任一处不安全即整段不安全。深度上限 6，超过按不安全处理（保守）。
  */
 export function segmentIsSafe(x, d = 0) {
   const s = String(x).trim()
   if (s === '') return true
+  // ★ 先去无意义的外层包裹（(((x))) → x），再判深度：否则纯包裹会耗尽深度上限（第三轮复核 M3）。
+  //   这里递归时「不增加」d，所以只影响包裹本身，不会掩盖任何真实问题。
+  if (s.length > 2 && s.startsWith('(') && closesAtEnd(s, 0)) {
+    const inner = s.slice(1, -1).trim()
+    if (inner && inner !== s) return segmentIsSafe(inner, d)
+  }
   if (d > 6) return false
   if (isLiteral(s)) return true
   // 计数 / 纯数字 / `xxx || 0` 兜底
