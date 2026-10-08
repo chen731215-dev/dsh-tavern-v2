@@ -17,7 +17,7 @@
 ## 0. 先跑这三条，确认你接手的基线
 
 ```powershell
-$node = "<home>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+$node = "C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
 $env:DSH_ASAR = "D:\deepseek harnes\resources\app.asar"      # 跑测试前必须设
 cd restored\dsh-tavern-v2
 & $node tools\run-each-test.mjs        # 期望：合计 pass=434 fail=0，22 个文件
