@@ -1,10 +1,35 @@
 {
-  "note": "innerHTML 裸拼基线：只许减不许增。每条都经人工过目（判据见 tools/check-innerhtml-escape.mjs 头注释）。",
+  "note": "HTML sink 裸拼基线：只许减不许增。每条都经人工过目（判据见 tools/check-innerhtml-escape.mjs 头注释）。",
+  "sinks": [
+    "innerHTML",
+    "outerHTML",
+    "srcdoc",
+    "insertAdjacentHTML",
+    "document.write",
+    "createContextualFragment"
+  ],
   "entries": [
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "root.innerHTML = panelHTML();",
+      "lineNo": 1045,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "panelHTML()"
+      ],
+      "kind": "static-template",
+      "why": "panelHTML() 是纯静态模板（体内 0 处插值）；若将来加入插值，下面的结构断言会要求它已 esc",
+      "builder": "panelHTML"
+    },
     {
       "file": "lib/client.manager.bundle.js",
       "line": "if (st) st.innerHTML = '✅ 已导入预设「' + esc(pname) + '」，自动清理了 <b>' + cleanedTotal + '</b> 个不兼容 DSH 的模块内容（<thinking>/HTML注释/{{变量}}等已剥离）';",
       "lineNo": 1448,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
       "parts": [
         "cleanedTotal"
       ],
@@ -18,6 +43,9 @@
       "file": "lib/client.manager.bundle.js",
       "line": "presetStatus.innerHTML = '✅ 当前预设：' + esc(presetLabelText) + '<br><span style=\"font-size:11px;color:var(--dsw-alias-label-tertiary,#999)\">🎭 角色卡：' + charCount + ' 个 | 📚 世界书：' + wbCount + ' 本（' + wbEntries + ' 条，启用 ' + wbEnabledEntries + ' 条）| ⚙️ 预设：' + presetCount + ' 个（启用 ' + presetEnabledEntries + ' 条）</span>';",
       "lineNo": 1790,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
       "parts": [
         "charCount",
         "wbCount",
@@ -35,8 +63,33 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
+      "line": "st.innerHTML = '✅ <b>保存成功！Agent 预设已生成</b><br>' +",
+      "lineNo": 1978,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "charCount",
+        "wbCount",
+        "wbEntryCount",
+        "modCount",
+        "ymlSize"
+      ],
+      "kind": "numeric",
+      "why": "「保存成功」提示里的各类计数与大小（预设名已 esc，见 2.7.13 修的另一处）",
+      "mustContain": [
+        "var wbEntryCount = ",
+        "esc(presetName)",
+        "esc(agentPresetName)"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
       "line": "tags.innerHTML = bannedWords.slice(0, 20).map(function(w) {",
       "lineNo": 2318,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
       "parts": [
         "(bannedWords.length > 20 ? '<span style=\"color:var(--dsw-alias-label-secondary);font-size:11px;padding:2px 4px\">+' + (bannedWords.length - 20) + ' 更多</span>' : '')"
       ],
@@ -49,8 +102,131 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
+      "line": "box.innerHTML = h;",
+      "lineNo": 2443,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "h"
+      ],
+      "kind": "upstream-escaped",
+      "why": "两处体积/命中提示：h 的构造里逐项 esc（excerpt / hits / tip）；第二处另由 pct 数字与 line() 拼成",
+      "mustContain": [
+        "+ esc(d.excerpt) + '…</div>'",
+        "+ esc(tip) + '</div>'",
+        "pct: Math.round(ratio * 1000) / 10"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "box.innerHTML = h;",
+      "lineNo": 2483,
+      "occ": 2,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "h"
+      ],
+      "kind": "upstream-escaped",
+      "why": "两处体积/命中提示：h 的构造里逐项 esc（excerpt / hits / tip）；第二处另由 pct 数字与 line() 拼成",
+      "mustContain": [
+        "+ esc(d.excerpt) + '…</div>'",
+        "+ esc(tip) + '</div>'",
+        "pct: Math.round(ratio * 1000) / 10"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "list.innerHTML = html;",
+      "lineNo": 2556,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "html"
+      ],
+      "kind": "upstream-escaped",
+      "why": "世界书列表：分组名与条目正文逐项 esc",
+      "mustContain": [
+        "+ esc(group.name) + '</span>'"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "detailPanel.innerHTML = html;",
+      "lineNo": 3013,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "html"
+      ],
+      "kind": "upstream-escaped",
+      "why": "关系网详情面板（边 / 节点两处）：源目标与名称逐项 esc",
+      "mustContain": [
+        "🔗 ' + esc(e.source) + ' ↔ ",
+        "👤 ' + esc(n.label || n.id)"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "tooltip.innerHTML = tooltipHtml;",
+      "lineNo": 3149,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "tooltipHtml"
+      ],
+      "kind": "upstream-escaped",
+      "why": "关系网小图 tooltip：节点名 / 对面名 / 关系描述逐项 esc 后整体赋值",
+      "mustContain": [
+        "13px\">👤 ' + esc(n.label || n.id)",
+        "+ dir + ' ' + esc(other) + '</span>：' + esc(truncate"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "detailPanel.innerHTML = html;",
+      "lineNo": 3194,
+      "occ": 2,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "html"
+      ],
+      "kind": "upstream-escaped",
+      "why": "关系网详情面板（边 / 节点两处）：源目标与名称逐项 esc",
+      "mustContain": [
+        "🔗 ' + esc(e.source) + ' ↔ ",
+        "👤 ' + esc(n.label || n.id)"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "tooltip.innerHTML = html;",
+      "lineNo": 3545,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "html"
+      ],
+      "kind": "upstream-escaped",
+      "why": "关系网大图 tooltip：同上（另一处渲染路径，字号不同）",
+      "mustContain": [
+        "15px\">👤 ' + esc(n.label ||",
+        "+ dir + ' ' + esc(other) + '</span>：' + esc("
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
       "line": "info.innerHTML = '<span><strong style=\"color:var(--dsw-alias-label-accent,#ffb464)\">' + nodes.length + '</strong> 个角色，<strong style=\"color:var(--dsw-alias-brand-primary,#78a0ff)\">' + edges.length + '</strong> 条关系</span><span style=\"font-size:12px\">悬停看完整关系 · 标签显示' + (labelLen || 15) + '字</span>';",
       "lineNo": 3642,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
       "parts": [
         "(labelLen || 15)"
       ],
@@ -64,6 +240,9 @@
       "file": "lib/client.manager.bundle.js",
       "line": "item.innerHTML = '<div style=\"display:flex;align-items:center;gap:6px\"><span style=\"width:16px;flex:0 0 auto;text-align:center\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">' + pName + '</span></div>' + (pMeta ? '<div style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#999);padding-left:22px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">' + pMeta + '</div>' : '');",
       "lineNo": 4165,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
       "parts": [
         "pName",
         "(pMeta ? '<div style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#999);padding-left:22px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">' + pMeta + '</div>' : '')"
@@ -79,6 +258,9 @@
       "file": "lib/client.manager.bundle.js",
       "line": "presetStatus.innerHTML = '✅ 当前编辑：' + esc(currentPreset ? currentPreset.name : '默认预设') + ' | 共 ' + (data.presets || []).length + ' 个预设可选<br><span style=\"font-size:11px;color:var(--dsw-alias-label-tertiary,#999)\">🎭 角色卡：' + charCount2 + ' 个 | 📚 世界书：' + wbCount2 + ' 本（' + wbEntries2 + ' 条，启用 ' + wbEnabled2 + ' 条）| ⚙️ 预设：' + presetCount2 + ' 个（启用 ' + presetEnabled2 + ' 条）</span>';",
       "lineNo": 4199,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
       "parts": [
         "charCount2",
         "wbCount2",
@@ -96,8 +278,112 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
+      "line": "elNextSel.innerHTML = html;",
+      "lineNo": 4767,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "html"
+      ],
+      "kind": "upstream-escaped",
+      "why": "「下次新会话预选」下拉：id 与显示名都经 esc",
+      "mustContain": [
+        "html += '<option value=\"' + esc(p.id) + '\"'"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "function setStatus(msg, color) { status.innerHTML = msg; status.style.color = color || '#999'; }",
+      "lineNo": 5127,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "msg"
+      ],
+      "kind": "param-by-callers",
+      "why": "开场白注入面板的状态行：调用点传的都是字面量或 esc(...)（cardName / error）",
+      "mustContain": [
+        "esc(d.cardName || '')",
+        "esc((d && d.error) || '注入失败')",
+        "esc((e && e.message) || String(e))"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "statusEl.innerHTML = msg;",
+      "lineNo": 5177,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "msg"
+      ],
+      "kind": "param-by-callers",
+      "why": "全局正则面板的状态行：调用点传的都是字面量或 esc(...)",
+      "mustContain": [
+        "esc(String(s.scriptName || id))",
+        "esc(e.message || String(e))",
+        "esc(String((errs[i] && errs[i].error) || errs[i]))"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "listEl.innerHTML = html;",
+      "lineNo": 5321,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "html"
+      ],
+      "kind": "upstream-escaped",
+      "why": "全局正则脚本清单：逐行由 rowHtml() 生成，rowHtml 体内 esc/escAttr",
+      "mustContain": [
+        "+ escAttr(name) + '\">' + esc(name) + '</span>'",
+        "esc(placeShorthand(s.placement))"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "if (iframe) iframe.srcdoc = sb.html;",
+      "lineNo": 6709,
+      "occ": 1,
+      "sink": "srcdoc",
+      "sinkKind": "sandboxed-doc",
+      "parts": [
+        "sb.html"
+      ],
+      "kind": "sandboxed-doc",
+      "why": "muv-engine 状态栏：服务端返回另一份完整文档；iframe 只给 allow-scripts（刻意不给 allow-same-origin）⇒ 不透明源，够不到主页面 DOM 与凭据",
+      "mustContain": [
+        "sandbox=\"allow-scripts\""
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "contentEl.innerHTML = html;",
+      "lineNo": 6823,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "html"
+      ],
+      "kind": "dom-roundtrip",
+      "why": "消息美化：html 取自 contentEl.innerHTML（已被浏览器解析过的 DOM），经 Latex 渲染与状态卡片追加后写回",
+      "mustContain": [
+        "var html = contentEl.innerHTML;"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
       "line": "item.innerHTML = '<span style=\"width:12px;flex:0 0 auto;text-align:center;\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;margin:0;display:flex;flex-direction:column;align-items:flex-start;line-height:1.3\"><span style=\"max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + escapeHtml(p.name) + '</span><span style=\"font-size:9px;color:var(--dsw-alias-label-tertiary,#888);font-weight:400;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + pMeta2 + '</span></span><span style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#888);flex:0 0 auto;\">' + (p.cardChars ? (p.cardChars + '字') : '') + '</span>';",
       "lineNo": 7259,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
       "parts": [
         "pMeta2",
         "(p.cardChars ? (p.cardChars + '字') : '')"
@@ -107,6 +393,23 @@
       "mustContain": [
         "pMeta2 += '🎭' + escapeHtml(",
         "p.cardChars"
+      ]
+    },
+    {
+      "file": "lib/index.js",
+      "line": "document.getElementById(\"ps-body\").innerHTML=h",
+      "lineNo": 5422,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "h"
+      ],
+      "kind": "numeric",
+      "why": "服务端自渲染页的体积面板：h 由 psLine 与 prompt-stats 的计数/大小/时间戳拼成",
+      "mustContain": [
+        "function psLine(label,b)",
+        "pct: Math.round(ratio * 1000) / 10"
       ]
     }
   ]
