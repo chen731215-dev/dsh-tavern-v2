@@ -24,6 +24,147 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+/**
+ * ★ ③ 归属判据（批3 前置；由 reviewer 建议升格）：
+ *   `var(--tv-*)` 的使用点只有在**能证明落在 `#tavern-manager` 子树内**时才算合规 ——
+ *   否则 `var()` 解析不到，颜色会退回继承/默认 ⇒ **真·用户可见变化**。
+ *   证据形态两种：
+ *     · markup：该行在 `panelHTML` 的函数体内（面板根就是 `#tavern-manager`，产物经 `root.innerHTML` 进面板）；
+ *     · JS：**逐行向上**取赋值表达式，沿 `X.querySelector('#id')` **递归到锚点**，最终 id 必须出现在
+ *       `panelHTML` 的 markup 里（且锚点链的容器最终指向面板）。
+ *   ⚠️ 为什么必须升格成判据（而不是留在脚本里）：我批2 的材料就是用「**全局** last-write-wins 的变量→id 表」
+ *      得出的，`st` 在文件后段还有别的绑定被后写覆盖 ⇒ 归属**蒙对了**才过；方法会随人漂，判据不会。
+ *   ⚠️ 本文件里的括号配平用**自带的小遮罩**（只服务本判据的括号计数）—— 与 slice-anchors 的那份实现无关，
+ *      不引另一个 test 文件（那会把它的用例也注册进本进程）。
+ */
+function maskForBraces(text) {
+  const s = String(text)
+  let out = ''
+  let i = 0
+  let quote = ''
+  while (i < s.length) {
+    const c = s[i]
+    if (quote) {
+      if (c === '\\') { out += '  '; i += 2; continue }
+      if (c === quote) { quote = ''; out += c; i++; continue }
+      out += c === '\n' ? '\n' : ' '
+      i++
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; out += c; i++; continue }
+    if (c === '/' && s[i + 1] === '/') { while (i < s.length && s[i] !== '\n') { out += ' '; i++ } continue }
+    if (c === '/' && s[i + 1] === '*') { out += '  '; i += 2; while (i < s.length && !(s[i] === '*' && s[i + 1] === '/')) { out += s[i] === '\n' ? '\n' : ' '; i++ } if (i < s.length) { out += '  '; i += 2 } continue }
+    // ★ 正则字面量必须整段跳过：`/['"]/` 里的引号会让字符串状态**错位**，
+    //   之后整份文本都被当成"字符串里" ⇒ `function panelHTML(` 再也找不到（实测就栽在这里）。
+    //   判据：`/` 前面那个非空字符不是「值 / 右括号」⇒ 它是正则起点。
+    if (c === '/') {
+      let prev = ''
+      for (let q = i - 1; q >= 0; q--) { const pc = out[q]; if (pc === ' ' || pc === '\t') continue; prev = pc; break }
+      if (!/[A-Za-z0-9_$)\]}]/.test(prev)) {
+        let inClass = false
+        let k = i + 1
+        for (; k < s.length; k++) {
+          const rc = s[k]
+          if (rc === '\\') { k++; continue }
+          if (rc === '\n') break
+          if (rc === '[') inClass = true
+          else if (rc === ']') inClass = false
+          else if (rc === '/' && !inClass) break
+        }
+        if (k < s.length && s[k] === '/') { for (let t = i; t <= k; t++) out += s[t] === '\n' ? '\n' : ' '; i = k + 1; continue }
+      }
+    }
+    out += c
+    i++
+  }
+  return out
+}
+
+/** `panelHTML` 的函数体行范围（0-based，含首尾）；找不到 ⇒ null。 */
+export function panelHtmlRange(bundleText) {
+  const lines = String(bundleText).split(/\r?\n/)
+  const masked = maskForBraces(bundleText).split(/\r?\n/)
+  const start = masked.findIndex((l) => /(?:^|\s)function\s+panelHTML\s*\(/.test(l))
+  if (start < 0) return null
+  let depth = 0
+  let started = false
+  for (let k = start; k < masked.length; k++) {
+    for (const c of masked[k]) {
+      if (c === '{') { depth++; started = true } else if (c === '}') { depth--; if (started && depth === 0) return { from: start, to: k } }
+    }
+  }
+  return null
+}
+
+/** 从 `lineIdx` **向上**找 `name` 的最近绑定；返回 `{ line, expr }`（1-based 行号）或 null。 */
+export function nearestBinding(lines, name, lineIdx) {
+  const re = new RegExp('(?:var\\s+|let\\s+|const\\s+)?' + name + '\\s*=\\s*([^;\\n]+)')
+  for (let i = Math.min(lineIdx, lines.length - 1); i >= 0; i--) {
+    const m = lines[i].match(re)
+    if (m) return { line: i + 1, expr: m[1].trim() }
+  }
+  return null
+}
+
+/** 解析绑定表达式 → `{ selector, via, anchorSelector }`（沿 `X.querySelector` 递归，最多 4 跳）。 */
+export function resolveBindingChain(lines, expr, lineIdx, depth = 0) {
+  if (depth > 4) return { selector: null, via: null, anchorSelector: null, why: '递归过深' }
+  const doc = String(expr).match(/^\s*(?:document\.)?(?:getElementById\(\s*'([^']+)'\s*\)|querySelector\(\s*'#([^']+)'\s*\))/)
+  if (doc) return { selector: '#' + (doc[1] || doc[2]), via: 'document', anchorSelector: 'document' }
+  const rel = String(expr).match(/^\s*([A-Za-z_$][\w$]*)\s*\.\s*querySelector\(\s*'#([^']+)'\s*\)/)
+  if (rel) {
+    const base = nearestBinding(lines, rel[1], lineIdx - 1)
+    if (!base) return { selector: '#' + rel[2], via: rel[1], anchorSelector: null, why: '找不到容器变量 ' + rel[1] }
+    const up = resolveBindingChain(lines, base.expr, base.line - 1, depth + 1)
+    return { selector: '#' + rel[2], via: rel[1] + '@L' + base.line, anchorSelector: up.anchorSelector ?? up.selector }
+  }
+  return { selector: null, via: null, anchorSelector: null, why: '非选择器表达式：' + String(expr).slice(0, 60) }
+}
+
+/**
+ * 全仓 `var(--tv-*)` 使用点的归属判定。
+ * @returns {{sites: Array, panelRange: object|null, panelIds: Set, problems: string[]}}
+ *   site = `{ line, name, kind: 'markup'|'js', id, anchor, ok, why }`
+ */
+export function tvUsageSites(bundleText) {
+  const lines = String(bundleText).split(/\r?\n/)
+  const range = panelHtmlRange(bundleText)
+  const panelIds = new Set(
+    range ? lines.slice(range.from, range.to + 1).join('\n').match(/id="([^"]+)"/g)?.map((m) => m.slice(4, -1)) ?? [] : [],
+  )
+  const sites = []
+  const problems = []
+  lines.forEach((l, i) => {
+    const names = [...l.matchAll(/var\(\s*(--tv-[\w-]*)/g)].map((m) => m[1])
+    if (!names.length) return
+    // 令牌**定义行**不算使用点（`--tv-x:#hex` 是定义，不是引用）
+    const defineOnly = /--tv-[\w-]+\s*:/.test(l) && !/var\(/.test(l)
+    if (defineOnly) return
+    const inMarkup = !!(range && i >= range.from && i <= range.to)
+    if (inMarkup) {
+      for (const name of names) sites.push({ line: i + 1, name, kind: 'markup', id: (l.match(/id="([^"]+)"/) || [])[1] || null, anchor: 'panelHTML', ok: true, why: '在 panelHTML 体内' })
+      return
+    }
+    const m = l.match(/([A-Za-z_$][\w$]*)\.style\./)
+    const chain = m ? (() => {
+      const b = nearestBinding(lines, m[1], i - 1)
+      return b ? resolveBindingChain(lines, b.expr, b.line - 1) : null
+    })() : null
+    const id = chain && chain.selector ? chain.selector.slice(1) : null
+    const ok = !!(id && panelIds.has(id))
+    for (const name of names) {
+      sites.push({ line: i + 1, name, kind: 'js', id, anchor: chain ? chain.anchorSelector : null, ok, why: ok ? '绑定链回到面板内元素' : '无法证明在面板子树内' + (chain && chain.why ? '（' + chain.why + '）' : '') })
+    }
+  })
+  if (!range) problems.push('找不到 panelHTML 的函数体 —— 判据空跑（面板 markup 边界没了）')
+  if (!panelIds.size) problems.push('panelHTML 里一个 id 都没解析到 —— 判据空跑')
+  for (const s of sites) if (!s.ok) problems.push('L' + s.line + ' 的 ' + s.name + '（' + s.kind + '）' + s.why)
+  return { sites, panelRange: range, panelIds, problems }
+}
+
+/** ③ 的非空跑下限（实测 17，时点 be756f7；随后续批次只增）。 */
+export const USAGE_FLOOR = 17
+
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BUNDLE_FILE = path.join(REPO, 'lib', 'client.manager.bundle.js')
 // ⚠️ 文件名刻意**不含** `token` 字样：本仓 `.gitignore` 有一条凭据守卫 `*token*`（2.7.14 加的），
@@ -260,6 +401,50 @@ test('②-c 反证（批2 新增能力）：**markup / JS 里**的未定义引�
   // 引用下限（非空跑）：真实 bundle 的全仓引用数必须 ≥ 下限
   const total = [...REFS_ALL.values()].reduce((a, b) => a + b, 0)
   assert.ok(total >= REF_FLOOR, '全仓引用只数到 ' + total + ' 处（下限 ' + REF_FLOOR + '）—— 判据空跑或替换被回退')
+})
+
+// ════════════════════════════════════════════════════════════════
+// ③ 归属判据：每个 `var(--tv-*)` 使用点都必须**能证明**在 `#tavern-manager` 子树内
+//   （reviewer 建议把批2 脚本里的方法升格成常驻判据 —— 方法会随人漂，判据不会）
+// ════════════════════════════════════════════════════════════════
+const USAGE = tvUsageSites(BUNDLE)
+
+test('③ 每个 `var(--tv-*)` 使用点都必须能证明在 `#tavern-manager` 子树内（点名到行）', (t) => {
+  const byKind = {}
+  for (const s of USAGE.sites) byKind[s.kind] = (byKind[s.kind] ?? 0) + 1
+  t.diagnostic('使用点 ' + USAGE.sites.length + ' 处 ' + JSON.stringify(byKind) + ' · panelHTML L' +
+    (USAGE.panelRange ? (USAGE.panelRange.from + 1) + '–' + (USAGE.panelRange.to + 1) : '（找不到）') +
+    ' · 其中的 markup id ' + USAGE.panelIds.size + ' 个')
+  assert.deepEqual(USAGE.problems, [], '★ 这些 `var(--tv-*)` 使用点无法证明落在面板子树内（var() 解析不到 ⇒ 颜色会退回继承/默认）：\n  ' + USAGE.problems.join('\n  '))
+  assert.ok(USAGE.sites.length >= USAGE_FLOOR, '使用点只数到 ' + USAGE.sites.length + ' 处（下限 ' + USAGE_FLOOR + '）—— 判据空跑或替换被回退')
+  assert.ok((byKind.js ?? 0) >= 1 && (byKind.markup ?? 0) >= 1, '两类证据形态都必须非空（否则判据只覆盖了一半）：' + JSON.stringify(byKind))
+})
+
+test('③-b 反证：把一处 JS 绑定改到**面板外**的元素 ⇒ 必须红；原样 ⇒ 绿（正对照）', () => {
+  // 正对照：现仓库必须通过
+  assert.deepEqual(tvUsageSites(BUNDLE).problems, [], '现状不该报红')
+  // 反证：把 `st = container.querySelector('#tavern-status')` 改绑到一个**确实不在面板里**的 id
+  //        （`#dsh-tavern-float-hint` 是本仓真实存在的面板外元素，见 L6911 那一族）
+  //  ⚠️ 必须替换**全部**出现（首次 `String.replace` 只换第一处 ⇒ 被替换的可能不是被判据解析的那几处绑定，
+  //     于是反证变成空跑 —— 实测踩过；注入口必须与判据的解析口径对齐）
+  const FROM = "container.querySelector('#tavern-status')"
+  const n = BUNDLE.split(FROM).length - 1
+  assert.ok(n >= 1, '夹具前提：bundle 里应存在该绑定，实际 ' + n + ' 处')
+  const mutated = BUNDLE.split(FROM).join("document.querySelector('#dsh-tavern-float-hint')")
+  assert.notEqual(mutated, BUNDLE, '替换必须真的发生（否则这条反证是空跑）')
+  const bad = tvUsageSites(mutated)
+  assert.ok(bad.problems.length >= 1, '绑到面板外必须报红，实际=' + JSON.stringify(bad.problems))
+  assert.match(bad.problems.join('\n'), /无法证明在面板子树内/, '报红必须点名原因')
+  // 反证②：把 markup 里的使用点搬到 panelHTML **之外**（合成小样本）⇒ 同样必须红
+  const synthetic = [
+    'function panelHTML() {',
+    '  return \'<div id="t-x" style="color:var(--tv-color-danger)"></div>\'',
+    '}',
+    'var outside = \'<div style="color:var(--tv-color-danger)"></div>\'',   // 面板外
+  ].join('\n')
+  const s3 = tvUsageSites(synthetic)
+  assert.equal(s3.problems.length, 1, '面板外的使用点必须报一条，实际=' + JSON.stringify(s3.problems))
+  assert.match(s3.problems[0], /L4/)
 })
 
 test('②-b 反证：把定义挪到 `:root` ⇒ 报红；作用域内 ⇒ 放行；引用未定义 ⇒ 报红；登记表漂移 ⇒ 报红', () => {
