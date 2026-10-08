@@ -89,18 +89,46 @@ function assertProjectionNonVacuous(name, p) {
 let cleanupError = null
 let addedWt = null
 
+/** 把路径归一化到"同一形态"再比较（git 输出正斜杠、Windows 是反斜杠；realpath 会解 junction）。 */
+function samePath(a, b) {
+  const norm = (p) => { try { return fs.realpathSync(p).replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase() } catch { return path.resolve(p).replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase() } }
+  return norm(a) === norm(b)
+}
+
+/** ★ 删除前必须能证明"这个路径是本次运行自己创建的"，否则一律不动（本仓教训：启发式只能排序、不能授权）。 */
+function assertSafeToRemove(wt) {
+  if (samePath(wt, REPO)) return '拒绝：待删路径等于仓库根'
+  if (samePath(path.dirname(wt), REPO)) return '拒绝：待删路径紧邻仓库根'
+  if (fs.existsSync(path.join(wt, '.git')) === false && !wt.includes('golden-origin-')) return '拒绝：路径既不含 .git，也不是本工具创建的 golden-origin-* 形态'
+  if (/[/\\](.git|objects)([/\\]|$)/.test(wt)) return '拒绝：路径里出现 .git / objects'
+  return null
+}
+
+/** 失败时给人可复制的修复命令（审核方建议）。 */
+function repairHint(wt) {
+  return [
+    '   可复制修复：',
+    '     git worktree remove --force "' + wt + '"',
+    '     git worktree prune',
+    '     rm -rf "' + wt + '"      # 上面那条对"未登记"的残留无效，只能手工删',
+  ].join('\n')
+}
+
 function doCleanup() {
   if (!addedWt) return
   const { wt } = addedWt
   addedWt = null
+  const unsafe = assertSafeToRemove(wt)
+  if (unsafe) { cleanupError = unsafe + '（' + wt + '）'; return }
+  console.log('  清理：将删除本次运行创建的 worktree（共 1 个）：' + wt.replace(os.tmpdir(), '%TEMP%'))
   const rm = run('git', ['worktree', 'remove', '--force', wt])
   if (rm.status !== 0) {
     // ★ 响亮失败：以前只打 ⚠️，于是"清理失败"会静默留下残留 worktree（第二轮复核实测到过）。
-    cleanupError = 'worktree remove 失败：' + String(rm.stderr || '').trim().slice(0, 300) + '\n   残留路径：' + wt
+    cleanupError = 'worktree remove 失败：' + String(rm.stderr || '').trim().slice(0, 300) + '\n   残留路径：' + wt + '\n' + repairHint(wt)
     return
   }
   const pr = run('git', ['worktree', 'prune'])
-  if (pr.status !== 0) cleanupError = 'git worktree prune 失败：' + String(pr.stderr || '').trim().slice(0, 300)
+  if (pr.status !== 0) cleanupError = 'git worktree prune 失败：' + String(pr.stderr || '').trim().slice(0, 300) + '\n' + repairHint(wt)
 }
 
 function fail(msg, extra = '') {
