@@ -4,6 +4,46 @@
 > [`docs/archive/CHANGELOG-pre-2.6.md`](./docs/archive/CHANGELOG-pre-2.6.md)。
 > 根目录只保留 **v2.6.0 起的当前批次**，更早的请去上面那个文件。
 
+## v2.7.12 (2026-10-08) — 🔁 让 CI 可本地复现 + 三条防漂护栏
+
+> 承接 2.7.11：CI 是「唯一的自动化强制点」，所以它自己也需要护栏与本地复现路径。
+
+### 1. `npm run ci:local`：一条命令复现 CI
+按工作流**相同的顺序**跑那 5 条（语法检查 → 全量测试 → 样式预算 → 客户端自检 → innerHTML 棘轮）。
+推送前先本地跑一遍，比等 CI 红了再回来查快得多。
+
+### 2. 三条防漂护栏（`tests/tooling-integrity.test.js` ④-b / ④-c / ④-d）
+- **④-b** CI 里每条 `run:` 必须能映射到 `package.json` 的脚本 —— 改了脚本名却忘改工作流，立刻报红。
+  这正是 2.7.11 修的那类漂移（清单与事实脱节），只是换到了 CI 这一层。
+- **④-c** 工作流不许出现 `continue-on-error` / `|| true` —— 那是把护栏**静默中和**的手段。
+- **④-d** `ci:local` 与工作流必须是**同一组**命令，否则会出现「本地绿、CI 红」。
+
+变异验证：脚本名写错 / 加 `continue-on-error` / `ci:local` 少一步 —— 三条全部报红。
+
+### 3. 实测：CI 等价环境（干净 checkout + 无 DSH）全绿
+`git worktree add --detach` 出干净 checkout、去掉 `DSH_ASAR`（CI 上没有 DSH），按 CI 的原样命令跑：
+
+| 步骤 | 结果 |
+|---|---|
+| `npm run check` | ✅ 语法全通过（54 个文件） |
+| `npm test` | ✅ 481 pass / 0 fail / 3 skipped |
+| `npm run check:style` | ✅ exit 0 |
+| `npm run check:integrity` | ✅ 三件套全通过 |
+| `npm run check:innerhtml` | ✅ 基线 7 条 / 0 新增 |
+
+那 3 个 skipped 是 `cordis-mount.test.js` 找不到 DSH 的 `app.asar` 时自己 skip（4 项里 skip 3、剩 1 项照跑）——
+合法跳过，空跑判据不误报。工作流 YAML 本身也用解析器验过（一次性验证，不进依赖）：触发条件、
+`runs-on`、7 个 step 全部正确。
+
+### 4. ⚠️ 触发 CI 要推**分支**，别推 main
+本地 `main` 与 `origin/main` **内容一致但历史不同**（共同祖先只到 `2cea581`，两边各自重写），
+直接推 `main` 会变成 force-push。推分支即可：`git push origin main:ci/<名字>`
+（分支推送同样命中 `push` 触发器）。
+
+> 为什么单列这一节：CI 是唯一能在服务端拦下坏提交的地方，但它同时也是最容易「以为它在跑、其实没跑」
+> 的地方 —— 工作流文件名错、YAML 缩进错、脚本改名、`runs-on` 写错，任何一种都会让它静默失效。
+
+---
 ## v2.7.11 (2026-10-08) — 🧷 补上唯一的自动化强制点：CI + 清单不再手抄 + 文档不再手抄数字
 
 > 这一版修的是「**护栏本身没有护栏**」：全量测试 / 语法检查 / 样式预算 / 客户端自检 /

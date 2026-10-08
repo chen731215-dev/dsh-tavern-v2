@@ -7,7 +7,7 @@
 > 见 §5「服务端分层」。那条规矩正是把 index.js 堆到 7000 行的原因。
 
 - **包名**：`dsh-tavern`（**不是** `@local/dsh-tavern`）
-- **版本**：2.7.11
+- **版本**：2.7.12
 - **模块系统**：ES Modules（`import` / `export`，禁止 `require` / `module.exports`）
 - **服务端入口**：`lib/index.js`（分层进度见 §1 结构图 / §5；**行数与模块数一律不写进文档**，手抄必漂）
 - **客户端入口**：`lib/client.manager.bundle.js`
@@ -330,6 +330,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | 客户端自检三件套 | `npm run check:integrity`（= `node tools/check-client-integrity.mjs`） |
 | innerHTML 转义棘轮 | `npm run check:innerhtml`（= `node tools/check-innerhtml-escape.mjs`） |
 | **CI（唯一的强制点）** | `.github/workflows/check.yml`，push / PR 自动跑上面这几条 |
+| **本地复现 CI** | `npm run ci:local` —— 与工作流**同一组命令、同一顺序**（有护栏 ④-d 强制一致） |
 
 - **测试清单不手抄**：`npm test` 直接扫 `tests/*.test.js`，新增测试文件自动纳入。
   2026-10-08 实测：旧的 `scripts.test` 是一条**手抄的 `&&` 长链**，漏掉 3 个文件
@@ -342,6 +343,15 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
   因为那说明该文件一条断言都没跑（被清空、或被注释掉、或子进程压根没起来）。
   受限环境里 spawn 失败（EBUSY）也会落到这一档 —— **看到 `❔` 说明环境有问题，不是通过**。
   免费送出来的绿灯比红灯更危险。
+- **CI 环境 = 干净 checkout + 没有 DSH**。实测（2.7.12）：语法检查 54 文件通过，样式预算 / 客户端自检 /
+  innerHTML 棘轮 exit 0，全量测试 **481 pass / 0 fail / 3 skipped**。那 3 个 skipped 是
+  `cordis-mount.test.js` 找不到 DSH 的 `app.asar` 时**自己 skip**（4 项里 skip 3 项，剩 1 项照跑）——
+  合法跳过，空跑判据不会误报。
+- **CI 自己也有护栏**（`tests/tooling-integrity.test.js` ④-b/④-c/④-d）：每条 `run:` 必须能映射到
+  `package.json` 的脚本、不许出现 `continue-on-error` / `|| true`、`ci:local` 必须与工作流同命令集。
+- ⚠️ **触发 CI 要推分支，别推 main**：本仓本地 `main` 与 `origin/main` **内容一致但历史不同**
+  （共同祖先只到 `2cea581`），直接推 `main` 会变成 force-push。
+  `git push origin main:ci/<名字>` 即可（分支推送同样命中 `push` 触发器）。
 - 跑测试前有时需要 `DSH_ASAR`（指向 DSH 的 `app.asar`），`cordis-mount.test.js` 依赖它；
   找不到时那个文件会**自己 skip**（不当红灯），所以 CI 不需要装 DSH。
 
