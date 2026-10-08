@@ -7,7 +7,7 @@
 > 见 §5「服务端分层」。那条规矩正是把 index.js 堆成巨型单文件的原因。
 
 - **包名**：`dsh-tavern`（**不是** `@local/dsh-tavern`）
-- **版本**：2.7.12
+- **版本**：2.7.13
 - **模块系统**：ES Modules（`import` / `export`，禁止 `require` / `module.exports`）
 - **服务端入口**：`lib/index.js`（分层进度见 §1 结构图 / §5；**行数与模块数一律不写进文档**，手抄必漂）
 - **客户端入口**：`lib/client.manager.bundle.js`
@@ -402,7 +402,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 - `tests/fixtures/golden-prompt.json` 是**在重构前那一版（`a816afd`）上生成的**产物快照；
 - 测试在当前版本上重跑同一组固定 fixture，要求**逐字节一致** ⇒ 任何一处组装语义被改坏，立刻报红。
 
-⚠️ **它有明确的边界**：`apply(ctx)` 内部的真实组装（装配体还在 apply 里，等 S2-C2 抽出来后补）、
+⚠️ **它有明确的边界**：`apply(ctx)` 内部的真实组装（装配体还在 apply 里 —— 但 apply 本体在 a816afd→HEAD 只改了 5 行、且全部是 `S.` 前缀改写，详见 docs/VERIFICATION.md；把它抽成函数是 **S2-C2 的前置条件**，届时补这一环的 golden）、
 `prompt-stats` 的数值、UI 交互、时序并发、LLM 失败路径 —— 都不在覆盖范围内，
 豁免清单写在测试文件的 `EXEMPT` 常量里并有护栏防它缩水。**不要把它当成「全覆盖」。**
 
@@ -500,6 +500,13 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
   只允许用在「**tree 已证明相等**」的平行历史接续上，且用之前必须：`git fetch` 并验证
   `git merge-base --is-ancestor <远端 tip> HEAD` 为真。**默认用普通 merge**（代价是解假冲突，
   收益是不会静默丢东西）。
+- **「npm 能 spawn、node 自己的 child_process 不能」是某些受限沙箱的属性，不是本仓/平台的属性**：
+  在那种环境里 `spawnSync` 直接 EBUSY ⇒ runner 会把每个文件判成 `❔`（空跑）—— **看到满屏 ❔ 是环境问题**，
+  不是「测试全绿」。`npm` 作为父进程时子进程正常，所以 `npm run check` / `npm run ci:local` 能跑通，
+  `npm test` 不行。别把这条环境属性当成仓库属性写进任何结论。
+- **行数/个数类护栏只管「现值型文档」**（AGENTS.md / CLAUDE.md / .cursorrules）：
+  CHANGELOG 里的行数记的是**各次发布的当时状态** —— 条目一旦写下即冻结，不会漂，
+  属历史记录，**不该被清掉**。两类要区分（复核方 2026-10-08 裁定）。
   反例：若对方在 GitHub 网页上直接改过文件（会产生树不同的提交），「tree 相等」的前提就不成立。
 - **补丁脚本插入多行文本时，必须用目标文件自己的 EOL**：往 CRLF 文件里用 `\n` 插行会制造混合换行，
   护栏 ⑥（tooling-integrity）会当场报红。**这个坑本仓已踩两次**，两次都是"手写补丁脚本"造成的；

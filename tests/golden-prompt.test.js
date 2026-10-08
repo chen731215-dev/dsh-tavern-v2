@@ -140,7 +140,7 @@ function capture(t) {
 export const EXEMPT = [
   {
     what: '`apply(ctx)` 内部 `tavern:card` 的真实组装（含各段开关判定与顺序）',
-    why: '需要完整 DSH ctx + 磁盘 fixture；装配体目前仍在 apply 里，等 S2-C2 把它抽成函数后再补 golden',
+    why: '需要完整 DSH ctx + 磁盘 fixture；装配体仍在 apply 里 —— 本轮对 apply 的改动只有 5 行（全是 S. 前缀改写），把它抽成函数是 S2-C2 的前置条件，届时补 golden',
   },
   { what: '`prompt-stats.json` 的数值', why: '运行期产物，含时间戳与动态体积，不适合快照' },
   { what: 'UI 交互与真实浏览器渲染', why: '无法在 node 进程内 golden 化（属 §9.1 真机冒烟的职责）' },

@@ -29,6 +29,13 @@
 | 15 | `tooling-integrity` ⑥ 全仓不许混合换行 | 把 `lib/utils.js` 一行改成裸 LF | 报红 | ✅ 报出文件与 CRLF/裸LF 计数 |
 | 16 | `check-syntax` 全仓语法 | 在 `tests/render-escape.test.js` 注入 `const broken = ;` | 报红 | ✅ 报出文件与 `Unexpected token ';'` —— 注意这个文件**旧的 `--check` 手抄清单根本没覆盖** |
 | 17 | `run-each-test` 空跑判据 | 在受限沙箱里跑（子进程起不来） | 判失败而不是假绿 | ✅ 27 个文件全标 `❔`，合计 0 ⇒ exit 1（并打印子进程输出尾部） |
+| 18 | `innerhtml-escape-ratchet` ⑧ 六种 sink 盲测 | 六种 sink 各塞一个未转义样本 | 全部点名且类型正确 | ✅ 6/6 |
+| 19 | `innerhtml-escape-ratchet` ⑨ 清单外入口 | 7 种清单外形态（insertAdjacentElement / writeln / dangerouslySetInnerHTML / outerHTML+= / DOMParser / eval / new Function） | 全部点名 | ✅ 7/7 |
+| 20 | `innerhtml-escape-ratchet` ⑩ sandbox 断言 | ① 去掉 sandbox ② 加 allow-same-origin | 都要报 | ✅ 两种都报；现库通过 |
+| 21 | `innerhtml-escape-ratchet` ⑪ 静态模板结构断言 | 往 `panelHTML` 注入未转义插值（sink 那层看不见） | 报红；esc 后不误报 | ✅ 报 `untrustedUserName`；esc 版不报 |
+| 22 | `innerhtml-escape-ratchet` ⑥ 证据复查（世界书列表） | 撤掉 `esc(group.name)` | 报红 | ✅ 报「证据片段已不存在」 |
+| 23 | 新判据的**发现力**（不是变异，是扩覆盖的实测结果） | 扩到「跨行拼接 + 单段 RHS」后重扫 | 应发现旧判据漏掉的真洞 | ✅ **2 处既有裸拼**（`presetName` / `agentPresetName` / `bannedWords.join` 进 textarea），v2.7.2 起就存在、旧基线 0 命中 —— 已修 |
+| 24 | 新判据自身的两个 bug（自纠记录） | ① 提取器把引号内容整段丢掉 ② 旧实现 `segs.length<2 → continue` | — | ✅ 都已修：前者制造了 `panelHTML` 三元误报，后者是本轮最重要的覆盖洞 |
 
 ## 二、行为等价的差分验证（复核意见 Q2）
 
@@ -54,8 +61,11 @@ node --test tests/golden-prompt.test.js
 
 **边界（豁免清单，写在测试文件里、且有护栏防它缩水）**：
 
-- ❌ `apply(ctx)` 内部 `tavern:card` 的真实组装（需要完整 DSH ctx + 磁盘 fixture；装配体仍在 `apply` 里，
-  等 S2-C2 抽成函数后补）
+- ❌ `apply(ctx)` 内部 `tavern:card` 的真实组装（需要完整 DSH ctx + 磁盘 fixture；装配体仍在 `apply` 里）
+  —— 复核方核实：**这不是本轮等价性论证的漏洞**，因为 `apply` 本体在 `a816afd→HEAD` 只改了 5 行
+  （且全部是 `S.` 前缀改写，1844 → 1843 行）；真正动过的是「顶层函数搬出去」。但要注意：
+  **apply 文本没变 ≠ 行为没变**（它调用的那批函数被搬走了）⇒ 风险被精确定位到「被搬走的代码里哪几行真被改了」，
+  由 §五 的对账工具（选 A）覆盖。把它抽成函数是 **S2-C2 的前置条件**，届时补这一环的 golden。
 - ❌ `prompt-stats.json` 的数值（运行期产物、含时间戳）
 - ❌ UI 交互与真实浏览器渲染（属 `AGENTS.md` §9.1 真机冒烟的职责）
 - ❌ 时序与并发（切会话、异步总结回调落盘）
