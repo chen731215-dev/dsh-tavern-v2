@@ -12,6 +12,12 @@
  *   ② 调该段的 `text(context)`，把产物**逐字节**与 fixture 比；
  *   ③ `sectionSizes.card` 必须等于产物长度（体积快照的一致性是面板显示的依据）；
  *   ④ 非空跑：产物必须非空、且必须含 fixture 卡正文里的标记 —— 否则"比了个空字符串"也会绿。
+ *   ⑤ **环境无关性**：产物里**不得出现任何本机绝对路径特征**（临时目录前缀 / 盘符路径 / 家目录形态）。
+ *      为什么单列一条：本 fixture 冻结了 `sectionSizes`（含 `card`），而 `card` 是**产物长度** ——
+ *      只要产物里嵌进一条绝对路径，它的长度就会随 `os.tmpdir()` 形态漂移（CI run #9 的真实翻车点：
+ *      本机 2121 / CI 形态 2102，差值正好是两种临时目录基路径的长度差）。
+ *      写注释不算判据（注释不会响铃）：将来谁给这张夹具加了"带绝对路径的段"，
+ *      必须**在指得到根因的地方报红**，而不是在 CI 上以"体积快照变了"这种形式红。
  *
  * ⚠️ 边界（如实）：世界书 / 技能 / 记忆 / 关系网这些**由 fixture 目录内容驱动**的分支，
  *   本 fixture 只覆盖到"没有这些文件"的那一档。要扩覆盖面就扩 fixture 目录，
@@ -135,4 +141,26 @@ test('② 逐字节比对：组装产物与 fixture 完全一致（S2-C2 抽装�
     '★ 组装产物变了（这是 S2-C2 的回归网）：期望 ' + want.bytes + ' 字节 / 实际 ' + Buffer.byteLength(got.cardOut, 'utf8') + ' 字节',
   )
   assert.deepEqual(got.sectionSizes, want.sectionSizes, '体积快照变了（面板显示与预算判据都依赖它）')
+})
+
+test('③ 环境无关性：产物不得含本机绝对路径特征（否则冻结的 sectionSizes.card 会随环境漂移）', () => {
+  const got = capture()
+  // ★ 非空跑：空产物（或缺卡标记）会让"不含路径"恒等成立 —— 那正是本仓最反对的"免费绿灯"
+  assert.ok(got.cardOut.length > 0, '★ 产物为空 ⇒ 这条判据会空转通过，先修组装')
+  assert.ok(got.cardOut.includes(CARD_MARKER), '★ 产物里没有夹具卡正文标记 ⇒ 这条判据会空转通过')
+
+  // 特征表：每一条都独立可读，命中哪条就报哪条（便于归因到"路径特征"，而不是兜底的"体积变了"）
+  const FEATURES = [
+    ['本机临时目录前缀', TMP_HOME],
+    ['盘符绝对路径（如 C:\\ 或 D:/）', /(?<![A-Za-z])[A-Za-z]:[\\/]/],
+    ['家目录形态 /Users/ 或 \\Users\\', /[\\/]Users[\\/]/i],
+    ['AppData', /AppData/i],
+    ['本仓/本机路径片段 .agent-presets 与 skills 的绝对形态', /[A-Za-z]:[\\/][^\n]{0,40}(\\.agent-presets|\\skills\\[^\n]*SKILL\.md)/],
+  ]
+  const hits = []
+  for (const [label, f] of FEATURES) {
+    const hit = f instanceof RegExp ? f.test(got.cardOut) : got.cardOut.includes(f)
+    if (hit) hits.push(label)
+  }
+  assert.deepEqual(hits, [], '★ 产物里出现了本机绝对路径特征 ⇒ 冻结的 sectionSizes.card 会随环境漂移（CI run #9 的翻车点）。命中：' + hits.join('、'))
 })
