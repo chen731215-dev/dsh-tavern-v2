@@ -42,6 +42,7 @@ dsh-tavern/
 │   │   ├── session-read.js          #   会话历史直读
 │   │   ├── session-migrate.js       #   会话/预设一次性迁移
 │   │   ├── state-io.js              #   状态写入与目录准备
+│   │   ├── routes.js                #   ★ 全部 HTTP 路由注册（按批搬自 index.js，见 §5.1 / §10）
 │   │   └── dsh-conn.js              #   DSH settings + credentials 解析
 │   ├── client.manager.bundle.js     # 客户端 ★ **单文件即源码，没有构建步骤**，直接改它
 │   ├── utils.js                     # 纯函数工具
@@ -83,7 +84,8 @@ dsh-tavern/
                      │              worldbook,preset-decl,session-log,
                      │              summary,dsh-conn}.js 等）  ← 已整块搬出（S2-A ~ S2-C1，单向依赖）
                      ├── lib/utils.js
-                     └── 路由仍注册在 index.js（routes/ 尚未抽出，属 S2-C2）
+                     └── lib/server/routes.js → 全部 HTTP 路由（`registerRoutes(ctx, deps)`，
+                         依赖显式传参；`apply` 里只留一次装配调用）
 HTTP API  ←────→  lib/client.manager.bundle.js（平台注入，经 ctx.webServer 与服务端通信）
 tests/*.test.js ─→ lib/index.js 的 `_test` 导出 + lib/utils.js
 tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
@@ -103,7 +105,7 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | Home 解析 | `resolveDshHome`（优先级：显式配置 → `$DSH_HOME` → `~/.dsh`） |
 | 提示词注入段 | **实际只有 2 个** `ctx.systemPrompt.section(`：`tavern:card`（`order: -999999`）与 `tavern:nsfw`（**order: -1**）。<br>§3 早先版本把 `tavern:wb` / `tavern:memory` / `tavern:relations` / `tavern:skills` 也列成独立段 —— **那是错的**（2026-10-08 实测：`grep systemPrompt.section` 只有 2 处）。<br>其余内容全部**拼进 `tavern:card` 的 `cardOut`**（组装步骤已下沉到 `lib/server/assemble.js`，见 §5.1）：<br>`sanitizePromptText(summaryText + header + text + wbText + memoryText + styleText + netText + toolsRestriction + relationsText + skillsText)`<br>⚠️ 其中 `summaryText` / `memoryText` 来自 `readSessionMemory()`，**是模型输出、且原样进系统提示**；`relationsText` 只含计数（见 `buildRelationsHintText`）。 |
 | 体积快照 | `flushPromptStats()`（**必须每条返回路径都调用**）、`sectionSizes` |
-| HTTP 路由 | `ctx.webServer.register(`、`/api/tavern/` |
+| HTTP 路由 | `ctx.webServer.register(`、`/api/tavern/`（**实现已全部在 `lib/server/routes.js`**，`index.js` 里只剩一次 `registerRoutes(ctx, routeDeps)` 装配调用） |
 | 预设 CRUD / 声明 | `writePresetFiles`、`agent.cordis.yml`、`prefix:`（**不是 `text:`**）、禁止 `complete: true` |
 | 世界书 | 关键词触发匹配、`injectMode`（full / keyword） |
 | 记忆 / 总结 | `buildSummaryPrompt`、`callLLM`、`parseSummaryOutput` |
@@ -176,8 +178,11 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | `memory-isolation` | `apply` 内 `★ 记忆总结注入` 块（到 `} catch {}` 为止） |
 
 > ⚠️ **S2-C2 已搬走的那半边**：`tavern:card` 的**正文组装**现在在 `lib/server/assemble.js`
-> （`assembleCardBody(deps)`，依赖全部显式传参、不反向 import `index.js`）。上表这些块**不在**
-> 被搬走的范围内 —— 记忆总结块、`tavern:nsfw` 段、`observeInjection` 观测点都留在 `apply(ctx)` 里。
+> （`assembleCardBody(deps)`，依赖全部显式传参、不反向 import `index.js`）；**全部 HTTP 路由**在
+> `lib/server/routes.js`（按批搬出，`registerRoutes(ctx, deps)`；依赖从函数体反推 → 经 `routeDeps` 显式传入）。
+> 上表这些块**不在**被搬走的范围内 —— 记忆总结块、`tavern:nsfw` 段、`observeInjection` 观测点都留在 `apply(ctx)` 里。
+> ★ 路由搬迁的**归属**由两张常驻网盯着：`tests/slice-anchors.test.js` ④（按源码内容定位端点）与 ⑤
+> （对 `lib/index.js` / `lib/server/*.js` 做 `includes` / 正则的**内容断言** —— 内容换了文件就点名到 `测试文件:行`）。
 
 ### 5.2 两个差点咬人的坑（搬代码块时必看）
 
@@ -433,7 +438,7 @@ S2-C2 抽装配前补上；随后那段组装被抽进 `lib/server/assemble.js`�
 | **S2-B2a** | 非路径可变状态收进 `lib/server/state.js` 的 `S` | ✅ **2.7.7 完成** |
 | **S2-B2b** | 路径 `let` 的单向镜像 `P` + `syncPaths()`，含路径镜像护栏 | ✅ **2.7.8 完成** |
 | **S2-C1** | 搬出首批路径依赖函数（dsh-conn / session-read / session-migrate / state-io） | ✅ **2.7.8 完成** |
-| **S2-C2** | 从 `apply(ctx)` 里抽出装配步骤，让它只做装配 | 🟡 **部分完成**：`tavern:card` 的正文组装已抽进 `lib/server/assemble.js`；**路由**注册仍未抽出（后半段另立） |
+| **S2-C2** | 从 `apply(ctx)` 里抽出装配步骤，让它只做装配 | ✅ **完成**：`tavern:card` 的正文组装抽进 `lib/server/assemble.js`；**全部 HTTP 路由**按批抽进 `lib/server/routes.js` ⇒ `apply(ctx)` 只剩装配（`index.js` 内已无内联路由数组） |
 | **S3 前端结构化** | `--tv-*` 语义令牌层 + 组件基元，**只加不删** | ⬜ 待做 |
 
 > 进度只看状态列的 ✅。**行数与个数一律不写进文档**（复核方 2026-10-08 的要求）：
@@ -441,7 +446,10 @@ S2-C2 抽装配前补上；随后那段组装被抽进 `lib/server/assemble.js`�
 > ② 连「到底几行」本身都有两种口径 —— `wc -l`（数换行符）与 `split(/\r?\n/).length`（多算一个尾部空元素）差 1，
 > 写进文档只会引来 ±1 的争论，而它不携带任何信息（要查就现跑 `wc -l`）。
 > 护栏已覆盖这三类数字（`tests/tooling-integrity.test.js` ⑤）。`lib/server/` 的模块清单见 §1 结构图。
-> 剩下的大头：`apply(ctx)` 里还压着**路由注册**（见 §2 依赖图末行），属 S2-C2 后半段。
+> 剩下的大头：S3（前端结构化）。S2-C2 的搬运已收口，但**搬运时的三条归属网要继续跑**：
+> `tests/slice-anchors.test.js` ①②（切片锚点 / apply 锚点）、④（按源码内容定位端点）、
+> ⑤（对 `lib/index.js` / `lib/server/*.js` 的**内容断言**），以及 `tests/routes-deps-scope.test.js`
+> （袋↔解构双向契约 / 组函数结构）与 `tests/routes-smoke.test.js`。
 
 **顺序建议：S1 → S4①（先有安全网）→ S2 → S3。**
 

@@ -430,9 +430,9 @@
       ]
     },
     {
-      "file": "lib/index.js",
+      "file": "lib/server/routes.js",
       "line": "document.getElementById(\"ps-body\").innerHTML=h",
-      "lineNo": 5422,
+      "lineNo": 1604,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",

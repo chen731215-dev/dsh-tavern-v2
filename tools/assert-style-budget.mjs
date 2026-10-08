@@ -85,12 +85,32 @@ export function measure(src) {
 export const HARD_ZERO = ['important', 'inlineHandlerAttr', 'inlineHandlerAttrServer']
 
 /**
- * 服务端自渲染页（lib/index.js 里的 HTML 字符串）也必须零内联事件 —— v2.7.1 前这条漏检：
+ * 服务端自渲染页（`lib/index.js` 里的 HTML 字符串）也必须零内联事件 —— v2.7.1 前这条漏检：
  * 设置页曾有 `onclick="saveWin()"` / `onclick="save()"` / `onchange="toggle(...)"` 三处。
+ *
+ * ★ task-14/第四块：**扫描面必须跟着搬迁走**。设置页（自渲染 HTML）随 `/api/tavern/settings`
+ *   路由搬进了 `lib/server/routes.js` ⇒ 若仍只扫 `lib/index.js`，这条**硬 0 规则**会变成**真空**：
+ *   那个文件里已经没有自渲染 HTML 了，routes.js 里怎么写内联事件它都恒为 0（"收窄却全绿"）。
+ *   所以扫描面 = `lib/index.js` + `lib/server/*.js`，并对文件数设下限（挡住"把面删掉"）。
  */
-export const SERVER_FILE = path.join(REPO, 'lib', 'index.js')
+export const SERVER_FILE = path.join(REPO, 'lib', 'index.js')   // 单文件口径（历史调用点保留）
+export const SERVER_DIR = path.join(REPO, 'lib', 'server')
+export const MIN_SERVER_FILES = 10
+
+/** 服务端源码的扫描面：`lib/index.js` + `lib/server/*.js`（排序、仓库相对）。 */
+export function serverSourceFiles() {
+  const out = [SERVER_FILE]
+  for (const f of fs.readdirSync(SERVER_DIR).sort()) if (f.endsWith('.js')) out.push(path.join(SERVER_DIR, f))
+  return out
+}
+
 export function measureServer(src) {
   return { inlineHandlerAttrServer: count(codeLines(src), /\son[a-z]+\s*=\s*"/g) }
+}
+
+/** 跨整片扫描面求和（任一文件命中即计入）。 */
+export function measureServerFiles(files) {
+  return { inlineHandlerAttrServer: files.reduce((n, f) => n + measureServer(fs.readFileSync(f, 'utf8')).inlineHandlerAttrServer, 0) }
 }
 
 export function readBudget() {
@@ -118,15 +138,22 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve
 if (isMain) {
   const src = fs.readFileSync(CLIENT, 'utf8')
   const actual = measure(src)
-  actual.inlineHandlerAttrServer = measureServer(fs.readFileSync(SERVER_FILE, 'utf8')).inlineHandlerAttrServer
-  if (process.argv.includes('--json')) { console.log(JSON.stringify(actual, null, 2)); process.exit(0) }
+  const serverFiles = serverSourceFiles()
+  if (process.argv.includes('--json')) {
+    actual.inlineHandlerAttrServer = measureServerFiles(serverFiles).inlineHandlerAttrServer
+    console.log(JSON.stringify(actual, null, 2)); process.exit(0)
+  }
+  if (serverFiles.length < MIN_SERVER_FILES) {
+    console.error('❌ 服务端扫描面只剩 ' + serverFiles.length + ' 个文件（下限 ' + MIN_SERVER_FILES + '）—— 硬 0 规则会变成真空')
+    process.exit(1)
+  }
+  actual.inlineHandlerAttrServer = measureServerFiles(serverFiles).inlineHandlerAttrServer
   if (process.argv.includes('--update')) {
     fs.writeFileSync(BUDGET_FILE, JSON.stringify(actual, null, 2) + '\n', 'utf8')
     console.log('已更新预算 ' + path.relative(REPO, BUDGET_FILE))
     for (const [k, v] of Object.entries(actual)) console.log('  ' + k.padEnd(22) + v)
     process.exit(0)
   }
-  actual.inlineHandlerAttrServer = measureServer(fs.readFileSync(SERVER_FILE, 'utf8')).inlineHandlerAttrServer
   const budget = readBudget()
   const { increased, decreased, hardZeroViolations } = compare(actual, budget)
   console.log('样式预算校验（实测 / 预算）')

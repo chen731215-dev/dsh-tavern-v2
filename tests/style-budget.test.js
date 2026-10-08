@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { measure, compare, readBudget, codeLines, CLIENT, BUDGET_FILE, HARD_ZERO, SERVER_FILE, measureServer } from '../tools/assert-style-budget.mjs'
+import { measure, compare, readBudget, codeLines, CLIENT, BUDGET_FILE, HARD_ZERO, measureServer, serverSourceFiles, measureServerFiles, MIN_SERVER_FILES } from '../tools/assert-style-budget.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const REPO = path.resolve(HERE, '..')
@@ -93,10 +93,18 @@ test('③ 硬规则 `!important` 必须恒为 0', () => {
 })
 
 test('③-b 服务端自渲染页也必须零内联事件（以前只量客户端，"保存"按钮漏了）', () => {
-  const m = measureServer(fs.readFileSync(SERVER_FILE, 'utf8'))
-  assert.equal(m.inlineHandlerAttrServer, 0, '★ lib/index.js 里不许有 on<event>="…"（应改为 addEventListener 绑定）')
+  const files = serverSourceFiles()
+  // ★ task-14/第四块：设置页随 `/api/tavern/settings` 搬进 `lib/server/routes.js` ⇒ 扫描面必须跟着扩，
+  //   否则这条硬 0 规则会变成**真空**（只扫 index.js 时，那个文件里已经没有自渲染 HTML 了）。
+  assert.ok(files.length >= MIN_SERVER_FILES, '服务端扫描面只剩 ' + files.length + ' 个文件（下限 ' + MIN_SERVER_FILES + '）')
+  assert.ok(files.includes(path.join(REPO, 'lib', 'server', 'routes.js')), '★ 搬迁目的地不在扫描面里 —— 硬 0 规则对它失明')
+  const m = measureServerFiles(files)
+  assert.equal(m.inlineHandlerAttrServer, 0, '★ 服务端源码里不许有 on<event>="…"（应改为 addEventListener 绑定）')
   assert.ok(HARD_ZERO.includes('inlineHandlerAttrServer'), '该指标应列入硬 0 规则')
   assert.equal(measureServer('x onclick="save()" y').inlineHandlerAttrServer, 1, '对照：合成样本必须命中 1 次（判据非空跑）')
+  // 反证：把内联事件塞进**搬迁目的地**（routes.js）也必须被抓 —— 这正是"只扫 index.js"看不见的形态
+  const sample = 'x onclick="save()" y'
+  assert.equal(measureServer(sample).inlineHandlerAttrServer, 1, '对照：坏样本必须能被该判据抓住')
 })
 
 test('④ 内联事件属性已清零 ⇒ 升级为硬规则：恒为 0', () => {
