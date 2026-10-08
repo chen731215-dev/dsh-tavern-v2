@@ -387,3 +387,157 @@ test('②-d 反证：模板插值里的**合法**名字仍然解析得到（不�
   const nested = 'function routesGroupW(ctx, deps) {\n  const { json } = deps\n  const s = `a${`b${json.c}`}d`\n  return [s]\n}'
   assert.deepEqual(unresolvedIdentifiers(nested), [], '嵌套模板插值里的合法引用也不该报红')
 })
+
+// ════════════════════════════════════════════════════════════════════
+// ⑤ `routeDeps` 袋 ↔ `const { … } = deps` 的【双向】契约
+// ⑥ 组函数结构：每个 `function routesGroupN(` 必须在**花括号深度 0** 且唯一
+//
+// 为什么单独立这两条（task-13，第三块前置）：它们是"临时搬迁器守着的两条不变量"，而搬迁器在
+// `_scratch/`（AGENTS §7.6 不入库）⇒ 第三/四块搬完就没人再守。实测（审核方删键实验 + 那次
+// "三重静默"）证明这两类**没有任何静态护栏**：
+//   · 删袋里的 `json`（跨组键）        → 作用域门禁【绿】、assemble 契约【绿】、**只有冒烟红**
+//   · 删袋里的 `renamePreset`（组独有）→ 同上
+//   · 组函数被嵌进上一组体            → 语法检查【绿】、缩进型检查【绿】、作用域门禁【绿】，只有冒烟红
+// ⇒ 冒烟只在"固定请求恰好走到那条链"时有效，所以这里补**静态**判据。
+// ════════════════════════════════════════════════════════════════════
+
+const ROUTES_SRC = fs.readFileSync(TARGET, 'utf8')
+const INDEX_SRC = fs.readFileSync(path.join(REPO, 'lib', 'index.js'), 'utf8')
+
+/** 解析 `const routeDeps = { … }` 袋体 → 键集合（一行可含多个普通键；带 `:` 的是访问器）。 */
+export function parseDepsBag(src) {
+  const m = String(src).match(/^[ \t]*const routeDeps = \{([\s\S]*?)^[ \t]*\}/m)
+  if (!m) return null
+  const keys = new Set()
+  for (const line of m[1].split('\n')) {
+    const t = line.trim()
+    if (!t || t.startsWith('//')) continue
+    const acc = t.match(/^([A-Za-z_$][\w$]*)\s*:/)
+    if (acc) { keys.add(acc[1]); continue }
+    for (const tok of t.split(',')) {
+      const x = tok.trim()
+      if (/^[A-Za-z_$][\w$]*$/.test(x)) keys.add(x)
+    }
+  }
+  return keys
+}
+
+/** 解析 routes.js 里**全部** `const { … } = deps` 的键并集（不许硬编码"两块" —— 还会继续加组）。 */
+export function parseDestructuredDeps(src) {
+  const keys = new Set()
+  const blocks = []
+  for (const b of String(src).matchAll(/const\s*\{([\s\S]*?)\}\s*=\s*deps/g)) {
+    const local = b[1].split(',').map((x) => x.trim()).filter((x) => /^[A-Za-z_$][\w$]*$/.test(x))
+    blocks.push(local)
+    for (const k of local) keys.add(k)
+  }
+  return { keys, blocks }
+}
+
+/** 双向契约：`解构了没传`（运行时 undefined）与 `传了没解构`（漂移）都要红。 */
+export function depsContractProblems(bagKeys, destructuredKeys) {
+  if (!bagKeys) return ['★ 找不到 index.js 里的 `const routeDeps = {` 袋 —— 判据空跑（搬家搬没了？）']
+  const missingInBag = [...destructuredKeys].filter((k) => !bagKeys.has(k)).sort()
+  const extraInBag = [...bagKeys].filter((k) => !destructuredKeys.has(k)).sort()
+  const out = []
+  if (missingInBag.length) out.push('★ routes.js 解构了、但 routeDeps 袋里**没有**（运行时是 undefined）：' + missingInBag.join(', '))
+  if (extraInBag.length) out.push('★ routeDeps 袋里传了、但没有任何组解构它（漂移）：' + extraInBag.join(', '))
+  return out
+}
+
+/** 结构：每个 `function routesGroupN(` 必须在花括号深度 0（不许嵌进上一组体）、且唯一、括号平衡。
+ *  ★ 用**括号配平**判断，不看缩进（合法 JS 的缩进可以任意 —— 审核方专门确认过这一点）。 */
+export function groupStructureProblems(src) {
+  const s = String(src)
+  let depth = 0
+  const seen = []
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1
+      while (j < s.length) { if (s[j] === '\\') { j += 2; continue } if (s[j] === c || s[j] === '\n') break; j++ }
+      i = j
+      continue
+    }
+    if (c === '/' && s[i + 1] === '/' && s[i - 1] !== ':') { while (i < s.length && s[i] !== '\n') i++; continue }
+    if (c === '/' && s[i + 1] === '*') { i += 2; while (i < s.length && !(s[i] === '*' && s[i + 1] === '/')) i++; i++; continue }
+    if (s.startsWith('function routesGroup', i)) {
+      const m = s.slice(i, i + 40).match(/^function (routesGroup\d+)\(/)
+      if (m) seen.push({ name: m[1], depth, line: s.slice(0, i).split('\n').length })
+    }
+    if (c === '{') depth++
+    else if (c === '}') depth--
+  }
+  const out = []
+  if (!seen.length) out.push('★ 一个 routesGroupN 都没扫到 —— 判据空跑')
+  if (depth !== 0) out.push('★ routes.js 花括号不平衡（残余深度 ' + depth + '）—— 结构已经坏了')
+  for (const g of seen) if (g.depth !== 0) out.push('★ ' + g.name + '（L' + g.line + '）在花括号深度 ' + g.depth + ' —— 它被嵌进了别的函数体（运行时 ReferenceError）')
+  const names = seen.map((x) => x.name)
+  const dup = [...new Set(names.filter((n, k) => names.indexOf(n) !== k))]
+  if (dup.length) out.push('★ 组函数重名：' + dup.join(', '))
+  return out
+}
+
+test('⑤ 袋 ↔ 解构【双向】契约：解构了没传 / 传了没解构 都要红', (t) => {
+  const bag = parseDepsBag(INDEX_SRC)
+  const { keys, blocks } = parseDestructuredDeps(ROUTES_SRC)
+  t.diagnostic('routeDeps 袋键 ' + (bag ? bag.size : 0) + '；解构块 ' + blocks.length + ' 个、并集键 ' + keys.size)
+  // 非空跑下限：两侧都必须真的解析出东西 —— "两侧都 0"会恒等绿（同类事故在 0ef48d8 抓过一次）
+  assert.ok(bag && bag.size >= 40, '袋只解析出 ' + (bag ? bag.size : 0) + ' 个键 —— 判据空跑或解析器坏了')
+  assert.ok(keys.size >= 40, '解构只解析出 ' + keys.size + ' 个键 —— 判据空跑或解析器坏了')
+  assert.ok(blocks.length >= 1, '一个解构块都没扫到')
+  const bad = depsContractProblems(bag, keys)
+  assert.deepEqual(bad, [], '★ 袋与解构的契约破了（这一条静态就能看出来，不必等冒烟）：\n  ' + bad.join('\n  '))
+})
+
+test('⑤-b 反证：删键必须**在静态判据上**红并点名到键（与审核方实验同形）', () => {
+  const bag = parseDepsBag(INDEX_SRC)
+  const { keys } = parseDestructuredDeps(ROUTES_SRC)
+  const drop = (k) => { const s = new Set(bag); s.delete(k); return s }
+  // 同形 ①：删 json（group1 与 group2 都用的跨组键）
+  const r1 = depsContractProblems(drop('json'), keys)
+  assert.equal(r1.length, 1, '删 json 必须红，实际=' + JSON.stringify(r1))
+  assert.match(r1[0], /解构了、但 routeDeps 袋里\*\*没有\*\*/)
+  assert.match(r1[0], /json/, '必须点名到具体键')
+  // 同形 ②：删 renamePreset（group2 独有键）
+  const r2 = depsContractProblems(drop('renamePreset'), keys)
+  assert.equal(r2.length, 1, '删 renamePreset 必须红，实际=' + JSON.stringify(r2))
+  assert.match(r2[0], /renamePreset/)
+  // 反方向：袋里多一个没人解构的键
+  const extra = new Set(bag)
+  extra.add('zzNobodyDestructuresThis')
+  const r3 = depsContractProblems(extra, keys)
+  assert.equal(r3.length, 1, '传了没解构必须红，实际=' + JSON.stringify(r3))
+  assert.match(r3[0], /zzNobodyDestructuresThis/)
+  // 袋读不到 ⇒ 必须点名"判据空跑"（不是静默通过）
+  assert.match(depsContractProblems(null, keys)[0], /判据空跑/)
+  // 对照：正常袋不该红
+  assert.deepEqual(depsContractProblems(bag, keys), [], '正常袋不该红')
+})
+
+test('⑥ 组函数结构：每个 routesGroupN 必须在花括号深度 0 且唯一', (t) => {
+  t.diagnostic('routes.js 组函数：' + [...ROUTES_SRC.matchAll(/^function (routesGroup\d+)\(/gm)].map((m) => m[1]).join(', '))
+  const bad = groupStructureProblems(ROUTES_SRC)
+  assert.deepEqual(bad, [], '★ routes.js 的组函数结构坏了：\n  ' + bad.join('\n  '))
+})
+
+test('⑥-b 反证：复现"三重静默"的产物形态 ⇒ 必须红（且缩进不算数）', () => {
+  const ok = ['function routesGroup1(ctx, deps) {', '  return []', '}', '', 'function routesGroup2(ctx, deps) {', '  return []', '}'].join('\n')
+  assert.deepEqual(groupStructureProblems(ok), [], '正常形态不该红')
+  // "三重静默"形态：把组2 嵌进组1 体里（组1 的收尾 `}` 跑到最后）—— 语法检查/缩进型检查都看不出来
+  const nested = ['function routesGroup1(ctx, deps) {', '  return []', '', 'function routesGroup2(ctx, deps) {', '  return []', '}', '}'].join('\n')
+  const r = groupStructureProblems(nested)
+  assert.equal(r.length, 1, '"三重静默"形态必须红，实际=' + JSON.stringify(r))
+  assert.match(r[0], /routesGroup2/)
+  assert.match(r[0], /深度 1/)
+  // 重名
+  const dup = ok + '\n' + ok.split('\n').slice(0, 3).join('\n')
+  assert.match(groupStructureProblems(dup).join('\n'), /重名/)
+  // ★ 缩进**不算数**：正常形态整体缩进两格，既不该红、也不该被误判（判据用的是括号配平）
+  const indented = ok.split('\n').map((l) => (l ? '  ' + l : l)).join('\n')
+  assert.deepEqual(groupStructureProblems(indented), [], '缩进不该影响判断（用的是括号配平，不是缩进）')
+  // 花括号不平衡
+  assert.match(groupStructureProblems('function routesGroup1(ctx, deps) {\n  return []\n').join('\n'), /不平衡/)
+  // 一个组都没有 ⇒ 空跑即失败
+  assert.match(groupStructureProblems('const x = 1\n').join('\n'), /判据空跑/)
+})
