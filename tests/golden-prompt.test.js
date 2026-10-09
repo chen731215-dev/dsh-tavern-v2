@@ -222,23 +222,33 @@ test('③ 豁免清单必须显式列出「本 golden 覆盖不到」的东西',
 //         因为被测断言已经跑完并已判决，这里只是收尾）。
 // ════════════════════════════════════════════════════════════════
 after(() => {
-  const tmpRoot = fs.realpathSync(os.tmpdir())
-  const real = fs.realpathSync(TMP_HOME)
-  const base = path.basename(real)
-  // ②的守卫：三重确认后才删
-  if (!real.startsWith(tmpRoot + path.sep)) {
-    console.error('⚠️ [golden-prompt] 收尾跳过：TMP_HOME 不在系统临时目录之下 ⇒ ' + real)
-    return
-  }
-  if (!base.startsWith('dsh-golden-')) {
-    console.error('⚠️ [golden-prompt] 收尾跳过：目录名不像本测试建的 ⇒ ' + base)
-    return
-  }
+  // ★ 整段都包在 try 里 —— 不许让「收尾」把测试判决翻红（铁律 19：环境故障≠代码故障）
+  //   曾经的写法把 `fs.realpathSync(TMP_HOME)` 放在 try **之外** ⇒ 目录一旦不存在
+  //   （杀软 / OS 清理器 / 并发进程把它弄没，**恰恰是这条守卫该生效的场景**）就抛 ENOENT，
+  //   把整条测试判成 fail —— 与「清理失败不改判决」自相矛盾。已由反证脚本实测复现。
+  let real = null
   try {
+    const tmpRoot = fs.realpathSync(os.tmpdir())
+    // TMP_HOME 不存在 ⇒ 无需清理，优雅退出（不是错误）
+    if (!fs.existsSync(TMP_HOME)) {
+      console.log('  [golden-prompt] 临时 DSH_HOME 已不存在，无需清理')
+      return
+    }
+    real = fs.realpathSync(TMP_HOME)
+    const base = path.basename(real)
+    // ②的守卫：三重确认后才删
+    if (!real.startsWith(tmpRoot + path.sep)) {
+      console.error('⚠️ [golden-prompt] 收尾跳过：TMP_HOME 不在系统临时目录之下 ⇒ ' + real)
+      return
+    }
+    if (!base.startsWith('dsh-golden-')) {
+      console.error('⚠️ [golden-prompt] 收尾跳过：目录名不像本测试建的 ⇒ ' + base)
+      return
+    }
     fs.rmSync(real, { recursive: true, force: true })
     console.log('  [golden-prompt] 已清理临时 DSH_HOME：' + base)
   } catch (e) {
     // ③：响亮报因，但不改判决
-    console.error('⚠️ [golden-prompt] 临时目录清理失败（不影响测试判决）：' + real + ' —— ' + e.message)
+    console.error('⚠️ [golden-prompt] 临时目录清理失败（不影响测试判决）：' + (real || TMP_HOME) + ' —— ' + e.message)
   }
 })
