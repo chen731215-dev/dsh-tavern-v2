@@ -329,21 +329,28 @@ test('③ 静态契约：assemble.js 解构出的依赖名集合 == index.js 调
 //   本文件的前缀是 `dsh-golden-rich-`（比另一个更长，故守卫用 `dsh-golden-rich-` 精确匹配）。
 // ════════════════════════════════════════════════════════════════
 after(() => {
-  const tmpRoot = fs.realpathSync(os.tmpdir())
-  const real = fs.realpathSync(TMP_HOME)
-  const base = path.basename(real)
-  if (!real.startsWith(tmpRoot + path.sep)) {
-    console.error('⚠️ [golden-rich] 收尾跳过：TMP_HOME 不在系统临时目录之下 ⇒ ' + real)
-    return
-  }
-  if (!base.startsWith('dsh-golden-rich-')) {
-    console.error('⚠️ [golden-rich] 收尾跳过：目录名不像本测试建的 ⇒ ' + base)
-    return
-  }
+  // ★ 整段都包在 try 里 —— 不许让「收尾」把测试判决翻红（铁律 19：环境故障≠代码故障）。
+  //   与 `golden-prompt.test.js` 的 ④ 同款；原因与反证见那边的注释（`realpathSync` 曾在 try 之外）。
+  let real = null
   try {
+    const tmpRoot = fs.realpathSync(os.tmpdir())
+    if (!fs.existsSync(TMP_HOME)) {
+      console.log('  [golden-rich] 临时 DSH_HOME 已不存在，无需清理')
+      return
+    }
+    real = fs.realpathSync(TMP_HOME)
+    const base = path.basename(real)
+    if (!real.startsWith(tmpRoot + path.sep)) {
+      console.error('⚠️ [golden-rich] 收尾跳过：TMP_HOME 不在系统临时目录之下 ⇒ ' + real)
+      return
+    }
+    if (!base.startsWith('dsh-golden-rich-')) {
+      console.error('⚠️ [golden-rich] 收尾跳过：目录名不像本测试建的 ⇒ ' + base)
+      return
+    }
     fs.rmSync(real, { recursive: true, force: true })
     console.log('  [golden-rich] 已清理临时 DSH_HOME：' + base)
   } catch (e) {
-    console.error('⚠️ [golden-rich] 临时目录清理失败（不影响测试判决）：' + real + ' —— ' + e.message)
+    console.error('⚠️ [golden-rich] 临时目录清理失败（不影响测试判决）：' + (real || TMP_HOME) + ' —— ' + e.message)
   }
 })
