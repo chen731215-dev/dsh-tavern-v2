@@ -19,7 +19,7 @@
  *   · 逐个可选段都有「哨兵必须在产物里」的断言 ⇒ 段空掉时会报红，不会出现"比了个空字符串也绿"。
  * 全程用临时 DSH_HOME，不碰用户真实数据。
  */
-import { test } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -321,4 +321,29 @@ test('③ 静态契约：assemble.js 解构出的依赖名集合 == index.js 调
   )
   // 反向约束：模块里**不许**出现 import lib/index.js（AGENTS §5 第 5 条）
   assert.ok(!/from\s+['"][^'"]*index\.js/.test(asm), '★ assemble.js 反向 import 了 index.js')
+})
+
+// ════════════════════════════════════════════════════════════════
+// ④ 收尾：删掉**本文件自己建的**临时 DSH_HOME（task-17 / 铁律 21）
+//   与 `golden-prompt.test.js` 的 ④ 同款；硬约束三条（不许前缀盲扫 / 只删自建 / 响亮失败）见那边注释。
+//   本文件的前缀是 `dsh-golden-rich-`（比另一个更长，故守卫用 `dsh-golden-rich-` 精确匹配）。
+// ════════════════════════════════════════════════════════════════
+after(() => {
+  const tmpRoot = fs.realpathSync(os.tmpdir())
+  const real = fs.realpathSync(TMP_HOME)
+  const base = path.basename(real)
+  if (!real.startsWith(tmpRoot + path.sep)) {
+    console.error('⚠️ [golden-rich] 收尾跳过：TMP_HOME 不在系统临时目录之下 ⇒ ' + real)
+    return
+  }
+  if (!base.startsWith('dsh-golden-rich-')) {
+    console.error('⚠️ [golden-rich] 收尾跳过：目录名不像本测试建的 ⇒ ' + base)
+    return
+  }
+  try {
+    fs.rmSync(real, { recursive: true, force: true })
+    console.log('  [golden-rich] 已清理临时 DSH_HOME：' + base)
+  } catch (e) {
+    console.error('⚠️ [golden-rich] 临时目录清理失败（不影响测试判决）：' + real + ' —— ' + e.message)
+  }
 })
