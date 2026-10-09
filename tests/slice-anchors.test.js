@@ -226,31 +226,13 @@ export function maskComments(src) {
   return out
 }
 
-function decodeEscapes(raw) {
-  const map = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', '0': '\0', '\\': '\\', "'": "'", '"': '"', '`': '`', $: '$' }
-  return raw.replace(/\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g, (m, g) => map[g] ?? g)
-}
-
-/**
- * 扫描 `src[i]` 处的字符串字面量。
- * 返回 `{ value, end }`（`value` 已解转义、`end` 是闭引号之后的下标）；含 `${}` 的模板、未闭合、非引号一律 `null`。
- */
-export function scanStringLiteral(src, i) {
-  const q = src[i]
-  if (q !== "'" && q !== '"' && q !== '`') return null
-  let j = i + 1
-  let raw = ''
-  while (j < src.length) {
-    const c = src[j]
-    if (c === '\\') { raw += src.slice(j, j + 2); j += 2; continue }
-    if (c === q) return { value: decodeEscapes(raw), end: j + 1 }
-    if (c === '\n') return null
-    if (q === '`' && c === '$' && src[j + 1] === '{') return null
-    raw += c
-    j++
-  }
-  return null
-}
+// 字符串字面量解码 / 扫描：**与 `panel-html-identity.test.js` 共用同一份实现**
+//   （task-28 前是"两处逐字各抄一份" ⇒ 修一处漏一处就会让两边对同一个字面量**静默分叉**）。
+// ★ 必须 **import 进来**再 re-export —— 只是 `export { … } from` 的话，
+//   名字**不会**进入本模块作用域，而下面的 `argListAt` 等要**直接调用** `scanStringLiteral`
+//   ⇒ 会以 `ReferenceError: scanStringLiteral is not defined` 异步炸出来（本笔实测踩到）。
+import { decodeEscapes, scanStringLiteral } from './_helpers/string-literal.mjs'
+export { decodeEscapes, scanStringLiteral }
 
 /** 取 `masked[openIdx] === '('` 那个调用的顶层实参（跳过字符串/正则/括号嵌套）。 */
 export function argListAt(masked, openIdx) {

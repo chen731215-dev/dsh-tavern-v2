@@ -157,30 +157,16 @@ export const FLOORS = {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 解码器：**按 `tests/slice-anchors.test.js` 原文抄入**（decodeEscapes / scanStringLiteral）
-//   ★ 不 import 那个 `.test.js` —— 会把对方的 `test(...)` 注册进本进程、在 harness 路径上炸（实测过）。
+// 解码器：**与 `tests/slice-anchors.test.js` 共用同一份实现**（task-28）
+//   · 原先两处**逐字各抄一份** ⇒ 修一处漏一处就让两边对同一字面量**静默分叉**。
+//   · 仍**不** import 那个 `.test.js` —— 会把对方的 `test(...)` 注册进本进程、在 harness 路径上炸（实测过）。
+//   · 抽到 `tests/_helpers/string-literal.mjs`（纯函数，无 `node:test` 依赖）后，两边都可安全 import。
+//   · 本文件仍 **re-export** 这两个名字，保持既有导出面不变。
+// ★ 必须 **先 import 再 re-export**（不能只写 `export { … } from`）—— 名字不进本模块作用域，
+//   本文件里对 `scanStringLiteral` 的**直接调用**会 `ReferenceError`（本笔实测踩到）。
+import { decodeEscapes, scanStringLiteral } from './_helpers/string-literal.mjs'
+export { decodeEscapes, scanStringLiteral }
 // ════════════════════════════════════════════════════════════════════
-export function decodeEscapes(raw) {
-  const map = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', '0': '\0', '\\': '\\', "'": "'", '"': '"', '`': '`', $: '$' }
-  return raw.replace(/\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g, (m, g) => map[g] ?? g)
-}
-
-export function scanStringLiteral(src, i) {
-  const q = src[i]
-  if (q !== "'" && q !== '"' && q !== '`') return null
-  let j = i + 1
-  let raw = ''
-  while (j < src.length) {
-    const c = src[j]
-    if (c === '\\') { raw += src.slice(j, j + 2); j += 2; continue }
-    if (c === q) return { value: decodeEscapes(raw), end: j + 1 }
-    if (c === '\n') return null
-    if (q === '`' && c === '$' && src[j + 1] === '{') return null
-    raw += c
-    j++
-  }
-  return null
-}
 
 // ════════════════════════════════════════════════════════════════════
 // 段提取 / 求值 / 判据（全部纯函数，便于反证喂坏样本）
