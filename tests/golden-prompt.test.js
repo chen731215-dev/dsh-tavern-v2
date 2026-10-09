@@ -20,7 +20,7 @@
  * ⚠️ 豁免清单见下方 EXEMPT —— **那是本 golden 的诚实边界**，不要把它当成"全覆盖"。
  * 全程用临时 DSH_HOME，不碰真实用户数据。
  */
-import { test } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -204,4 +204,41 @@ test('③ 豁免清单必须显式列出「本 golden 覆盖不到」的东西',
   const bad = [{ what: 'x' }]
   const ok = bad.every((e) => e.what && e.why)
   assert.equal(ok, false, '对照：缺 why 的条目必须被判不合格')
+})
+
+// ════════════════════════════════════════════════════════════════
+// ④ 收尾：删掉**本文件自己建的**临时 DSH_HOME（task-17 / 铁律 21）
+//
+//   背景：本文件与 `golden-host-assembly-rich.test.js` 各用 `fs.mkdtempSync(os.tmpdir(), 'dsh-golden-*')`
+//   建一个临时 DSH_HOME，但**从来不删** ⇒ 每跑一次留一个目录，本机实测已积到 340 个（约 13 MB）。
+//
+//   ★ 硬约束（照 task-17 的三条来）：
+//     ① **不许前缀盲扫**：只删 `TMP_HOME` 这个**变量指向的具体路径**，不按 `dsh-golden-*` glob 扫。
+//        （盲扫会连"别人的残留 / 正在被另一个进程使用的目录"一起删 —— 本仓有过删到别人残留的教训。）
+//     ② **只删自建**：`TMP_HOME` 必须是本进程 `mkdtempSync` 出来的（`fs.realpathSync` 二次确认
+//        它确在 `os.tmpdir()` 之下、且名字带本文件的唯一前缀）。
+//     ③ **响亮失败**：删不掉就**打印原因**（不静默吞）—— 但**不让测试因此判红**
+//        （清理失败是**环境**问题，不是被测行为错；与"缺样本不许 SKIP+exit 0"不冲突，
+//         因为被测断言已经跑完并已判决，这里只是收尾）。
+// ════════════════════════════════════════════════════════════════
+after(() => {
+  const tmpRoot = fs.realpathSync(os.tmpdir())
+  const real = fs.realpathSync(TMP_HOME)
+  const base = path.basename(real)
+  // ②的守卫：三重确认后才删
+  if (!real.startsWith(tmpRoot + path.sep)) {
+    console.error('⚠️ [golden-prompt] 收尾跳过：TMP_HOME 不在系统临时目录之下 ⇒ ' + real)
+    return
+  }
+  if (!base.startsWith('dsh-golden-')) {
+    console.error('⚠️ [golden-prompt] 收尾跳过：目录名不像本测试建的 ⇒ ' + base)
+    return
+  }
+  try {
+    fs.rmSync(real, { recursive: true, force: true })
+    console.log('  [golden-prompt] 已清理临时 DSH_HOME：' + base)
+  } catch (e) {
+    // ③：响亮报因，但不改判决
+    console.error('⚠️ [golden-prompt] 临时目录清理失败（不影响测试判决）：' + real + ' —— ' + e.message)
+  }
 })
