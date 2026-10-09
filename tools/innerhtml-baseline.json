@@ -12,7 +12,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "root.innerHTML = panelHTML();",
-      "lineNo": 1045,
+      "lineNo": 1106,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -26,7 +26,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "el.innerHTML = state.characters.map(function (c, i) {",
-      "lineNo": 1139,
+      "lineNo": 1200,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -43,12 +43,12 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "el.innerHTML = state.presets.map(function (p, i) {",
-      "lineNo": 1175,
+      "lineNo": 1236,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
       "parts": [
-        "state.presets.map(function (p, i) { var isActive = state.activePresetIdx === i; var collapsed = p._collapsed !== false; var mods = ''; if ((p.modules || []).length) { var modCount = p.modules.length; mods = '<div class=\"t-item-children\" style=\"' + (collapsed ? 'display:none' : '') + '\">' + p.modules.map(function (m, j) { var mchk = m.enabled !== false ? 'checked' : ''; return '<label class=\"t-entry\"><input type=\"checkbox\" data-pm=\"' + i + '\" data-pmi=\"' + j + '\" ' + mchk + '> <span>' + esc(m.name || ('模块' + (j + 1))) + '</span></label>'; }).join('') + '</div>'; } var toggleBtn = (p.modules || []).length ? '<button data-preset-toggle=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">' + (collapsed ? '▶ 展开(' + p.modules.length + ')' : '▼ 折叠(' + p.modules.length + ')') + '</button>' : '';"
+        "state.presets.map(function (p, i) { var isActive = state.activePresetIdx === i; var collapsed = p._collapsed !== false; var mods = ''; if ((p.modules || []).length) { var modCount = p.modules.length; mods = '<div class=\"t-item-children\" style=\"' + (collapsed ? 'display:none' : '') + '\">' + p.modules.map(function (m, j) { var mchk = m.enabled !== false ? 'checked' : ''; return '<label class=\"t-entry\"><input type=\"checkbox\" data-pm=\"' + i + '\" data-pmi=\"' + j + '\" ' + mchk + '> <span>' + esc(m.name || ('模块' + (j + 1))) + '</span></label>'; }).join('') + '</div>'; } var toggleBtn = (p.modules || []).length ? '<button data-preset-toggle=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">' + (collapsed ? '▶ 展开(' + p.modules.length + ')' : '▼ 折叠(' + p.modules.length + ')') + '</button>' : ''; return '<div class=\"t-item\" style=\"' + (isActive ? 'border-color:var(--dsw-alias-brand-primary);border-width:2px' : '') + '\">' + '<div class=\"t-item-row\">' + '<label class=\"t-check\" style=\"margin-right:4px\"><input type=\"checkbox\" data-preset-batch=\"' + i + '\"></label>' + '<span class=\"t-item-name\">' + esc(p.name || ('预设' + (i + 1))) + '</span>' + toggleBtn + '<button data-preset-active=\"' + i + '\" type=\"button\" class=\"t-btn-sm\" style=\"' + (isActive ? '' : '') + '\">' + (isActive ? '✓ 当前预设' : '切换到此预设') + '</button>' + '<button data-preset-del=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">删除</button>' + '</div>' + mods + '</div>'; }).join('')"
       ],
       "kind": "param-by-callers",
       "why": "预设列表：mods / toggleBtn 由 esc(m.name) 与数字下标拼成",
@@ -60,7 +60,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "if (st) st.innerHTML = '✅ 已导入预设「' + esc(pname) + '」，自动清理了 <b>' + cleanedTotal + '</b> 个不兼容 DSH 的模块内容（<thinking>/HTML注释/{{变量}}等已剥离）';",
-      "lineNo": 1448,
+      "lineNo": 1509,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -75,30 +75,8 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
-      "line": "presetStatus.innerHTML = '✅ 当前预设：' + esc(presetLabelText) + '<br><span style=\"font-size:11px;color:var(--dsw-alias-label-tertiary,#999)\">🎭 角色卡：' + charCount + ' 个 | 📚 世界书：' + wbCount + ' 本（' + wbEntries + ' 条，启用 ' + wbEnabledEntries + ' 条）| ⚙️ 预设：' + presetCount + ' 个（启用 ' + presetEnabledEntries + ' 条）</span>';",
-      "lineNo": 1790,
-      "occ": 1,
-      "sink": "innerHTML",
-      "sinkKind": "html-assign",
-      "parts": [
-        "charCount",
-        "wbCount",
-        "wbEntries",
-        "wbEnabledEntries",
-        "presetCount",
-        "presetEnabledEntries"
-      ],
-      "kind": "numeric",
-      "why": "角色卡/世界书/预设条目计数（.length · reduce）",
-      "mustContain": [
-        "var charCount = ",
-        "var presetEnabledEntries = "
-      ]
-    },
-    {
-      "file": "lib/client.manager.bundle.js",
       "line": "st.innerHTML = '✅ <b>保存成功！Agent 预设已生成</b><br>' +",
-      "lineNo": 1978,
+      "lineNo": 2038,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -120,7 +98,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "sel.innerHTML = '<option value=\"\">选择一个历史对话…</option>' + data.sessions.map(function (s) {",
-      "lineNo": 2033,
+      "lineNo": 2093,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -138,7 +116,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tags.innerHTML = bannedWords.slice(0, 20).map(function(w) {",
-      "lineNo": 2318,
+      "lineNo": 2378,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -155,7 +133,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "box.innerHTML = h;",
-      "lineNo": 2443,
+      "lineNo": 2503,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -173,7 +151,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "box.innerHTML = h;",
-      "lineNo": 2483,
+      "lineNo": 2543,
       "occ": 2,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -191,7 +169,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "list.innerHTML = html;",
-      "lineNo": 2556,
+      "lineNo": 2616,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -207,7 +185,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "detailPanel.innerHTML = html;",
-      "lineNo": 3013,
+      "lineNo": 3073,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -224,7 +202,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tooltip.innerHTML = tooltipHtml;",
-      "lineNo": 3149,
+      "lineNo": 3209,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -241,7 +219,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "detailPanel.innerHTML = html;",
-      "lineNo": 3194,
+      "lineNo": 3254,
       "occ": 2,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -258,7 +236,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tooltip.innerHTML = html;",
-      "lineNo": 3545,
+      "lineNo": 3605,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -275,7 +253,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "info.innerHTML = '<span><strong style=\"color:var(--dsw-alias-brand-primary,#ffb464)\">' + nodes.length + '</strong> 个角色，<strong style=\"color:var(--dsw-alias-brand-primary,#78a0ff)\">' + edges.length + '</strong> 条关系</span><span style=\"font-size:12px\">悬停看完整关系 · 标签显示' + (labelLen || 15) + '字</span>';",
-      "lineNo": 3642,
+      "lineNo": 3702,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -290,8 +268,27 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
+      "line": "presetStatus.innerHTML = html;",
+      "lineNo": 4134,
+      "occ": 1,
+      "sink": "innerHTML",
+      "sinkKind": "html-assign",
+      "parts": [
+        "html"
+      ],
+      "kind": "param-by-callers",
+      "why": "presetStatus 的 HTML 版 setter：4 个调用点传的是已 esc(...) 的预设名或纯静态标记（见 setPresetStatusHtml 注释：调用方负责已转义）",
+      "mustContain": [
+        "'✅ 当前预设：' + esc(presetLabelText) + '<br>",
+        "'✅ 当前编辑：' + esc(currentPreset ? currentPreset.name : '默认预设')",
+        "所有未启用白名单的会话共用此预设。修改会影响所有未启用的会话！</span>",
+        "+ esc(presetName || presetId) + '」；如需完整的「'"
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
       "line": "item.innerHTML = '<div style=\"display:flex;align-items:center;gap:6px\"><span style=\"width:16px;flex:0 0 auto;text-align:center\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">' + pName + '</span></div>' + (pMeta ? '<div style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#999);padding-left:22px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">' + pMeta + '</div>' : '');",
-      "lineNo": 4165,
+      "lineNo": 4245,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -308,30 +305,8 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
-      "line": "presetStatus.innerHTML = '✅ 当前编辑：' + esc(currentPreset ? currentPreset.name : '默认预设') + ' | 共 ' + (data.presets || []).length + ' 个预设可选<br><span style=\"font-size:11px;color:var(--dsw-alias-label-tertiary,#999)\">🎭 角色卡：' + charCount2 + ' 个 | 📚 世界书：' + wbCount2 + ' 本（' + wbEntries2 + ' 条，启用 ' + wbEnabled2 + ' 条）| ⚙️ 预设：' + presetCount2 + ' 个（启用 ' + presetEnabled2 + ' 条）</span>';",
-      "lineNo": 4199,
-      "occ": 1,
-      "sink": "innerHTML",
-      "sinkKind": "html-assign",
-      "parts": [
-        "charCount2",
-        "wbCount2",
-        "wbEntries2",
-        "wbEnabled2",
-        "presetCount2",
-        "presetEnabled2"
-      ],
-      "kind": "numeric",
-      "why": "同上，第二个面板",
-      "mustContain": [
-        "var charCount2 = ",
-        "var presetEnabled2 = "
-      ]
-    },
-    {
-      "file": "lib/client.manager.bundle.js",
       "line": "elNextSel.innerHTML = html;",
-      "lineNo": 4767,
+      "lineNo": 4822,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -347,7 +322,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "statusEl.innerHTML = msg;",
-      "lineNo": 5184,
+      "lineNo": 5239,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -365,7 +340,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "listEl.innerHTML = html;",
-      "lineNo": 5328,
+      "lineNo": 5383,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -382,7 +357,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "if (iframe) iframe.srcdoc = sb.html;",
-      "lineNo": 6716,
+      "lineNo": 6771,
       "occ": 1,
       "sink": "srcdoc",
       "sinkKind": "sandboxed-doc",
@@ -398,7 +373,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "contentEl.innerHTML = html;",
-      "lineNo": 6830,
+      "lineNo": 6885,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -414,7 +389,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "item.innerHTML = '<span style=\"width:12px;flex:0 0 auto;text-align:center;\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;margin:0;display:flex;flex-direction:column;align-items:flex-start;line-height:1.3\"><span style=\"max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + escapeHtml(p.name) + '</span><span style=\"font-size:9px;color:var(--dsw-alias-label-tertiary,#888);font-weight:400;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + pMeta2 + '</span></span><span style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#888);flex:0 0 auto;\">' + (p.cardChars ? (p.cardChars + '字') : '') + '</span>';",
-      "lineNo": 7266,
+      "lineNo": 7321,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
