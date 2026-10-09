@@ -274,7 +274,7 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
-      "line": "info.innerHTML = '<span><strong style=\"color:var(--dsw-alias-label-accent,#ffb464)\">' + nodes.length + '</strong> 个角色，<strong style=\"color:var(--dsw-alias-brand-primary,#78a0ff)\">' + edges.length + '</strong> 条关系</span><span style=\"font-size:12px\">悬停看完整关系 · 标签显示' + (labelLen || 15) + '字</span>';",
+      "line": "info.innerHTML = '<span><strong style=\"color:var(--dsw-alias-brand-primary,#ffb464)\">' + nodes.length + '</strong> 个角色，<strong style=\"color:var(--dsw-alias-brand-primary,#78a0ff)\">' + edges.length + '</strong> 条关系</span><span style=\"font-size:12px\">悬停看完整关系 · 标签显示' + (labelLen || 15) + '字</span>';",
       "lineNo": 3642,
       "occ": 1,
       "sink": "innerHTML",
