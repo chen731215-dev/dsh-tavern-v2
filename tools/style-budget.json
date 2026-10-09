@@ -1,8 +1,8 @@
 {
-  "_note": "S3 令牌层的两次记账：批1 新增 5 个 --tv-color-* 定义 ⇒ bareHex 331→336（一次性 +5，理由已记）；批2 把 16 个**已证明在 #tavern-manager 子树内**的点换成 var(--tv-color-*)，共替换掉 17 个字面量 ⇒ bareHex 336→**319**（随本批同步下调）。319 < S3 之前的 331 ⇒ 令牌层的净效果是**降**，且后续批次只降不升。",
+  "_note": "S3 令牌层的两次记账：批1 新增 5 个 --tv-color-* 定义 ⇒ bareHex 331→336（一次性 +5，理由已记）；批2 把 16 个**已证明在 #tavern-manager 子树内**的点换成 var(--tv-color-*)，共替换掉 17 个字面量 ⇒ bareHex 336→**319**（随本批同步下调）。319 < S3 之前的 331 ⇒ 令牌层的净效果是**降**，且后续批次只降不升。｜task-26：presetStatus 的 26 处「赋值+设色」收进 setPresetStatus/setPresetStatusHtml，两个 setter 需要一条默认色 `#999`（与既有 setStatus 的 `color || '#999'` 同口径）⇒ bareHex 319→**320**（一次性 +1，提成一处常量 PRESET_STATUS_DEFAULT_COLOR，不再各自写一份）。+1 的净理由是「26 处配对收口」这一个结构改动；这是本笔唯一的升，后续仍只降不升。",
   "inlineStyleAttr": 301,
   "inlineHandlerAttr": 0,
-  "bareHex": 319,
+  "bareHex": 320,
   "bareRgba": 150,
   "cssTextAssign": 59,
   "important": 0,

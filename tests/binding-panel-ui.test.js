@@ -69,6 +69,33 @@ function loadMatchPresetFromBundle(bundleText) {
   return new Function('return (' + extractFnSource(bundleText, 'function matchPresetInList(') + ');')()
 }
 
+/**
+ * 从 bundle 里抠出 `setPresetStatus` / `setPresetStatusHtml` 两个 setter 真实现。
+ *
+ * ★ 为什么需要（task-26）：`loadSessionPresets` 不再直接写 `presetStatus.textContent/innerHTML`，
+ *   改为调用这两个**同层兄弟函数**。而本测试是把 `loadSessionPresets` 单独抠出来、在 `new Function`
+ *   沙箱里求值的 —— 兄弟函数不在沙箱里 ⇒ 会以 `ReferenceError: setPresetStatusHtml is not defined`
+ *   炸掉（正是本用例要抓的"嵌套 = 运行时 ReferenceError"的同类形态）。
+ *
+ * ★ 为什么要包一层：setter 体内**闭包引用** `presetStatus`（同层 `var`），单独抠出来求值会丢绑定
+ *   （实测 `ReferenceError: presetStatus is not defined`）。所以把抠出的函数源码塞进一个工厂，
+ *   由工厂形参 `presetStatus` 提供该绑定 —— 这样沙箱里拿到的就是**真实现 + 真元素**。
+ *   两个 setter 只依赖 `presetStatus`，没有别的自由变量。
+ */
+function loadPresetStatusSettersFromBundle(bundleText, presetStatus) {
+  // setter 还闭包引用同层 `var PRESET_STATUS_DEFAULT_COLOR`（默认色常量）—— 一并从 bundle 取真值注入。
+  const cm = /var PRESET_STATUS_DEFAULT_COLOR\s*=\s*('[^']*')/.exec(bundleText)
+  assert.ok(cm, 'bundle 里找不到 PRESET_STATUS_DEFAULT_COLOR 的声明（setter 的默认色来源，证据失效）')
+  const defaultColor = new Function('return ' + cm[1])()
+  // 以 factory 的源码重建并注入 presetStatus / 常量（避免依赖提取时的闭包）：
+  const wrap = (src) => new Function('presetStatus', 'PRESET_STATUS_DEFAULT_COLOR', 'return (' + src + ')')
+  const bind = (sig) => wrap(extractFnSource(bundleText, sig))(presetStatus, defaultColor)
+  return {
+    setPresetStatus: bind('function setPresetStatus('),
+    setPresetStatusHtml: bind('function setPresetStatusHtml('),
+  }
+}
+
 // ── 极简假元素 ──
 class FakeEl {
   constructor(attrs = {}) {
@@ -590,6 +617,7 @@ test('真跑一遍 loadSessionPresets：注入真 helper 后不抛错、状态�
     loadWb: async () => {},
     saveCurrent: () => {},
     matchPresetInList: loadMatchPresetFromBundle(text),
+    ...loadPresetStatusSettersFromBundle(text, presetStatus),
     console,
   }
   const names = Object.keys(sandbox)
@@ -622,6 +650,8 @@ test('对照臂：不注入 helper（等价于它在别的作用域里）⇒ 状
     presetIdentityClue: () => '',
     presetIdentityText: () => '',
     // 故意不给 matchPresetInList —— 等价于「它在别的作用域里，这里看不见」
+    // ★ 但 setter 必须给足：本对照臂要复现的是「看不见 helper」，不是「看不见 setter」。
+    ...loadPresetStatusSettersFromBundle(text, presetStatus),
     console,
   }
   const names = Object.keys(sandbox)
@@ -632,6 +662,41 @@ test('对照臂：不注入 helper（等价于它在别的作用域里）⇒ 状
   assert.match(presetStatus.textContent, /加载预设失败/,
     '看不见 helper 时必须复现「❌ 加载预设失败，请刷新页面」')
 })
+
+// ════════════════════════════════════════════════════════════════
+// task-26：两个 setter 的行为（文本版 / HTML 版 / undefined 守卫 / 默认色）
+// ════════════════════════════════════════════════════════════════
+test('task-26：setter 收进 26 处配对 —— 文本版写 textContent、HTML 版写 innerHTML、默认色 #999', () => {
+  const text = fs.readFileSync(BUNDLE, 'utf8')
+  // 文本版：走 textContent，HTML 视作纯文本（不产生元素）
+  const elText = new FakeEl()
+  const t = loadPresetStatusSettersFromBundle(text, elText)
+  t.setPresetStatus('纯文本 <b>x</b>', '#27ae60')
+  assert.equal(elText.textContent, '纯文本 <b>x</b>', '文本版必须写 textContent')
+  assert.equal(elText.style.color, '#27ae60', '文本版必须设色')
+  // HTML 版：走 innerHTML（富文本不被塌成纯文本）
+  const elHtml = new FakeEl()
+  const h = loadPresetStatusSettersFromBundle(text, elHtml)
+  h.setPresetStatusHtml('a<br>b', '#f39c12')
+  assert.equal(elHtml.innerHTML, 'a<br>b', 'HTML 版必须写 innerHTML（<br> 保留）')
+  assert.equal(elHtml.style.color, '#f39c12', 'HTML 版必须设色')
+  // 省略颜色 ⇒ 默认 #999（与既有 setStatus 的 `color || '#999'` 一致）
+  const elDef = new FakeEl()
+  const d = loadPresetStatusSettersFromBundle(text, elDef)
+  d.setPresetStatus('x')
+  assert.equal(elDef.style.color, '#999', '省略颜色时必须回落到 #999（与 setStatus 同口径）')
+})
+
+test('task-26：presetStatus 为 undefined 时 setter 不抛异常（守卫等效原 if (presetStatus)）', () => {
+  const text = fs.readFileSync(BUNDLE, 'utf8')
+  // 喂 undefined 元素 —— 对应 loadCurrent() 在 `var presetStatus = …` 赋值前被调用的场景
+  const { setPresetStatus, setPresetStatusHtml } = loadPresetStatusSettersFromBundle(text, undefined)
+  assert.doesNotThrow(() => setPresetStatus('任意文本', '#27ae60'), 'undefined 元素下文本版必须静默返回，不许抛')
+  assert.doesNotThrow(() => setPresetStatusHtml('<br>富文本', '#f39c12'), 'undefined 元素下 HTML 版必须静默返回，不许抛')
+  // 对照臂：守卫真的起作用（不是"恰好没走到写")—— 传 undefined 后**不该**有任何写入尝试
+  //   （FakeEl 不存在 ⇒ 若守卫缺失会抛 TypeError: Cannot set properties of undefined）
+})
+
 test('面板 HTML：三个 UI 概念的按钮齐全且互不相同', () => {
   const html = fs.readFileSync(BUNDLE, 'utf8')
   // ★ 断言稳定标识（id / data-*），不绑 UI 文案 —— 文案里的 emoji 一改测试就红，
