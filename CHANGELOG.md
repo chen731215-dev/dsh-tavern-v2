@@ -1,5 +1,27 @@
 # Changelog
 
+## 未发布 — 修正 4 种主题里不存在的 CSS 令牌
+
+客户端用了 4 个**主题里从未定义**的 `--dsw-*` 令牌。写法完全合规（名字格式对、语法对），
+所以 `check:style` / `check:integrity` / `check:innerhtml` 三道闸门全都放行 —— 但运行时静默失效。
+
+| 令牌 | 处理 | 后果 |
+|---|---|---|
+| `--dsw-alias-border-default` | → `--dsw-alias-border-l1` | 无回退 ⇒ **整条声明被丢弃，边框从未渲染** |
+| `--dsw-alias-label-accent` | → `--dsw-alias-brand-primary` | 有回退 `#ffb464` ⇒ **永远写死橙色，主题切换无效** |
+| `--dsw-alias-bg-elevated` | → `--dsw-alias-bg-layer-2` | 有回退 ⇒ 浅色主题下冒出深蓝底 |
+| `--dsw-alias-bg-accent` | → `--dsw-alias-button-primary-fill` | 无回退 ⇒ 违禁词「保存」按钮**白字无背景** |
+
+用户可见的修复：
+
+- 违禁词弹层的「保存」按钮恢复了背景色（此前浅色主题下白字落在透明背景上，近乎不可见）；
+- 世界书条目编辑器的输入框恢复了边框（此前与卡片底色对比极弱，分不清哪里可以输入）；
+- 关系网图标题 / 提示文字改为跟随主题（此前写死橙色）。
+
+核对方式：与 `dsh-client-ui-theme` 的令牌定义做**子串级**比对（排除拼写差异）。
+**改动限定在 `panelHTML` 段之外** —— 该段的指纹由 `tests/panel-html-identity.test.js` 冻结，
+段内还有 8 处同类令牌，留待与面板结构改动一起处理。
+
 ## v2.7.16 (2026-10-08) — 🧱 S2-C2（部分）：`tavern:card` 的正文组装搬进 `lib/server/assemble.js`
 
 `apply(ctx)` 的 `tavern:card` text 回调原先把「取数据」和「拼正文」混在同一个函数里。本版把**拼正文**
