@@ -15,6 +15,20 @@
  *   node tools/check-repo-hygiene.mjs            # 扫全部已跟踪文件（CI / npm run check 用）
  *   node tools/check-repo-hygiene.mjs --staged   # 只扫暂存区（pre-commit 钩子用）
  *   node tools/check-repo-hygiene.mjs --list     # 只列规则
+ *
+ * ★★ 退出码（2026-10-09，task-33）：**必须区分「环境不可用」与「真有违规」**
+ *   0 = 检查通过
+ *   1 = **真有违规**（下面会打印违规清单）—— 这才是"仓库里有问题"
+ *   2 = **环境不可用**：拿不到 git 清单（`spawnSync('git', …)` 根本没起来 / 被沙箱拦）
+ *       —— 本仓口径与 `tools/check-client-integrity.mjs` 一致（它是 `2 = 用法/读取错误`）。
+ *
+ *   为什么必须分（实测成因，不是纸面风险）：本机宿主环境下 node 派生子进程（`spawnSync`）会被拦，
+ *   于是 `stagedFiles()` 拿到 `status=null` / `error.code='EBUSY'`。旧版把这一律读成
+ *   `❌ 不是 git 仓库（拿不到文件清单）` 并 `exit(1)` —— 把**环境限制**伪装成了**代码故障**：
+ *   钩子只能靠 `--no-verify`（那会跳过所有钩子，更难审计）。这就是 task-33 修的缺陷本身，**不许回退**。
+ *
+ *   ⚠️ `EBUSY` 是**沙箱属性、不是本仓属性**（AGENTS.md §8 已立此口径）⇒ 不许把它写成"仓库不是 git 仓库"。
+ *   ⚠️ 拿不到清单**绝不许**静默当成"检查通过"（SKIP ≠ pass）—— 那会免费送出一个绿灯。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -105,15 +119,76 @@ export function blobHeads() {
   return out
 }
 
+/**
+ * ★ **纯函数**：把 `spawnSync` 的结果分类成「清单」或「环境不可用」（task-33）。
+ *   抽出来是为了**不依赖 spawn** 就能被测到（本机 spawn 恒失败 ⇒ 用子进程测不了这条）。
+ *   ⚠️ 这是产线判据本身，不是测试替身：`gitListFiles()` 直接调用它。
+ * @param {{status:number|null, error?:{code?:string}|null, stdout?:string}} r
+ * @returns {{ok:true, files:string[]} | {ok:false, status:number|null, code:string|null}}
+ */
+export function classifyGitListResult(r) {
+  if (r.error || r.status === null) {
+    return { ok: false, status: r.status ?? null, code: r.error && r.error.code ? String(r.error.code) : null }
+  }
+  if (r.status !== 0) return { ok: false, status: r.status, code: null }
+  return { ok: true, files: String(r.stdout || '').split('\0').filter(Boolean) }
+}
+
+/**
+ * 跑一条 git 取清单的命令，**区分两档失败**（task-33 的修法核心）。
+ *
+ *   · `status === null` ⇒ 进程**根本没起来/被拦**（本机实测 `error.code='EBUSY'`）⇒ **环境不可用**；
+ *   · `r.error` 存在       ⇒ spawn 层就失败了（ENOENT / EACCES …）⇒ 同样是**环境不可用**；
+ *   · `status !== 0`       ⇒ git 起来了但**报错**（如确实不在仓库里）⇒ 也归**环境不可用**。
+ *     ★ 为什么把"非 0 退出"也归到环境档：本工具**只**在 git 仓库里跑（pre-commit / CI / check:hygiene），
+ *       拿不到清单这件事**几乎永远不是**"仓库有违规"——它是"这道闸门本轮没在做事"。
+ *       真有违规走的是**另一条路**：清单拿得到、`scan()` 扫出 issue（见下方 CLI 的 exit(1)）。
+ *
+ * @returns {{ok:true, files:string[]} | {ok:false, status:number|null, code:string|null}}
+ */
+function gitListFiles(args) {
+  const r = spawnSync('git', args, { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  return classifyGitListResult({ status: r.status, error: r.error, stdout: r.stdout })
+}
+
 function trackedFiles() {
-  const r = spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-  if (r.status !== 0) return null
-  return r.stdout.split('\0').filter(Boolean)
+  return gitListFiles(['ls-files', '-z'])
 }
 function stagedFiles() {
-  const r = spawnSync('git', ['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-  if (r.status !== 0) return null
-  return r.stdout.split('\0').filter(Boolean)
+  return gitListFiles(['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'])
+}
+
+/**
+ * ★ **仅测试用**的清单注入缝（task-33）。设了 `HYGIENE_STUB_LIST` 就返回它拆出来的清单，
+ *   于是"清单正常"那条分支可以在**本机 spawn 恒失败**的情况下被验证到。
+ *   ⚠️ 这道缝**只**绕过"取清单"这一步；后面的 `scan()`（含 blob 头、非空跑下限、违规判据）**照常跑**，
+ *      产线行为一点没削弱 —— 在真仓库里设了它，照样会把违规文件报出来。
+ *   ⚠️ 与 `--list` 无关（那走不到这里）。
+ */
+function stubList() {
+  const s = process.env.HYGIENE_STUB_LIST
+  if (typeof s !== 'string' || s === '') return null
+  return s.split('\n').map((x) => x.trim()).filter(Boolean)
+}
+
+/**
+ * 打印"环境不可用"的**响亮、可行动**报告（stderr）。绝不用"不是 git 仓库"这种误导性文字。
+ * @param {{status:number|null, code:string|null}|null} detail
+ */
+export function reportEnvUnavailable(which, detail) {
+  const code = detail && detail.code ? detail.code : '(无 error.code)'
+  const status = detail ? String(detail.status) : '(未知)'
+  console.error('❌ 环境不可用：拿不到 git 文件清单 —— 这是**环境限制，不是仓库违规**。')
+  console.error('   git ' + which + ' 的派生进程没能跑起来：exit=' + status + '，error.code=' + code + '。')
+  console.error('   本仓口径：这条属**沙箱属性、不是本仓属性**（AGENTS.md §8）—— 在受限宿主里')
+  console.error('   node 派生子进程（spawnSync）会被拦（实测 EBUSY）；git 本身没问题，是这个进程起不来。')
+  console.error('   因此本轮**没有**检查任何文件（拿不到清单 ≠ 检查通过）。')
+  console.error('   ⇒ 退出码 2 = 环境不可用（0 = 通过，1 = 真有违规）。')
+  console.error('   处置（至少选一条）：')
+  console.error('     ① 换一个能 spawn 子进程的环境跑（CI / 干净 checkout 上 `npm run check:hygiene` 是权威口径）。')
+  console.error('     ② 本地确需提交：pre-commit 钩子下用 `SKIP_HYGIENE=1 git commit …` **显式**跳过（会被打印出来）。')
+  console.error('     ③ 排查拦 spawn 的宿主/沙箱设置（例如允许子进程派生）后重跑。')
+  console.error('   ⚠️ 别用 `--no-verify`：那会连**所有**钩子一起跳过，且不留痕。')
 }
 
 /** 扫一批文件（路径为仓库相对路径）。@returns 违规列表 */
@@ -173,8 +248,21 @@ if (isMain) {
     process.exit(0)
   }
   const staged = argv.includes('--staged')
-  const files = staged ? stagedFiles() : trackedFiles()
-  if (files === null) { console.error('❌ 不是 git 仓库（拿不到文件清单）'); process.exit(1) }
+  const stubbed = stubList()
+  let files = stubbed
+  let which = ''
+  if (stubbed === null) {
+    const got = staged ? stagedFiles() : trackedFiles()
+    which = staged ? 'diff --cached' : 'ls-files'
+    if (!got.ok) {
+      // ★ 环境不可用 ⇒ 专用退出码 2 + 响亮报因（**绝不**打印"不是 git 仓库"，绝不静默当成通过）
+      reportEnvUnavailable(which, got)
+      process.exit(2)
+    }
+    files = got.files
+  } else {
+    console.error('⚠️ HYGIENE_STUB_LIST 已设置 ⇒ 本轮清单由环境变量注入（仅测试用，绕过 git 取清单）。')
+  }
   if (!files.length) { console.log('（' + (staged ? '暂存区' : '已跟踪文件') + '为空，跳过）'); process.exit(0) }
   const issues = scan(files, { readFromIndex: staged })
   if (issues.length) {

@@ -22,6 +22,11 @@
 #   为什么不做成默认放行：那正是本次修的缺陷；为什么留逃生门：否则会逼人去用 --no-verify —— 那跳过的是**所有**钩子，
 #   比显式跳过这一道更难审计。
 #
+# ★ 另一档"环境不可用"（2026-10-09，task-33）：node **能起**，但 node 内部 `spawnSync('git', …)` 被拦
+#   （实测 `status=null` / `error.code='EBUSY'`）⇒ 拿不到 git 清单。这不是"找不到 node"，旧版的
+#   `SKIP_HYGIENE` 分支**够不到**它。现由 check-repo-hygiene 以**专用退出码 2** 报出来，本钩子据此
+#   走**同一条显式逃生门**（未设 SKIP_HYGIENE ⇒ 失败并教用户怎么设）。**不许**把 2 与 1 混为一谈。
+#
 # ⚠️ 实现注意：探测**不许**包在 `$( )` 里 —— 命令替换是子 shell，"试过哪些位置"（TRIED）的累积会留在子 shell 里、
 #    父 shell 打印出来是空的（实测踩过）。所以这里全程用「同一层 shell + 一个 FOUND 变量」，不做捕获。
 
@@ -100,9 +105,49 @@ if [ -z "$FOUND" ]; then
 fi
 
 # ── 跑检查（强度不变：仍是 check-repo-hygiene 的 --staged 模式）──────────────
+# ★ 退出码三态（2026-10-09，task-33）：0 = 通过；1 = **真有违规**；2 = **环境不可用**。
+#   旧版把这三态混成一条 `|| { …; exit 1; }` ⇒ 把"环境限制"读成了"代码故障"（本机 spawn 被拦
+#   ⇒ check-repo-hygiene 打印"不是 git 仓库"并 exit 1 ⇒ 每次提交只能靠 --no-verify）。**不许回退。**
+#
+# ⚠️ 实现选择（对照文件头那条"探测不许包在 $( ) 里"）：这里**不做命令替换**，直接按顺序执行并读 `$?`。
+#   · 为什么安全：`$?` 在**同一层 shell**里读出，不涉及"变量在子 shell 里累积、父 shell 打印为空"那类问题
+#     （那条坑是**变量**，不是退出码；而且这里**没有**子 shell）。
+#   · 另两条候选都**更差**：① 命令替换 `rc=$("$FOUND" …; echo $?)` 会把报告吞进变量（等于把响亮报因藏起来）；
+#     ② 临时文件要多一次落盘/清理、还可能残留 ⇒ 用最不容易出错、也不动 shell 选项的直读 `$?`。
+#   ⚠️ 关键：**执行前不预设 errexit**（钩子本来也没设），跑完立刻取 `$?` —— 不改变调用方语义。
+# ── 放行 / 拦下 / 环境不可用 ────────────────────────────────────────────────
 echo "[pre-commit] 仓库卫生检查（--staged，node = $FOUND）"
-"$FOUND" tools/check-repo-hygiene.mjs --staged || {
-  echo ""
-  echo "提交被拦下：见上面的仓库卫生报告。清理后再提交（或 git commit --no-verify，不推荐）。"
+"$FOUND" tools/check-repo-hygiene.mjs --staged
+_rc=$?
+
+if [ "$_rc" -eq 0 ]; then
+  # 通过 —— 放行（报告已由工具自己打印）
+  :
+elif [ "$_rc" -eq 2 ]; then
+  # ★ 环境不可用：这不是仓库违规，但**也不许静默放行**（SKIP ≠ pass）。
+  #   为什么逼用户**显式**说一次才放行：静默放行等于把这道本地闸门长期关掉且没人知道；
+  #   "显式设 SKIP_HYGIENE=1" 才留得下审计痕迹；而 --no-verify 跳过的是**所有**钩子，比这更难审计。
+  if [ "${SKIP_HYGIENE:-}" = "1" ]; then
+    echo "[pre-commit] ⚠️ 环境不可用（拿不到 git 清单），且 SKIP_HYGIENE=1 ⇒ 本地仓库卫生检查被**显式**跳过。" >&2
+    echo "             （CI 的 check:hygiene 仍会强制；本机能 spawn 子进程时请重跑；别用 --no-verify）" >&2
+    exit 0
+  fi
+  echo "" >&2
+  echo "[pre-commit] ❌ 环境不可用（check-repo-hygiene 退出码 2）：拿不到 git 清单 —— **不是**仓库有违规。" >&2
+  echo "             本机宿主里 node 派生子进程（spawnSync）被拦（实测 EBUSY），git 本身没问题。" >&2
+  echo "             处置（任选其一）：" >&2
+  echo "               ① 换能 spawn 子进程的环境跑（CI / 干净 checkout 的 check:hygiene 是权威口径）" >&2
+  echo "               ② 本地确需提交 ⇒ **显式**跳过这一次：SKIP_HYGIENE=1 git commit …" >&2
+  echo "               ③ 排查拦 spawn 的宿主/沙箱设置后重跑" >&2
+  echo "             （别用 --no-verify：那会连所有钩子一起跳过，且不留痕）" >&2
   exit 1
-}
+else
+  # 真有违规（1）或其它非预期退出码 —— 一并拦下（照旧）
+  echo "" >&2
+  if [ "$_rc" -eq 1 ]; then
+    echo "提交被拦下：见上面的仓库卫生报告。清理后再提交（或 git commit --no-verify，不推荐）。" >&2
+  else
+    echo "提交被拦下：仓库卫生检查以非预期退出码 $_rc 结束（期望 0/1/2）。" >&2
+  fi
+  exit 1
+fi
