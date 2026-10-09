@@ -194,6 +194,13 @@ export const EVIDENCE = [
   // ── 参数由调用方保证（helper 把入参当 HTML 写）──
   // 这两条是**结构脆弱**的设计（靠调用方自觉），所以证据钉在「风险数据的那几个调用点必须仍然 esc」。
   { re: /statusEl\.innerHTML = msg;/, kind: 'param-by-callers', why: '全局正则面板的状态行：调用点传的都是字面量或 esc(...)', mustContain: ['esc(String(s.scriptName || id))', 'esc(e.message || String(e))', 'esc(String((errs[i] && errs[i].error) || errs[i]))'] },
+  // ★ task-26：`presetStatus` 的「赋值 + 设色」26 处手写配对收进 setter。
+  //   于是原先两条 `presetStatus.innerHTML = '…'`（进 innerHTML）从扫描面消失（合法减少），
+  //   本行是**新的**唯一写入点（setter 内部）。形态与 `statusEl.innerHTML = msg` 完全同类：
+  //   helper 把入参当 HTML 写，安全性由**调用方**保证 ⇒ 证据钉在 4 个 html 版调用点：
+  //   2 处 esc(...)（预设名）+ 2 处纯静态字符串。任一调用点丢了 esc ⇒ 本条仍绿会漏报，
+  //   所以这 4 个片段必须**同时**在位（下方 mustContain 逐条钉住）。
+  { re: /presetStatus\.innerHTML = html;/, kind: 'param-by-callers', why: 'presetStatus 的 HTML 版 setter：4 个调用点传的是已 esc(...) 的预设名或纯静态标记（见 setPresetStatusHtml 注释：调用方负责已转义）', mustContain: ["'✅ 当前预设：' + esc(presetLabelText) + '<br>", "'✅ 当前编辑：' + esc(currentPreset ? currentPreset.name : '默认预设')", '所有未启用白名单的会话共用此预设。修改会影响所有未启用的会话！</span>', "+ esc(presetName || presetId) + '」；如需完整的「'"] },
 ]
 
 /** 给一行匹配证据规则；匹配不到返回 unclassified（会被校验拦下）。 */
