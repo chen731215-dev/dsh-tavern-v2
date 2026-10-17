@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.7.19 (2026-10-17)
+
+### 🔒 会话隔离：注入只认「顶部 agent 预设」
+
+- `resolveAuthoritativePreset()` 改为 **唯一权威 = 会话的原生 agent 预设**（DSH 顶部选择器）。
+  账本 / 历史日志**完全不参与**；投影可读时只认投影（是酒馆预设就注入，不是就一个字符都不注入）；
+  投影读不到时也不注入（没选就不读）。
+- 移除 `tavern:card` / `tavern:nsfw` 的**作用范围闸门**（global / allowlist / allowCwds /
+  disabledCwds 不再参与）——`isTavernSession()`（顶部预设是不是酒馆预设）是唯一闸门。
+- 代价（明确写清）：已开跑且 DSH 锁死预设本体的会话，面板里的「绑定」不再覆盖投影；
+  要换内容请在**顶部选择器**改。
+
+> 面板里的「🎯 生效范围」与「🔗 当前会话绑定」从此**不再影响注入**（仅保留数据兼容）。
+> 下一次大版本会把这两张卡从面板移除。
+
+### 🎭 SillyTavern 预设导入（通用）
+
+- 新增 `lib/st-preset.js`：把 ST 的 chat completion preset（`prompts[]` + `prompt_order[]`）
+  转换成酒馆模块包；丢掉结构占位（`worldInfoBefore/After`、`charDescription` 等）、
+  `废稿`/`^char$`/`SPreset` 一类非内容条目、`{{//…}}` 注释；保留被禁用的条目。
+- 新增 `POST /api/tavern/preset/import-st`：导入即创建独立 agent 预设
+  （`preset.yml` / `agent.cordis.yml` / `characters.json` / `worldbooks.json` / `presets.json`），
+  `patch` 声明模式下自动写声明块。
+- 面板「导入预设」现在识别 ST 预设文件并把结果回显（模块数 / 启用条数 / 字数 / 警告）。
+
+### 📝 文档
+
+- README 增加「agent 预设为唯一来源」的使用说明与本次更新要点。
+- 兼容性：无破坏性 API 变更；`GET/POST /api/tavern/state` 的 `mode/allowCwds/disabledCwds`
+  字段保留但不再影响注入。
+
 ## v2.7.18 (2026-10-17)
 
 ### 📝 文档：README 三处过期信息修正（无代码变更）
