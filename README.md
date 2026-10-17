@@ -1,5 +1,3 @@
-> ⚠️ **v3.0.0 不兼容 1.9.1**：添加版本锁，旧版预设无法使用新功能。升级命令见下方。
-
 > ⚠️ **v2.0.0 破坏性更新**：协议变更为 PolyForm-Noncommercial-Copyleft-1.0.0（禁止商用）。旧版 1.0.0~1.9.2 已全部废弃，不再维护。
 
 > ⚠️ **AI 助手注意**：修改本项目代码前，请务必先阅读 [AGENTS.md](./AGENTS.md)（或 `.cursorrules` / `CLAUDE.md`），了解代码规范、测试方法、提交规范和常见坑。未通过语法检查和重启验证的代码不要提交。
@@ -10,9 +8,32 @@
 
 🎴 **为 DeepSeek Harness 打造的角色卡 / 世界书管理插件，导入角色卡就能开始角色扮演。**
 
-## 🔴 v2.5.4 更新要点（建议尽快升级）
+## 🔴 v2.7.17 更新要点（建议尽快升级）
 
-> 完整说明见 [docs/archive/RELEASE_NOTES_v2.5.4.md](./docs/archive/RELEASE_NOTES_v2.5.4.md) 与 [CHANGELOG.md](./CHANGELOG.md)。
+> 完整说明见 [CHANGELOG.md](./CHANGELOG.md)。
+>
+> 注：当前包版本 **2.7.18 是纯文档修正版**——运行时代码与依赖声明均未改动，仅版本号抬到 2.7.18，
+> 功能内容止于 v2.7.17，所以下面的要点仍以 v2.7.17 为准。
+
+- **v2.7.17**：修「装了插件却一个修复都拿不到」——两个伴生插件的依赖范围都钉死在旧版本。
+  原先声明 `dsh-muv-table: ^0.2.2` / `dsh-muv-engine: ^0.3.2`，而 **0.x 的 caret 锁的是 minor**
+  （`^0.2.2` 实为 `>=0.2.2 <0.3.0`），实测 `satisfies('0.3.1', '^0.2.2')` = **false**，
+  所以从 npm 装到的始终是 `muv-table@0.2.12` + `muv-engine@0.3.x`——
+  table 0.3.1 的「世界书 JSON initvar 读不出 ⇒ 状态栏恒『未知』」等修复**全部到不了用户手里**。
+  已抬到 `^0.3.1` / `^0.4.1`。本次只动版本号与依赖声明，**运行时代码一字未改**。
+- **v2.7.16**：`tavern:card` 的正文组装搬进 `lib/server/assemble.js`。另随本版一并发出两批改动：
+  - 修正 4 个**从未定义**的 `--dsw-*` CSS 令牌——写法合规（名字格式、语法都对）所以三道闸门全放行，
+    但运行时静默失效。用户可见的修复：违禁词弹层「保存」按钮恢复背景色、世界书条目编辑器输入框
+    恢复边框、关系网标题改为跟随主题。面板 `panelHTML` 段内还有多处同类令牌，留待后续处理。
+  - 10-10 四笔修复：`presetStatus` 双 setter、golden 测试临时目录治理、
+    字符串字面量工具去重、pre-commit 钩子退出码三态。
+  > 注：后两批在 CHANGELOG 里仍挂在「未发布」标题下，**属标题滞后**——它们已随 2.7.16 的 tarball
+  > 发出（实测包内 `setPresetStatusHtml` 由 2.7.2 的 0 处变为 6 处：
+  > `lib/client.manager.bundle.js` 内 5 处、包内 `CHANGELOG.md` 内 1 处）。
+
+### 更早：v2.5.2 ~ v2.6.0
+
+> v2.5.4 的完整说明见 [docs/archive/RELEASE_NOTES_v2.5.4.md](./docs/archive/RELEASE_NOTES_v2.5.4.md)。
 
 - **v2.5.3（严重）**：修掉「开场白播种把会话日志写坏到**永久打不开**」——
   报错特征是 `SessionFormatError: system/message requires a protected first surface head`。
@@ -60,7 +81,8 @@ DSH 的消息容器类名是 CSS Modules 生成的哈希（历史上是 `Sxvs8a_
 - 新建/复制预设后同步刷新预设绑定与 DOM 标签，修复「新建预设后添加角色卡/世界书
   写进了另一个预设」
 
-> ⚠️ 配套版本：本版需配合 **dsh-muv-engine 0.3.4** 与 **dsh-muv-table 0.2.6**。
+> ⚠️ 配套版本（随 v2.7.17 更新）：当前需配合 **dsh-muv-engine ^0.4.1** 与 **dsh-muv-table ^0.3.1**。
+> 注意 0.x 的 `^` 锁的是 minor，装旧版伴生插件会拿不到已发布的修复。
 
 ## 📜 许可证
 
@@ -75,10 +97,10 @@ Copyright (c) 2026 chen731215-dev
 
 ## 🔗 伴生插件
 
-| 插件 | 说明 |
-|------|------|
-| [dsh-muv-table](https://github.com/chen731215-dev/dsh-muv-table) | MUV 变量表格编辑器 |
-| [dsh-muv-engine](https://github.com/chen731215-dev/dsh-muv-engine) | MUV 正则引擎 + 变量追踪 |
+| 插件 | 说明 | 当前配套版本 |
+|------|------|------|
+| [dsh-muv-table](https://github.com/chen731215-dev/dsh-muv-table) | MUV 变量表格编辑器 | `^0.3.1` |
+| [dsh-muv-engine](https://github.com/chen731215-dev/dsh-muv-engine) | MUV 正则引擎 + 变量追踪 | `^0.4.1` |
 
 ---
 
