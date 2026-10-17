@@ -1,5 +1,66 @@
 # Changelog
 
+## v2.7.3-compat (2026-10-17) — 🧩 ST 预设兼容层 + 🔍 截断/接管可判定（本地补丁）
+
+> **注意**：这是**本地补丁**，不是上游发布版本。`pnpm install` 或插件更新会覆盖
+> `lib/`，覆盖后需重新应用（参考副本见工作区 `analysis/dsh-tavern-patched/`）。
+
+### 1. 新增 `lib/preset-compat.js`（纯函数，无 IO）
+
+SillyTavern 预设（Reborn / 类脑系等）的"防截断"其实是 SPreset 扩展的四条 JS 管线
+（ChatSquash / OutputPreprocessing / ToolBindings / ForcedPostProcessing）。
+**文字搬得动，管线搬不动** —— 于是那几条指令导入 dsh-tavern 后从"有用"变成"有害"。
+实测三类**当场坏掉**：
+
+| 规则 | 原文要求 | 在 DSH 里的实际后果 |
+|---|---|---|
+| `unicode-escape` | 正文写成 `\uXXXX` | 没有解码器 ⇒ 用户直接看到 `\u5c0f\u8bf4` |
+| `tool-call-output` | 输出必须调用 `game_content` | 该工具未注册 ⇒ 模型去调不存在的东西 |
+| `options-xml` | `<options><option>` | 无渲染器，且与 muv-engine 的「行动选项：」解析冲突 |
+
+处理方式：**在注入出口改写**（`cardTextFor()`），磁盘上永远保留用户原文。
+- `unicode-escape` → 置空（保留只会有害）
+- `tool-call-output` → 换成 `<game></game>` 闭合标签（保留"结构化、可判定"的意图）
+- `options-xml` → 换成「行动选项：」纯文本（muv-engine 能解析）
+
+改写只记首次命中，写到 `ROOT/compat.log`（`cardTextFor` 每轮都跑，不去重会刷屏）。
+
+### 2. 控制 token 清洗（`sanitizePromptText` 出口）
+
+模型会**模仿** `<|im_start|>gemini … <|im_end|>`（Reborn 的"双模型人设"主动教它这么做）。
+这些 token 留在上下文里会持续被模仿，上游也可能当成真的角色边界。
+现在在注入出口统一清除：裸 token 一律删，成对块仅在 role 属白名单且 ≤6000 字符时整块删
+（不锚定行首 —— 模型常把它紧贴在正文后面；两条约束防误吞）。
+
+### 3. 回复完整性守夜（`armReplyWatch`）
+
+以前插件对"这一轮到底完没完"完全瞎：`callLLM` 把 `finish_reason` 丢掉，
+会话事件从不看 `assistant/message`，唯一的 `detectRefusal()` 挂在一个没人调的 GET 上。
+
+现在：`assistant/message` + `turn/end.reason.kind` → `judgeTurn()` → 写 `ROOT/reply-status.json`。
+判定优先级：**空 → 拒答 → 截断 → 可疑 → 正常**（拒答优先，否则被接管时的短回复会被误报成截断）。
+截断证据两条：`reason.kind` 命中 length/max-token 类，或骨架标签有开无闭。
+
+**只判定、不自动续写**：续写要往会话里 append 消息，而 DSH 对 `system/message` 的 surface
+顺序有硬校验（本项目被它咬过，坏的是永久打不开的会话）。要不要续，留给用户。
+
+### 4. `callLLM` 保留 `finish_reason` / `usage` / `model`
+
+走旁路变量 `lastCallLLMStatus`，不改返回值（调用方按字符串用）。记忆总结被 `max_tokens`
+掐断时终于有据可查。
+
+### 5. 新接口
+
+- `POST /api/tavern/preset/compat-preview` —— 只算不改，返回"哪些模块会被怎么改写"；
+  面板导入预设后会调它，把结果直接显示在状态行。
+- `GET /api/tavern/reply-check` —— 在原字段基础上补 `decision` / `truncated` / `skeleton` /
+  `reasonKind` / `hint` / `controlTokens` / `lastCallLLM`，旧字段保持不变。
+
+### 6. `_test` 导出
+
+`compatPresetContent` / `stripControlTokens` / `hasControlTokens` / `checkSkeleton` /
+`judgeTurn` / `describeTurn` / `cardTextFor` / `readReplyStatus` / `writeReplyStatus`。
+
 ## v2.7.2 (2026-10-07) — ✏️ 最后一颗纯图标铅笔改成文字
 
 - 「重命名当前预设」按钮此前**内容只有一个 `✏️`**，全靠 `title` 属性兜底 —— 辨认成本高，
