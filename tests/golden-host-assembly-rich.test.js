@@ -123,7 +123,14 @@ const services = {
   sessions: { get: (id) => (id ? { id } : undefined) },
   agents: { get: () => undefined },
   agentPresets: { select: async () => 'x' },
-  sessionProjections: { stateOf: () => undefined },
+  // ★ 2026-10-18：注入权威 = 顶部 agent 预设（原生投影）。按夹具 sid 映射到各自的预设。
+  sessionProjections: {
+    stateOf: (session, kind) => {
+      if (kind !== 'agentPreset' || !session) return undefined
+      const c = CASES.find((x) => x.sid === session.id)
+      return c ? c.presetId : undefined
+    },
+  },
   sessionPersistence: { list: async () => [] },
   dshHomePath: () => TMP_HOME,
 }

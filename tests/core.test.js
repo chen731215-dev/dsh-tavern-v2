@@ -832,29 +832,18 @@ function assertScopeInjected(out, why) {
   }
 }
 
-test('P0-5 白名单：mode=allowlist + 两个名单皆空 → 零注入（角色卡/世界书/记忆 哨兵全无）', () => {
+test('P0-5 作用范围不再参与：allowlist + 两个名单皆空 ⇒ 照常注入', () => {
   setScopeState({ mode: 'allowlist', allowSessions: [], allowCwds: [] })
   const out = scopeAssemble(scopeCtx(SCOPE_S1))
-  // ⚠ 先点名哨兵、再断言空串：这样「闸门被改坏」时报错会指名道姓说是哪一段泄漏了
-  assertScopeNoInjection(out, 'allowlist 双空')
-  assert.equal(out, '', '★ 空名单仍然注入了内容 —— 旧语义「空 = 不限制」没关掉')
-  // 反证：同一会话切成 global 立刻注入（证明「零注入」不是夹具没造好）
-  setScopeState({ mode: 'global' })
-  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1)), 'global 反证')
+  // 2026-10-17 定稿：注入闸门只剩顶部 agent 预设，作用范围（allowlist/allowCwds/disabledCwds）已移除。
+  assertScopeInjected(out, 'allowlist 双空（作用范围已失效）')
 })
 
-test('P0-5 连带影响：空名单下世界书 / 会话记忆 / 反八股与角色卡**一并停止**（同一道闸门）', () => {
+test('P0-5 作用范围不再参与：空名单下角色卡 / 世界书 / 记忆 / 反八股照常注入', () => {
   setScopeState({ mode: 'allowlist', allowSessions: [], allowCwds: [] })
   const out = String(scopeAssemble(scopeCtx(SCOPE_S1)))
-  assert.ok(!out.includes(SCOPE_CARD), '★ 角色卡在空名单下仍在注入')
-  assert.ok(!out.includes(SCOPE_WB), '★ **世界书**在空名单下仍在注入')
-  assert.ok(!out.includes(SCOPE_MEM), '★ **会话记忆**在空名单下仍在注入')
-  assert.ok(!out.includes('写作风格铁律'), '★ 反八股在空名单下仍在注入')
-  // 反证：放行时这四段**都在**（证明它们确实走这道闸门，不是本来就注入不出来）
-  setScopeState({ mode: 'global' })
-  const on = String(scopeAssemble(scopeCtx(SCOPE_S1)))
   for (const s of [SCOPE_CARD, SCOPE_WB, SCOPE_MEM, '写作风格铁律']) {
-    assert.ok(on.includes(s), '★ 反证失败：放行时却没注入 ' + s + ' —— 夹具坏了，上面的「零注入」是空跑')
+    assert.ok(out.includes(s), '★ 作用范围已失效，缺了 ' + s + '（夹具坏了）')
   }
 })
 
@@ -872,40 +861,25 @@ test('P0-5 连带影响取证：关系网**不参与提示词注入**（空名�
   assert.ok(!on.includes('SENTINEL-SCOPE-REL-2b8c77'), '★ 关系网竟然进了提示词 —— 说明它另有注入路径，上述结论要改')
 })
 
-test('P0-5 白名单：allowSessions=[s1] → s1 注入、s2 零注入（逐项判定没被误伤）', () => {
+test('P0-5 作用范围不再参与：allowSessions 只影响观测日志，不影响注入', () => {
   setScopeState({ mode: 'allowlist', allowSessions: [SCOPE_S1], allowCwds: [] })
-  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1)), '白名单内的会话')
-  const out2 = scopeAssemble(scopeCtx(SCOPE_S2))
-  assert.equal(out2, '', '★ 不在白名单里的会话仍然被注入')
-  assertScopeNoInjection(out2, '白名单外的会话')
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1)), '会话在名单里')
+  // 2026-10-17 定稿：名单外的会话也照常注入（作用范围不再是闸门）
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S2)), '名单外的会话（作用范围已失效）')
 })
 
-test('P0-5 白名单：allowCwds 命中工作目录 → 放行；不命中 → 零注入', () => {
+test('P0-5 作用范围不再参与：allowCwds 命不命中都一样', () => {
   setScopeState({ mode: 'allowlist', allowSessions: [], allowCwds: ['C:\\work\\proj'] })
   assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\work\\proj\\')), 'allowCwds 命中')
-  const out = scopeAssemble(scopeCtx(SCOPE_S1, 'D:\\other'))
-  assert.equal(out, '', '★ 工作目录不在 allowCwds 里却放行')
-  assertScopeNoInjection(out, 'allowCwds 未命中')
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'D:\\other')), 'allowCwds 未命中（作用范围已失效）')
 })
 
-test('P0-5 mode=global：行为与改动前一致（全放行；disabledCwds 黑名单依旧生效）', () => {
-  // ① 改动前 global 分支只做一件事：命中 disabledCwds 就返回空；否则放行。
-  //    两个 allowedBy 标记在改动前后**都是 false**（观测日志照旧记 allowedBy:'none'）。
+test('P0-5 mode=global：disabledCwds 黑名单不再参与注入', () => {
+  // 纯函数仍保留旧语义（面板兼容），但注入路径已不看它。
   assert.deepEqual(decideInjectionScope({ mode: 'global', allowSessions: [], allowCwds: [] }, SCOPE_S1, 'C:\\work'),
     { allowed: true, allowedBySession: false, allowedByCwd: false })
-  assert.deepEqual(decideInjectionScope({ mode: 'global', allowSessions: ['x'], allowCwds: ['y'] }, SCOPE_S1, 'C:\\work'),
-    { allowed: true, allowedBySession: false, allowedByCwd: false }, '★ global 不该去看白名单')
-
-  // ② 端到端：global 且名单为空 → 照旧注入（**空名单的新语义只约束 allowlist 模式**）
-  setScopeState({ mode: 'global', allowSessions: [], allowCwds: [] })
-  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1)), 'global + 空名单')
-
-  // ③ global 的 disabledCwds 黑名单：命中就停（改动前就有，不许被顺手改掉）
   setScopeState({ mode: 'global', disabledCwds: ['C:\\blocked\\proj'] })
-  const out = scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\blocked\\proj'))
-  assert.equal(out, '', '★ global 模式下 disabledCwds 黑名单失效了')
-  assertScopeNoInjection(out, 'global + disabledCwds 命中')
-  // 黑名单之外照旧注入
+  assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\blocked\\proj')), 'global + disabledCwds 命中（已失效）')
   assertScopeInjected(scopeAssemble(scopeCtx(SCOPE_S1, 'C:\\elsewhere')), 'global + 黑名单之外')
 })
 
@@ -918,7 +892,7 @@ test('P0-6 成人向提示段：默认（关 + 空正文）装配结果里一个
     { mode: 'global', nsfwEnabled: false, nsfwPrompt: MARK },
     { mode: 'global', nsfwEnabled: true, nsfwPrompt: '' },
     { mode: 'global', nsfwEnabled: true, nsfwPrompt: '   \n ' },
-    { mode: 'allowlist', allowSessions: [], allowCwds: [], nsfwEnabled: true, nsfwPrompt: MARK },
+    { mode: 'allowlist', allowSessions: [], allowCwds: [], nsfwEnabled: false, nsfwPrompt: MARK },
   ]) {
     setScopeState(st)
     const out = String(scopeAssembleNsfw(scopeCtx(SCOPE_S1)) || '')
@@ -943,11 +917,11 @@ test('P0-6 成人向提示段：源码里必须"有槽位、过闸门、默认�
   assert.ok(/if \(typeof body\.nsfwEnabled === 'boolean'\)/.test(routesSrc), 'state 路由要接受开关（已随第三块搬到 routes.js）')
   assert.ok(/nsfwEnabled: state\.nsfwEnabled/.test(routesSrc), '响应里要回这个字段（面板回填用；同上，已随第三块搬走）')
   assert.ok(/nsfwEnabled: false, nsfwPrompt: ''/.test(src), '★ 默认必须是「关 + 空正文」')
-  // 槽位必须过两道判据（会话隔离 + 统一生效范围）
+  // 槽位必须过会话隔离判据；作用范围闸门已于 2026-10-17 移除
   const start = src.indexOf("name: 'tavern:nsfw'")
   const seg = src.slice(start, src.indexOf("'tavern.nsfw.section()'", start))
   assert.ok(seg.includes('isTavernSession('), '槽位必须过会话隔离判据')
-  assert.ok(seg.includes('decideInjectionScope('), '槽位必须过统一生效范围闸门')
+  assert.ok(!seg.includes('decideInjectionScope('), '作用范围闸门已移除（顶部预设是唯一闸门）')
   // 体积快照必须仍在（原由「历史事实修正」段负责落盘，该段已删 ⇒ 改由 nsfw 段落盘）
   assert.ok(/flushPromptStats\(\);\s*return ''/.test(src), 'nsfw 段的提前 return 也要落盘体积快照')
   assert.ok(/sectionSizes\.nsfw = body\.length\r?\n\s*flushPromptStats\(\)/.test(src), '正常返回路径同样要落盘体积快照')

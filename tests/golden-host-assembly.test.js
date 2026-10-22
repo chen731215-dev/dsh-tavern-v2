@@ -68,7 +68,8 @@ const services = {
   sessions: { get: (id) => (id ? { id } : undefined) },
   agents: { get: () => undefined },
   agentPresets: { select: async () => 'x' },
-  sessionProjections: { stateOf: () => undefined },
+  // ★ 2026-10-18：注入权威 = 顶部 agent 预设（原生投影）。夹具给这个会话一个酒馆预设。
+  sessionProjections: { stateOf: (session, kind) => (kind === 'agentPreset' ? PRESET_ID : undefined) },
   sessionPersistence: { list: async () => [] },
   dshHomePath: () => TMP_HOME,
 }
