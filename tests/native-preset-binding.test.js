@@ -239,10 +239,10 @@ test('[16] 日志还没落盘 + 会话原生挂的是酒馆预设 ⇒ 就注入�
   assert.equal(r.source, 'native')
 })
 
-test('[17] 日志读不到 + 投影是非酒馆预设 ⇒ 无从证明「有人换过」⇒ 退回账本；账本空 ⇒ 不注入', () => {
+test('[17] 日志读不到 + 投影是非酒馆预设 ⇒ 明确判定为非酒馆会话 ⇒ 零注入', () => {
   const r = resolveAuthoritativePreset('session-fixture', ctxWithProjection('standard'))
   assert.equal(r.presetId, 'default', '宁可空着也不张冠李戴')
-  assert.equal(r.source, 'none', '没有日志、没有账本 ⇒ 没有可取信的来源（不拿投影的出生值当"选择"）')
+  assert.equal(r.source, 'native-excluded', '2.7.19：投影说 standard ⇒ 直接零注入（不看日志/账本）')
 })
 
 test('[18] 没有 ctx（单测/旧路径）⇒ 决议链与改动前逐字节一致：无日志、无绑定 ⇒ default', () => {
@@ -324,7 +324,7 @@ function writeSessionLog(sid, lines) {
   fs.writeFileSync(path.join(dir, 'session.jsonl'), zstdCompressSync(Buffer.from(lines.join('\n') + '\n', 'utf8')))
 }
 
-test('[28] ★ 已开跑会话（日志在、投影 == 出生值 standard、账本是酒馆卡）⇒ 账本仍然生效', () => {
+test('[28] ★ 已开跑会话：投影 == standard ⇒ 账本不再救它（顶部预设是唯一权威）', () => {
   const { resolveAuthoritativePreset, writeBindings, readBindings } = _test
   const sid = 'session-fixture'
   // DSH 的出生记录：agentPreset = standard（部署默认），且**从没被换过**
@@ -333,10 +333,10 @@ test('[28] ★ 已开跑会话（日志在、投影 == 出生值 standard、账�
   all[sid] = { mode: 'preset', presetId: 'tavern-lite', source: 'panel' }
   writeBindings(all)
   try {
-    // 投影读得到（standard），但它与出生 header 相同 ⇒ 看不出"有人换过"
+    // 2.7.19 定稿：投影是 standard ⇒ 零注入，账本不得覆盖投影（用户实测的串台入口）
     const r = resolveAuthoritativePreset(sid, ctxWithProjection('standard'))
-    assert.equal(r.presetId, 'tavern-lite', '★ 这种会话只能靠账本跟随（DSH 已锁死预设本体），不能被判成不注入')
-    assert.equal(r.source, 'binding')
+    assert.equal(r.presetId, 'default', '★ 会话说 standard，酒馆就不许注入')
+    assert.equal(r.source, 'native-excluded')
   } finally {
     const back = readBindings()
     delete back[sid]

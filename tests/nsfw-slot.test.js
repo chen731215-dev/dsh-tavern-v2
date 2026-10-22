@@ -54,7 +54,11 @@ const services = {
   sessions: { get: (id) => (id ? { id } : undefined) },
   agents: { get: () => undefined },
   agentPresets: { select: async () => 'x' },
-  sessionProjections: { stateOf: () => undefined },
+  sessionProjections: {
+    // ★ 2026-10-18：注入权威 = 会话原生投影（顶部选择器）。夹具里给 sid-slot
+    //   一个酒馆预设，其余会话没有 ⇒ 才符合 2.7.19 的「没选就不注入」。
+    stateOf: (session, kind) => (kind === 'agentPreset' && session && session.id === 'sid-slot') ? PRESET_ID : undefined,
+  },
   sessionPersistence: { list: async () => [] },
   dshHomePath: () => TMP_HOME,
 }
@@ -143,23 +147,25 @@ test('⑤ 会话隔离：没绑酒馆预设的会话拿不到这段', () => {
   assert.equal(nsfwTextFor(''), '', '没有会话 id 时也不注入')
 })
 
-test('⑥ 范围闸门：allowlist 且两个名单都空 ⇒ 不放行', () => {
+test('⑥ 作用范围不再参与：allowlist 且两个名单都空 ⇒ 照常注入', () => {
   withState({ nsfwEnabled: true, nsfwPrompt: SENTINEL, mode: 'allowlist', allowCwds: [], allowSessions: [] })
-  assert.equal(nsfwTextFor('sid-slot', '/tmp/proj'), '', '★ 双空名单＝不放行（这门语义由 decideInjectionScope 定义）')
+  assert.equal(nsfwTextFor('sid-slot', '/tmp/proj'), SENTINEL,
+    '★ 2.7.19 起作用范围不再参与 —— 顶部预设是唯一闸门')
 })
 
-test('⑦ 范围闸门：会话名单放行；cwd 名单放行', () => {
+test('⑦ 作用范围不再参与：名单命不命中都一样；没选预设的会话仍零注入', () => {
   withState({ nsfwEnabled: true, nsfwPrompt: SENTINEL, mode: 'allowlist', allowSessions: ['sid-slot'], allowCwds: [] })
-  assert.equal(nsfwTextFor('sid-slot', '/tmp/proj'), SENTINEL, '会话在名单里 ⇒ 放行')
-  assert.equal(nsfwTextFor('sid-other', '/tmp/proj'), '', '别的会话仍不放行')
+  assert.equal(nsfwTextFor('sid-slot', '/tmp/proj'), SENTINEL, '会话在名单里 ⇒ 注入')
+  assert.equal(nsfwTextFor('sid-other', '/tmp/proj'), '', '没选酒馆预设的会话 ⇒ 零注入（与会话名单无关）')
   withState({ mode: 'allowlist', allowSessions: [], allowCwds: ['/tmp/proj'] })
-  assert.equal(nsfwTextFor('sid-slot', '/tmp/proj'), SENTINEL, 'cwd 在名单里 ⇒ 放行')
+  assert.equal(nsfwTextFor('sid-slot', '/tmp/proj'), SENTINEL, '名单不命中也不影响（作用范围已失效）')
 })
 
-test('⑧ 范围闸门：global 也受 cwd 黑名单约束（与 card 段同一条规则）', () => {
+test('⑧ 作用范围不再参与：global + cwd 黑名单同样不拦', () => {
   withState({ nsfwEnabled: true, nsfwPrompt: SENTINEL, mode: 'global', disabledCwds: ['/tmp/blocked'], allowSessions: [] })
-  assert.equal(nsfwTextFor('sid-slot', '/tmp/ok'), SENTINEL, '不在黑名单 ⇒ 照常注入')
-  assert.equal(nsfwTextFor('sid-slot', '/tmp/blocked'), '', '★ 黑名单里的 cwd 即使 global 也不注入')
+  assert.equal(nsfwTextFor('sid-slot', '/tmp/ok'), SENTINEL, '不在黑名单 ⇒ 注入')
+  assert.equal(nsfwTextFor('sid-slot', '/tmp/blocked'), SENTINEL,
+    '★ 2.7.19 起 disabledCwds 不再参与 —— 顶部预设是唯一闸门')
 })
 
 // ════════════════════════════════════════════════════════════════
@@ -208,16 +214,15 @@ test('⑪ 源码护栏：默认 state 里正文必须是空的', () => {
   assert.equal(first[1], "''", '第一个 nsfwPrompt 赋值必须是空串，实际 ' + first[1])
 })
 
-test('⑫ 源码护栏：段落注册必须带闸门（把闸门删掉就变红）', () => {
+test('⑫ 源码护栏：段落注册必须带闸门（2.7.19：只认顶部预设）', () => {
   const src = fs.readFileSync(path.join(REPO, 'lib', 'index.js'), 'utf8')
   const start = src.indexOf("name: 'tavern:nsfw'")
   assert.ok(start >= 0, '找不到 tavern:nsfw 段')
   const seg = src.slice(start, src.indexOf("'tavern.nsfw.section()'", start))
-  assert.ok(seg.includes('isTavernSession('), '★ 必须过会话隔离判据')
-  assert.ok(seg.includes('decideInjectionScope('), '★ 必须过统一生效范围闸门')
+  assert.ok(seg.includes('isTavernSession('), '★ 必须过会话隔离判据（顶部预设）')
+  assert.ok(!seg.includes('decideInjectionScope('), '★ 作用范围闸门已移除（2026-10-17 定稿）')
+  assert.ok(!/disabledCwds/.test(seg), '★ cwd 黑名单不再参与')
   assert.ok(/order:\s*-1/.test(seg), 'order 必须是 -1（先于 tavern:card 组装，体积快照由本段落盘）')
-  const mutated = seg.replace(/decideInjectionScope\(/g, 'noGate(')
-  assert.ok(!mutated.includes('decideInjectionScope('), '对照：挖掉后判据必须不再命中（证明不是永真）')
 })
 
 test('⑬ 源码护栏：客户端必须提供开关与正文输入框，且面板上能看见', () => {

@@ -254,6 +254,9 @@ test('[11] ★ 绑定「酒馆默认」时必须落盘成目录名 tavern-lite �
   assert.notEqual(store[sid].presetId, 'default', "'default' 是「不注入」的哨兵，不能存进账本当预设 id")
 
   // 决议必须因此真的认得它（否则就是"绑了卡却没有卡"）
+  // ★ 2026-10-18：2.7.19 起决议只认原生投影。真机上 DSH 在 select 后会更新投影，
+  //   夹具里补上这一步（否则断言的是"账本能不能覆盖投影"，那是旧语义）。
+  projectionOf.set(sid, 'tavern-lite')
   const { resolveAuthoritativePreset } = _test
   const res = resolveAuthoritativePreset(sid, ctx)
   assert.equal(res.presetId, 'tavern-lite', '★ 绑了酒馆默认 ⇒ 决议就是它，而不是"未绑定"')

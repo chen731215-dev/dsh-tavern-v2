@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.7.20 (2026-10-18)
+
+### 🔒 决议兼容：旧版 DSH（没有原生投影服务）退回账本
+
+- `nativeAgentPresetOf()` 读不到值有三种原因，2.7.19 把它们压成同一种「零注入」：
+  ① 服务不存在（旧版 DSH / 单测夹具）；② 服务在、会话不在内存；③ 服务在、值是标准预设。
+  现在 ②③ 仍是零注入（用户定稿「没选就不读」），① 退回「日志 → 账本」——
+  旧版 DSH 用户不会一个字符都拿不到。
+- 新增 `nativePresetServiceReady(ctx)`；当前 DSH 永远有该服务 ⇒ 线上行为与 2.7.19 一致。
+
+### 🧪 测试对齐新语义（9 个文件，49 项）
+
+- 作用范围（allowlist / allowCwds / disabledCwds）不再参与注入：相关断言改为「照常注入」。
+- 投影夹具：core / nsfw-slot / golden-host-assembly / golden-host-assembly-rich /
+  native-bind-route 补上 `sessionProjections.stateOf(...) → agentPreset`。
+- `native-preset-binding` [17][28] 断言反转：投影 == standard ⇒ 零注入（账本不再覆盖）。
+- 全量：**609 通过 / 0 失败**（旧数值 547/49 来自滞后夹具）。
+
 ## v2.7.19 (2026-10-17)
 
 ### 🔒 会话隔离：注入只认「顶部 agent 预设」
