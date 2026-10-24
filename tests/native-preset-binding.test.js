@@ -234,19 +234,19 @@ test('[15] nativeAgentPresetOf：从 DSH 投影读会话当前预设；服务缺
 // ── 7. 决议链：日志读不到时，以「会话自己的原生预设」为准 ────────
 test('[16] 日志还没落盘 + 会话原生挂的是酒馆预设 ⇒ 就注入它（首条消息不再裸奔）', () => {
   // 该 sessionId 在夹具 home 下没有任何会话目录 ⇒ findSessionFile 返回 null
-  const r = resolveAuthoritativePreset('session-fixture', ctxWithProjection('tavern-lite'))
+  const r = resolveAuthoritativePreset('session-aaaaaaaa-1111-2222-3333-444444444444', ctxWithProjection('tavern-lite'))
   assert.equal(r.presetId, 'tavern-lite')
   assert.equal(r.source, 'native')
 })
 
 test('[17] 日志读不到 + 投影是非酒馆预设 ⇒ 明确判定为非酒馆会话 ⇒ 零注入', () => {
-  const r = resolveAuthoritativePreset('session-fixture', ctxWithProjection('standard'))
+  const r = resolveAuthoritativePreset('session-bbbbbbbb-1111-2222-3333-444444444444', ctxWithProjection('standard'))
   assert.equal(r.presetId, 'default', '宁可空着也不张冠李戴')
   assert.equal(r.source, 'native-excluded', '2.7.19：投影说 standard ⇒ 直接零注入（不看日志/账本）')
 })
 
 test('[18] 没有 ctx（单测/旧路径）⇒ 决议链与改动前逐字节一致：无日志、无绑定 ⇒ default', () => {
-  const r = resolveAuthoritativePreset('session-fixture')
+  const r = resolveAuthoritativePreset('session-cccccccc-1111-2222-3333-444444444444')
   assert.equal(r.presetId, 'default')
   assert.equal(r.source, 'none')
   assert.equal(r.bindingMode, 'absent')
@@ -266,7 +266,7 @@ test('[19] selectNativeAgentPreset：DSH 的 not-found / invalid 单独成 reaso
 // ── 10. 决议链：**原生投影优先**（会话当下说的话 > 酒馆旧账本）────
 test('[25] 原生投影读得到且是酒馆预设 ⇒ 就注入它（哪怕账本里什么都没有）', () => {
   const { resolveAuthoritativePreset } = _test
-  const sid = 'session-fixture'
+  const sid = 'session-25111111-2222-3333-4444-555555555555'
   const r = resolveAuthoritativePreset(sid, ctxWithProjection('tavern-lite'))
   assert.equal(r.presetId, 'tavern-lite')
   assert.equal(r.source, 'native')
@@ -274,7 +274,7 @@ test('[25] 原生投影读得到且是酒馆预设 ⇒ 就注入它（哪怕账�
 
 test('[26] ★ 顶部切回 standard：账本被 watcher 立刻清空 ⇒ 不注入（串台窗口由**事件**关闭，不靠猜投影）', () => {
   const { resolveAuthoritativePreset, writeBindings, readBindings, armNativePresetWatcher } = _test
-  const sid = 'session-fixture'
+  const sid = 'session-26111111-2222-3333-4444-555555555555'
   // 面板之前绑过这张卡
   const all = readBindings()
   all[sid] = { mode: 'preset', presetId: 'tavern-lite', source: 'panel' }
@@ -301,7 +301,7 @@ test('[26] ★ 顶部切回 standard：账本被 watcher 立刻清空 ⇒ 不注
 
 test('[27] 原生投影读不到（旧版 DSH / 会话不在内存）⇒ 退回日志+账本，行为与改动前一致', () => {
   const { resolveAuthoritativePreset, writeBindings, readBindings } = _test
-  const sid = 'session-fixture'
+  const sid = 'session-27111111-2222-3333-4444-555555555555'
   const all = readBindings()
   all[sid] = { mode: 'preset', presetId: 'tavern-lite', source: 'panel' }
   writeBindings(all)
@@ -326,7 +326,7 @@ function writeSessionLog(sid, lines) {
 
 test('[28] ★ 已开跑会话：投影 == standard ⇒ 账本不再救它（顶部预设是唯一权威）', () => {
   const { resolveAuthoritativePreset, writeBindings, readBindings } = _test
-  const sid = 'session-fixture'
+  const sid = 'session-28111111-2222-3333-4444-555555555555'
   // DSH 的出生记录：agentPreset = standard（部署默认），且**从没被换过**
   writeSessionLog(sid, [JSON.stringify({ type: 'session', id: sid, agentPreset: 'standard' })])
   const all = readBindings()
@@ -346,7 +346,7 @@ test('[28] ★ 已开跑会话：投影 == standard ⇒ 账本不再救它（顶
 
 test('[29] 日志在、但投影**与出生值不同** ⇒ 以投影为准（刚在顶部换过、帧还没落盘）', () => {
   const { resolveAuthoritativePreset } = _test
-  const sid = 'session-fixture'
+  const sid = 'session-29111111-2222-3333-4444-555555555555'
   writeSessionLog(sid, [JSON.stringify({ type: 'session', id: sid, agentPreset: 'standard' })])
   const r = resolveAuthoritativePreset(sid, ctxWithProjection('tavern-lite'))
   assert.equal(r.presetId, 'tavern-lite')
@@ -389,9 +389,9 @@ test('[30] armNativePresetWatcher：换成酒馆预设记 top-select；把酒馆
   assert.equal(typeof dispose, 'function', '要能卸载（apply 里用 ctx.effect 收口）')
   assert.ok((handlers['session/event'] || []).length === 1, '要订阅 session/event')
 
-  const sidA = 'session-fixture'
-  const sidB = 'session-fixture'
-  const sidC = 'session-fixture'
+  const sidA = 'session-30111111-2222-3333-4444-555555555555'
+  const sidB = 'session-30222222-2222-3333-4444-555555555555'
+  const sidC = 'session-30333333-2222-3333-4444-555555555555'
   const fire = (sid, picked) => handlers['session/event'][0]({ id: sid }, { type: 'agent-preset/selected', data: { agentPreset: picked } })
 
   try {
