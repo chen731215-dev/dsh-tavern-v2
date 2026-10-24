@@ -42,8 +42,8 @@ fs.writeFileSync(path.join(PRESET_ROOT, 'presets.json'), JSON.stringify({
 fs.writeFileSync(path.join(TMP_HOME, 'settings.yaml'), 'agent-presets:\n  default: standard\n', 'utf8')
 
 // ── 假 DSH：把插件真正 apply() 起来 ─────────────────────────
-const SID_BLANK = 'session-fixture'
-const SID_OTHER = 'session-fixture'
+const SID_BLANK = 'session-11111111-2222-3333-4444-555555555555'
+const SID_OTHER = 'session-99999999-2222-3333-4444-555555555555'
 
 const routes = []
 const sections = {}
@@ -190,7 +190,7 @@ test('[6] unbind-preset：把会话原生交还给 settings.yaml 里的部署默
 
 // ── 4. 空白会话也要出现在会话列表里（面板才找得到它）────────
 test('[7] GET /api/tavern/sessions：把「活着的、还没落盘」的空白新会话一并列出（live/blank 标出来）', async () => {
-  const sidNew = 'session-fixture'
+  const sidNew = 'session-77777777-2222-3333-4444-555555555555'
   makeBlankLiveSession(sidNew)
   const r = await callRoute('/api/tavern/sessions', 'GET')
   assert.equal(r.status, 200)
@@ -208,7 +208,7 @@ test('[7] GET /api/tavern/sessions：把「活着的、还没落盘」的空白�
 // ── 5. 注入决议：日志未落盘时以「会话自己的原生预设」为准 ────
 test('[8] 决议链走原生投影：会话原生挂酒馆预设 ⇒ 注入它；挂 standard ⇒ 不注入（无账本可依时）', () => {
   const { resolveAuthoritativePreset } = _test
-  const sidFresh = 'session-fixture'
+  const sidFresh = 'session-88888888-2222-3333-4444-555555555555'
 
   projectionOf.set(sidFresh, 'preset-role')
   const hit = resolveAuthoritativePreset(sidFresh, ctx)
@@ -223,7 +223,7 @@ test('[8] 决议链走原生投影：会话原生挂酒馆预设 ⇒ 注入它�
 
 // ── 7. 会话列表要给「原生权威」预设（面板才不编状态）──────────
 test('[10] GET /api/tavern/sessions：活会话给出原生权威预设 —— 顶部选的卡不再被显示成「未绑定」', async () => {
-  const sid = 'session-fixture'
+  const sid = 'session-d00d0000-2222-3333-4444-555555555555'
   makeBlankLiveSession(sid)
 
   projectionOf.set(sid, 'preset-role')
@@ -242,7 +242,7 @@ test('[10] GET /api/tavern/sessions：活会话给出原生权威预设 —— �
 
 // ── 9. 账本里存「DSH 目录名」，'default' 只当哨兵 ─────────────
 test('[11] ★ 绑定「酒馆默认」时必须落盘成目录名 tavern-lite —— 存别名会被当成"没绑"（卡不注入）', async () => {
-  const sid = 'session-fixture'
+  const sid = 'session-de7a0000-2222-3333-4444-555555555555'
   makeBlankLiveSession(sid)
   const r = await callRoute('/api/tavern/bind-preset', 'POST', { sessionId: sid, presetId: 'default' })
   assert.equal(r.status, 200)
@@ -265,8 +265,8 @@ test('[11] ★ 绑定「酒馆默认」时必须落盘成目录名 tavern-lite �
 
 // ── 6. 会话隔离：A 会话的绑定不落到 B 会话 ───────────────────
 test('[9] 绑定只写目标会话：给 A 绑定不会动 B 的原生预设/账本（会话隔离）', async () => {
-  const sidA = 'session-fixture'
-  const sidB = 'session-fixture'
+  const sidA = 'session-aaaa1111-2222-3333-4444-555555555555'
+  const sidB = 'session-bbbb1111-2222-3333-4444-555555555555'
   makeBlankLiveSession(sidA)
   makeBlankLiveSession(sidB)
   const agentB = liveAgentMap.get(sidB)
