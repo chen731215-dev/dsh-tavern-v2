@@ -325,6 +325,14 @@ const { fn, product } = evaluateProduct(SEG.seg)
 
 /** ★ 有意读历史（见文件头 ②）：读不到就**响亮失败**，绝不 skip、绝不回退成"从当前段现算"。 */
 export function readHistoryBundle() {
+  // ★ 2026-10-22：历史重写后 c1a664c 在新克隆里不存在。历史那一版 bundle 以夹具文件
+  //   提交在 tests/fixtures/panel-html-bundle.c1a664c.js（与旧 blob 逐字节相同，
+  //   git hash-object = f057d4b1…）。夹具存在就读夹具；不存在才回退 git；
+  //   两者都没有仍然响亮失败（绝不 skip）。
+  const fixture = path.join(REPO, 'tests', 'fixtures', 'panel-html-bundle.c1a664c.js')
+  try {
+    if (fs.existsSync(fixture)) return fs.readFileSync(fixture, 'utf8').replace(/\r\n/g, '\n')
+  } catch (_) {}
   const spec = FROZEN.segmentHistory.rev + ':' + FROZEN.segmentHistory.file
   const r = spawnSync('git', ['cat-file', 'blob', spec], { cwd: REPO, maxBuffer: 1 << 28 })
   if (r.status !== 0 || !r.stdout || !r.stdout.length) {
