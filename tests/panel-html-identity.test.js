@@ -345,8 +345,23 @@ export function readHistoryBundle() {
   }
   return r.stdout.toString('utf8').replace(/\r\n/g, '\n')
 }
-const HIST = readHistoryBundle()
-const HIST_SEG = extractSegment(HIST)
+/**
+ * ★ 历史段夹具（2026-10-22 起的主路径）：只提交 panelHTML 那一段 + 元数据
+ *   （`tests/fixtures/panel-html-segment.c1a664c.json`，约 47 KB），
+ *   不再提交整份 488 KB 的历史 bundle。段文本与旧 blob 里逐字节相同，
+ *   `sha` 仍等于笔1 冻结的 `63f478e4…`。
+ */
+export function readHistorySegment() {
+  const fixture = path.join(REPO, 'tests', 'fixtures', 'panel-html-segment.c1a664c.json')
+  try {
+    if (fs.existsSync(fixture)) {
+      const j = JSON.parse(fs.readFileSync(fixture, 'utf8'))
+      return { seg: String(j.segment).replace(/\r\n/g, '\n'), from: j.from, to: j.to, lineCount: j.lines }
+    }
+  } catch (_) {}
+  return extractSegment(readHistoryBundle())
+}
+const HIST_SEG = readHistorySegment()
 const FP_HIST = fingerprintSet(HIST_SEG.seg)
 const HITS = hitReport(product, FP_HIST.values)
 const { product: HIST_PRODUCT } = evaluateProduct(HIST_SEG.seg)
