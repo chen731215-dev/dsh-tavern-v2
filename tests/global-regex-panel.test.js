@@ -21,10 +21,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BUNDLE = path.join(__dirname, '..', 'lib', 'client.manager.bundle.js');
 const API = '/api/muv-engine/global-regex';
 
-// ── 从 bundle 里抽出 initGlobalRegexPanel 的源码（锚点：IIFE 开头 → 保存并关闭注释）──
+// ── 从 bundle 里抽出 initGlobalRegexPanel 的源码（锚点：IIFE 开头 → 紧随其后的「保存 / 读取」注释）──
+// ★ 2.7.21：终点锚点原本是 `// ── 保存并关闭 ──`，那个按钮与处理器已被删除 ⇒ 跟到下一处仍在的注释。
 function extractPanelSource(bundleText) {
   const start = bundleText.indexOf('(function initGlobalRegexPanel() {');
-  const end = bundleText.indexOf('// ── 保存并关闭 ──');
+  const end = bundleText.indexOf('// 保存 / 读取', start);
   if (start < 0 || end < 0 || end <= start) throw new Error('bundle 里找不到 initGlobalRegexPanel 源码段');
   return bundleText.slice(start, end);
 }

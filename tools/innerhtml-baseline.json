@@ -12,7 +12,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "root.innerHTML = panelHTML();",
-      "lineNo": 1106,
+      "lineNo": 1141,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -26,7 +26,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "el.innerHTML = state.characters.map(function (c, i) {",
-      "lineNo": 1200,
+      "lineNo": 1235,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -43,7 +43,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "el.innerHTML = state.presets.map(function (p, i) {",
-      "lineNo": 1236,
+      "lineNo": 1273,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -60,7 +60,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "if (st) st.innerHTML = '✅ 已导入预设「' + esc(pname) + '」，自动清理了 <b>' + cleanedTotal + '</b> 个不兼容 DSH 的模块内容（<thinking>/HTML注释/{{变量}}等已剥离）';",
-      "lineNo": 1509,
+      "lineNo": 1582,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -76,7 +76,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "st.innerHTML = '✅ <b>保存成功！Agent 预设已生成</b><br>' +",
-      "lineNo": 2038,
+      "lineNo": 2111,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -98,7 +98,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "sel.innerHTML = '<option value=\"\">选择一个历史对话…</option>' + data.sessions.map(function (s) {",
-      "lineNo": 2093,
+      "lineNo": 2166,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -116,7 +116,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tags.innerHTML = bannedWords.slice(0, 20).map(function(w) {",
-      "lineNo": 2378,
+      "lineNo": 2431,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -133,7 +133,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "box.innerHTML = h;",
-      "lineNo": 2503,
+      "lineNo": 2556,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -151,7 +151,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "box.innerHTML = h;",
-      "lineNo": 2543,
+      "lineNo": 2596,
       "occ": 2,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -169,7 +169,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "list.innerHTML = html;",
-      "lineNo": 2616,
+      "lineNo": 2669,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -185,7 +185,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "detailPanel.innerHTML = html;",
-      "lineNo": 3073,
+      "lineNo": 3126,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -202,7 +202,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tooltip.innerHTML = tooltipHtml;",
-      "lineNo": 3209,
+      "lineNo": 3262,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -219,7 +219,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "detailPanel.innerHTML = html;",
-      "lineNo": 3254,
+      "lineNo": 3307,
       "occ": 2,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -236,7 +236,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tooltip.innerHTML = html;",
-      "lineNo": 3605,
+      "lineNo": 3658,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -253,7 +253,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "info.innerHTML = '<span><strong style=\"color:var(--dsw-alias-brand-primary,#ffb464)\">' + nodes.length + '</strong> 个角色，<strong style=\"color:var(--dsw-alias-brand-primary,#78a0ff)\">' + edges.length + '</strong> 条关系</span><span style=\"font-size:12px\">悬停看完整关系 · 标签显示' + (labelLen || 15) + '字</span>';",
-      "lineNo": 3702,
+      "lineNo": 3755,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -269,7 +269,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "presetStatus.innerHTML = html;",
-      "lineNo": 4134,
+      "lineNo": 4237,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -287,26 +287,8 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
-      "line": "item.innerHTML = '<div style=\"display:flex;align-items:center;gap:6px\"><span style=\"width:16px;flex:0 0 auto;text-align:center\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">' + pName + '</span></div>' + (pMeta ? '<div style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#999);padding-left:22px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">' + pMeta + '</div>' : '');",
-      "lineNo": 4245,
-      "occ": 1,
-      "sink": "innerHTML",
-      "sinkKind": "html-assign",
-      "parts": [
-        "pName",
-        "(pMeta ? '<div style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#999);padding-left:22px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">' + pMeta + '</div>' : '')"
-      ],
-      "kind": "upstream-escaped",
-      "why": "pName 与 pMeta 都在上游转过义",
-      "mustContain": [
-        "var pName = esc(p.name || '')",
-        "pMeta += '🎭' + esc("
-      ]
-    },
-    {
-      "file": "lib/client.manager.bundle.js",
       "line": "elNextSel.innerHTML = html;",
-      "lineNo": 4822,
+      "lineNo": 5119,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -322,7 +304,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "statusEl.innerHTML = msg;",
-      "lineNo": 5239,
+      "lineNo": 5606,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -340,7 +322,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "listEl.innerHTML = html;",
-      "lineNo": 5383,
+      "lineNo": 5750,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -357,7 +339,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "if (iframe) iframe.srcdoc = sb.html;",
-      "lineNo": 6771,
+      "lineNo": 7234,
       "occ": 1,
       "sink": "srcdoc",
       "sinkKind": "sandboxed-doc",
@@ -373,7 +355,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "contentEl.innerHTML = html;",
-      "lineNo": 6885,
+      "lineNo": 7348,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -389,7 +371,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "item.innerHTML = '<span style=\"width:12px;flex:0 0 auto;text-align:center;\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;margin:0;display:flex;flex-direction:column;align-items:flex-start;line-height:1.3\"><span style=\"max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + escapeHtml(p.name) + '</span><span style=\"font-size:9px;color:var(--dsw-alias-label-tertiary,#888);font-weight:400;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + pMeta2 + '</span></span><span style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#888);flex:0 0 auto;\">' + (p.cardChars ? (p.cardChars + '字') : '') + '</span>';",
-      "lineNo": 7321,
+      "lineNo": 7784,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -407,7 +389,7 @@
     {
       "file": "lib/server/routes.js",
       "line": "document.getElementById(\"ps-body\").innerHTML=h",
-      "lineNo": 1604,
+      "lineNo": 1791,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",

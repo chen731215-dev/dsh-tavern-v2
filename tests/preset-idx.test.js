@@ -73,7 +73,7 @@ test('[5] 面板必须保留「读 state 回填 activePresetIdx」这条链（�
   assert.equal(/saveCurrent\(/.test(seg), false, '回填链里不许保存预设内容（只准动光标）')
 })
 
-test('[6] 旧版「生效范围」元素不许再被引用（界面已换 chips 版）', () => {
+test('[6] 「生效范围」整卡已删除：旧元素与 2.7.21 移除的那批控件都不许复活', () => {
   const src = fs.readFileSync(path.join(REPO, 'lib', 'client.manager.bundle.js'), 'utf8')
   for (const id of ['tavern-allow', 'tavern-ignore', 'tavern-mode-allow', 'tavern-mode-global',
                     'tavern-inject', 'tavern-inject-status', 'tavern-scope-status', 'tavern-nowcwd',
@@ -81,5 +81,14 @@ test('[6] 旧版「生效范围」元素不许再被引用（界面已换 chips 
     assert.equal(src.includes("'" + id + "'"), false, '不该再引用旧元素：' + id)
     assert.equal(src.includes('#' + id + "'"), false, '不该再查旧元素：' + id)
   }
-  assert.ok(src.includes('tavern-scope2-status'), '现行生效范围卡（chips 版）必须还在')
+  // ★ 2.7.21 按钮体检：生效范围三按钮 + 两个名单 + 上下文压缩 + 保存并关闭全部删除。
+  //   这几个控件当时"点了不改变任何行为"（注入闸门早就是顶部预设），留在这里防复活。
+  for (const id of ['tavern-scope2-status', 'tavern-scope-global', 'tavern-scope-session',
+                    'tavern-scope-cwd', 'tavern-scope-allow-chips', 'tavern-scope-disable-chips',
+                    'tavern-compact-run', 'tavern-compact-rounds', 'tavern-inject-exit']) {
+    assert.equal(src.includes('id="' + id + '"'), false, '这个控件已被删除，不许复活：' + id)
+  }
+  // 同一张卡里真正生效的那个控件必须还在（wbInject → resolveWbIsFull）
+  assert.ok(src.includes('id="tavern-wb-inject"'), '世界书注入量控件必须还在')
+  assert.ok(src.includes('initWbInjectControl'), '它的初始化函数必须还在（删了就等于死按钮）')
 })
