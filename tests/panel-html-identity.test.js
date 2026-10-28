@@ -26,8 +26,10 @@
  *
  * 冻结口径（每个常数都写清"配方 + 复算命令"；复算方 ≥2）：
  *   · 段：needle = `function panelHTML(` **首次出现**的那一行起，到括号配平的收尾 `}`（**含两端**）；
- *        `lines[539..].join('\n')`，**无尾随换行**；**原始缩进**（声明在第 4 列）。
+ *        `lines[from-1..to-1].join('\n')`，**无尾随换行**；**原始缩进**（声明在第 4 列）。
  *        带尾随 `\n` 的变体 sha 另一个值 ⇒ 配方必须写死"无尾随换行"。
+ *        ★ `from` 是**行号**（会随前面新增的 CSS 规则整体下移）：2.7.21 因 TAVERN_CSS 新增
+ *          类名规则而下移 27 行，段内容与产物 sha 均未变（见 `FROZEN.segment` 的 why 注解）。
  *   · 产物：`const fn = new Function(seg + '\nreturn panelHTML;')(); const html = String(fn())` ← **必须真调用**。
  *   · 指纹：**历史段**内**含 `class="t-row"` 的候选行**（39 行，每行 1 个字面量）里那个字面量的**解码值**（按值去重）⇒ N=28。
  *   · 基元：`test ⑨` 直呼 `tvRowOpen` / `tvRowClose`（从当前段里切出来求值），
@@ -38,7 +40,7 @@
  * 判据自称（每条都配非空跑下限；0 命中即判败，见 ⑧）：
  *   ① 产物**不得**含 `function panelHTML(`（唯一能一键识破"源码当产物"）——**配反向夹具**（喂 `String(fn)` 必须红）
  *   ② 产物必须以 `<div id="tavern-manager">` 开头
- *   ③ 计数：`data-tv-tab=` 12 · `class="t-row"` 产物里 39 · **历史段**字面量 39 / 解码值去重 28（口径分开写）
+ *   ③ 计数：`data-tv-tab=` 12 · `class="t-row"` 产物里 37（2.7.21 裁剪前 39） · **历史段**字面量 39 / 解码值去重 28（口径分开写）
  *   ④ 指纹 **28/28 逐条命中**、逐条命中次数、集合 sha（配方A）、下限先测量再写死
  *   ⑤ 真产物 sha 与段 sha **分开标签**断言；历史段 sha **单独锚定**
  *   ⑥ 闭包：段里 `panelHTML` 的自由标识符集合（用仓里 `routes-deps-scope` 那套口径，**源码切片取用**，
@@ -72,13 +74,18 @@ export const HIST_PATH = 'lib/client.manager.bundle.js'
 export const FROZEN = {
   /** ★ 笔2 之后重测的一组：`to`/`lines`/`chars`/`bytes`/`sha`/`shaWithTrailingNewline` **都变了**（不是只改 sha）。 */
   segment: {
-    from: 540,
-    to: 1077,
-    lines: 538,
-    chars: 42915,
-    bytes: 50627,
-    sha: '791f41cbb43c391a27c7c4afe94e436853418fe188ab0e1e7ca64d5daa9e7bd8',
-    shaWithTrailingNewline: '2bdef72e756950b03d1fdf28e7ed4dcc20607eb0e6e1c62f017cb0e7e86ca172',
+    // ★ 2026-10-28（2.7.21 按钮体检）：`from`/`to` 再变一次 —— 这一笔**真的改了 panelHTML**：
+    //   删掉「🎯 生效范围」三个失效按钮 + 两个名单、删掉「📦 上下文压缩」块、删掉「✅ 保存并关闭」，
+    //   并把仍然生效的「世界书注入量」单独成卡（原卡片改名）。段/产物 sha 全部随之变化是**预期**。
+    //   与上一笔（只在 TAVERN_CSS 加类名、段内一字节未动）的区别：这次 `product` 变了。
+    // ★ 同日（2.7.22 导出功能）：新增「📤 导出」卡片 ⇒ 段 +26 行、产物 +1487 字符，再次重冻。
+    from: 567,
+    to: 1112,
+    lines: 546,
+    chars: 43067,
+    bytes: 51450,
+    sha: 'd7c38a249b069ae8b7528735d7e64315072163a7a20ee22e571124c5fba69e69',
+    shaWithTrailingNewline: '2348cacd96bb7b78f9f93a0b8e70fc469ee88fe67a2a2bac6b00c43058b44e45',
   },
   /** ★ 历史锚点（笔1 冻结的那一版段）。本判据**有意读历史**，理由见文件头 ②。 */
   segmentHistory: {
@@ -92,26 +99,39 @@ export const FROZEN = {
     sha: '63f478e455259555d9de3e7f3345afa9e640ed9a954ef6c6e064d4fa2918342f',
     shaWithTrailingNewline: 'c4d717c118aaf43135658898e55ee3465bf6044405c45c1a2fe28bbeb375f99b',
     whyChanged: '笔2 把那 39 行迁成开/闭对基元（段内新增基元表 + 调用点）⇒ 段本身的字节必然变；'
-      + '而产物**逐字节不变**（见 product + test ⑩）——「段变了、产物没变」正是这次迁移的形态。',
+      + '当时产物**逐字节不变**（本网 test ⑩ 曾据此断言"迁移等价"）。'
+      + '2.7.21 起 panelHTML 被**有意**改动（按钮体检删掉失效控件）⇒ 历史段产物与当前产物不再相等，'
+      + 'test ⑩ 因此降级为「历史产物锚点」，理由见该测试正文。',
     whyReadHistory: '笔1 冻结的 28 条指纹取自"迁移前那一版段"的字面量；迁移后段里已没有这些字面量，'
       + '继续从当前段现算只会得到空集（判据塌成恒真）⇒ 只能从历史 blob 现算。',
   },
   product: {
+    chars: 29035,
+    bytes: 32491,
+    sha: '1b678442ad33202d090404df2c691379231259ad63caea95a701c888e9f0ea8f',
+  },
+  /**
+   * ★ 历史段产物的锚点（笔1/笔2 那一版 panelHTML 的产物）。
+   * 2.7.21 之前它同时是「当前产物」（test ⑩ 断言两者逐字节相等）；
+   * 按钮体检有意改了 markup 之后，它只作为**历史侧不可漂移**的锚点保留。
+   */
+  historicalProduct: {
     chars: 29482,
     bytes: 32798,
     sha: 'a4190e7545ccaae8196e258ebd615c2cc9b2b9ff7aa1702781520f0557bd418f',
   },
   /** ★ 作废组：这是 `String(fn)`（函数源码串化，壳没调用）——**只作反向夹具**，任何判据都不许用它当基准。 */
   deprecatedWrongShell: {
-    chars: 42911,
-    bytes: 50623,
-    sha: '6ed36cf9050d1e6feb8573d72c57f5a7c59bf13aa7ae406ee20243866c8e2794',
+    chars: 43063,
+    bytes: 51446,
+    sha: 'dff44c74df532f6d8e3a58952414bf794559db967bfb91dbdfba6f123c21d49d',
     why: '函数源码的串化（非产物）；据此得出的长度类判据一并退役',
-    whyChanged: '它由**当前**函数源码算出 ⇒ 随笔2 迁移一起变大（笔1 时为 38205/45539/71f796c0…）。'
-      + '它是**反向夹具**，不是产物断言 —— 只有它变、而 product 不变，正是本网要表达的事。',
+    whyChanged: '它由**当前**函数源码算出 ⇒ 段一改它就跟着变（笔1 时 38205/45539/71f796c0…、'
+      + '笔2 时 42911/50623/6ed36cf9…、2.7.21 按钮体检后 41055/48844/32b6a645…、'
+      + '2.7.22 加导出卡后 43063/51446/dff44c74…）。它是**反向夹具**，不是产物断言。',
   },
   counts: {
-    tvTab: 12,             // 产物侧：data-tv-tab=
+    tvTab: 13,             // 产物侧：data-tv-tab=（2.7.22 加「📤 导出」后 12→13）
     productTvRow: 39,      // 产物侧：class="t-row" 出现次数
     tvRowLiteral: 39,      // ★ 历史段侧：含 class="t-row" 的候选行（字面量条数）
     tvRowDistinct: 28,     // ★ 历史段侧：解码值去重数
@@ -121,23 +141,41 @@ export const FROZEN = {
     N: 28,
     setShaJoinedLf: '40e004bc693e9645567318b1b2aa945dbee91d3eb57046f1ccef2dc33509aba2',
     setShaJson: '2a317069eff930261e019eb8f67d3382547cb6b86ffbc545444269ba2fc92327',
-    hitCountsSorted: [1, 2, 1, 1, 2, 1, 1, 1, 6, 1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 2, 1, 1, 3, 1, 1, 1, 2],
-    hitSum: 43,
-    zeroHits: 0,
+    hitCountsSorted: [1, 1, 1, 1, 2, 1, 1, 0, 6, 1, 1, 1, 2, 4, 1, 1, 1, 2, 1, 1, 2, 2, 1, 2, 1, 1, 1, 2],
+    hitSum: 42,
+    zeroHits: 1,
+    /**
+     * 0 命中的指纹**必须在这里登记理由**：删掉一处 markup 就会让某条历史开标签彻底消失。
+     * 未登记的 0 命中仍然判红（判据没有变成"随便 0 都行"）。
+     */
+    retired: [
+      {
+        value: '    <div class="t-row" style="margin-top:4px;gap:var(--tv-space-sm);align-items:center">',
+        why: '2.7.21 删除「🎯 生效范围」卡片里的世界书注入量那一行时，这是它唯一的使用点；'
+          + '同功能的控件已单独成卡（新行用了另一种 style 组合，见 primitives.addedOpenTags）。',
+      },
+    ],
     /** 读数的范围（`[min, max]`）—— 只作诊断口径，逐条次数以 `hitCountsSorted` 为准。 */
-    hitRange: [1, 6],
+    hitRange: [0, 6],
     /** 指纹的**来源**（机器可读的那一句；防后人把来源改回当前段）。 */
     source: 'history:' + HIST_REV + ':' + HIST_PATH,
   },
-  closure: { shiftedSha: 'e507740fc2637731559360951d6666ef7e473df4ab04b233712a36240f8a9d7d', free: [] },
+  closure: { shiftedSha: '60b8899dcd3d7ea47fcbd29e7b7f655f5e1f588503c1d4a2d9427f344ff0734d', free: [] },
   /** 笔2 基元的形态读数（`test ⑨` 逐条断言）。 */
   primitives: {
-    openCallSites: 39,     // `tvRowOpen(<数字>, …)` 调用点
+    openCallSites: 39,     // `tvRowOpen(<数字>, …)` 调用点（2.7.22 加导出卡 +2）
     closeCallSites: 2,     // `tvRowClose()` 调用点（两个 complete-row 各 1 处）
-    distinctOpenTags: 27,  // 表里能发出的开标签（= 迁移前 27 个 distinct 开标签）
+    distinctOpenTags: 28,  // 表里能发出的开标签（= 迁移前 27 + 2.7.21 新增的 1 条）
     indents: [2, 4, 6, 8],
-    styles: 24,            // 非 null 的 style 值
-    histogramByIndent: { 2: 3, 4: 18, 6: 5, 8: 1 },
+    styles: 25,            // 非 null 的 style 值（2.7.21：新增 1 条 `margin-top:6px;gap:…;align-items:center`）
+    histogramByIndent: { 2: 3, 4: 19, 6: 5, 8: 1 },
+    /** 迁移之后**新增**的开标签（必须逐条登记理由；⑨-e 会单独核这份名单）。 */
+    addedOpenTags: [
+      {
+        value: '    <div class="t-row" style="margin-top:6px;gap:var(--tv-space-sm);align-items:center">',
+        why: '2.7.21「📚 世界书注入量」独立成卡时的单控件行（原「生效范围」卡里的那一行已删除）。',
+      },
+    ],
   },
 }
 
@@ -454,7 +492,14 @@ test('⑥ 指纹：**从历史段现算** 28/28 逐条命中 + 逐条次数 + �
   const zero = HITS.filter((h) => h.n === 0)
   t.diagnostic('命中分布：' + JSON.stringify(HITS.map((h) => h.n)))
   t.diagnostic('命中范围 [min, max] = [' + Math.min(...HITS.map((h) => h.n)) + ', ' + Math.max(...HITS.map((h) => h.n)) + ']')
-  assert.deepEqual(zero.map((h) => h.value.slice(0, 60)), [], '★ 有指纹在真产物里 0 命中（要么产物变了、要么指纹不是解码值）')
+  // ★ 2.7.21：panelHTML 被**有意**改动（按钮体检删掉失效控件）⇒ 允许个别历史开标签 0 命中，
+  //   但**必须逐条登记在 `fingerprints.retired` 里并写明理由**；未登记的 0 命中照样判红。
+  const retired = (FROZEN.fingerprints.retired || []).map((r) => r.value.slice(0, 60)).sort()
+  assert.deepEqual(zero.map((h) => h.value.slice(0, 60)).sort(), retired,
+    '★ 0 命中的指纹与 `fingerprints.retired` 登记表不一致（新增的 0 命中要在登记表里写明理由）')
+  for (const r of FROZEN.fingerprints.retired || []) {
+    assert.ok(r.why && r.why.trim(), '退场指纹缺理由：' + r.value.slice(0, 60))
+  }
   assert.deepEqual(HITS.map((h) => h.n), FROZEN.fingerprints.hitCountsSorted, '逐条命中次数（按解码值 sort 序）对不上')
   assert.equal(HITS.reduce((a, h) => a + h.n, 0), FROZEN.fingerprints.hitSum, '命中总数对不上')
   assert.equal(zero.length, FROZEN.fingerprints.zeroHits, '0 命中条数对不上')
@@ -566,7 +611,7 @@ test('⑨-d 回调点是真的：把基元声明改名 ⇒ `panelHTML()` 立刻 
   assert.throws(() => evaluateProduct(bad2), /tvRowClose/, '★ tvRowClose 声明改名后仍能求值 ⇒ 同上')
 })
 
-test('⑨-e 表 == 历史段：27 条开标签与迁移前的 distinct 开标签**逐条相同**', (t) => {
+test('⑨-e 表 ⊇ 历史段：迁移前的 27 条开标签必须逐条仍在，新增的必须登记', (t) => {
   const table = PRIM_OPEN_TABLE()
   const tableTags = Object.keys(table).flatMap((k) => Object.keys(table[k]).map((s) => table[k][s])).sort()
   const histTags = [...new Set(FP_HIST.values.map((v) => v.slice(0, v.indexOf('>') + 1)))].sort()
@@ -576,17 +621,32 @@ test('⑨-e 表 == 历史段：27 条开标签与迁移前的 distinct 开标签
     ' · distinct style ' + Object.keys(table).flatMap((k) => Object.keys(table[k]).filter((s) => s !== '')).length + '（按缩进展开后）')
   assert.equal(tableTags.length, FROZEN.primitives.distinctOpenTags, '表里的开标签条数漂了')
   assert.ok(tableTags.length >= FLOORS.distinctOpenTags, '开标签条数低于下限 —— 判据空跑')
-  assert.deepEqual(tableTags, histTags, '★ 表里的开标签必须与迁移前的 distinct 开标签逐条相同（否则产物不可能逐字节不变）')
+  // ★ 2.7.21 起口径从「逐条相同」改为「历史 27 条必须全在」+「新增的逐条登记」：
+  //   panelHTML 被有意改动后，要求与迁移前完全一致等于禁止一切 UI 变更。
+  //   仍然防住的事：**没人可以把历史开标签悄悄改掉/删掉**（差集必须为空）。
+  const missing = histTags.filter((tag) => !tableTags.includes(tag))
+  assert.deepEqual(missing, [], '★ 迁移前的开标签从表里消失了（产物不再兼容旧字节）：\n' + missing.join('\n'))
+  const added = tableTags.filter((tag) => !histTags.includes(tag))
+  const declared = (FROZEN.primitives.addedOpenTags || []).map((x) => x.value).sort()
+  assert.deepEqual(added.sort(), declared, '新增的开标签必须逐条登记在 `primitives.addedOpenTags` 并写明理由')
+  for (const x of FROZEN.primitives.addedOpenTags || []) assert.ok(x.why && x.why.trim(), '新增开标签缺理由：' + x.value.slice(0, 50))
   assert.deepEqual(Object.keys(table).map(Number).sort((a, b) => a - b), FROZEN.primitives.indents, '缩进闭集漂了')
   const styles = new Set(Object.keys(table).flatMap((k) => Object.keys(table[k])).filter((s) => s !== ''))
   assert.equal(styles.size, FROZEN.primitives.styles, '非 null style 种类漂了')
   assert.deepEqual(byIndent, FROZEN.primitives.histogramByIndent, '开标签的缩进直方图漂了')
 })
 
-test('⑩ ★ 迁移等价性：历史段的产物 == 当前段的产物（**逐字节**）', (t) => {
+test('⑩ 历史段产物锚点（迁移等价性已于 2.7.21 降级为历史记录）', (t) => {
   t.diagnostic('历史段产物 ' + HIST_PRODUCT.length + ' chars / sha ' + sha256(HIST_PRODUCT))
   t.diagnostic('当前段产物 ' + product.length + ' chars / sha ' + sha256(product))
-  assert.equal(HIST_PRODUCT, product,
-    '★ "把 39 行迁成基元"没有保持产物逐字节不变 —— 这正是本笔的等价性口径（不是"看起来没变"，是同一个字符串）')
-  assert.equal(sha256(HIST_PRODUCT), FROZEN.product.sha, '历史段产物 sha 与冻结值不符')
+  // ★ 笔2 时这条断言是「历史产物 == 当前产物（逐字节）」，用来证明"把 39 行迁成基元"零行为变化。
+  //   2.7.21 的按钮体检**有意**改了 panelHTML（删掉失效控件）⇒ 两者不可能再相等。
+  //   降级后的口径（仍然可验证、且不会自我欺骗）：
+  //     · 历史段产物**必须仍是当年那一份**（sha 锚死，历史侧任何漂移都会红）；
+  //     · 当前产物由 test ③ 的 sha 锚死（那是现在的口径）；
+  //     · 这里只断言"两者确实不同"——若哪天又相等，说明有人把这次裁剪回滚了，需要人来确认。
+  assert.equal(sha256(HIST_PRODUCT), FROZEN.historicalProduct.sha, '历史段产物 sha 与冻结值不符（历史侧不可信了）')
+  assert.equal(HIST_PRODUCT.length, FROZEN.historicalProduct.chars, '历史段产物 chars 对不上')
+  assert.notEqual(HIST_PRODUCT, product,
+    '★ 历史产物与当前产物又相等了 —— 若是回滚了 2.7.21 的按钮裁剪，请同步更新两边冻结值并写明理由')
 })

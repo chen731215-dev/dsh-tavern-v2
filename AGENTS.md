@@ -43,6 +43,7 @@ dsh-tavern/
 │   │   ├── session-migrate.js       #   会话/预设一次性迁移
 │   │   ├── state-io.js              #   状态写入与目录准备
 │   │   ├── routes.js                #   ★ 全部 HTTP 路由注册（按批搬自 index.js，见 §5.1 / §10）
+│   │   ├── export.js                #   导出角色卡/世界书/预设（原生「选择文件夹」+ 双格式落盘），见 2.7.22
 │   │   └── dsh-conn.js              #   DSH settings + credentials 解析
 │   ├── client.manager.bundle.js     # 客户端 ★ **单文件即源码，没有构建步骤**，直接改它
 │   ├── utils.js                     # 纯函数工具
