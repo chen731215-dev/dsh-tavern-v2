@@ -199,6 +199,116 @@ test('④ includeFull=true 时把启用中的条目正文附在末尾（禁用�
 })
 
 // ════════════════════════════════════════════════════════════════
+// ④b/④c/④d 2.7.26：角色卡正文必须进 skill（用户报的「一读 skill 卡就不见了」）
+//
+// 故障根因：`buildSkillMarkdown` 的「角色设定（照此扮演）」此前只拼
+//   `extractCardText(agentYml)`（= 预设模块的 persona），
+//   `characters.json` 里的 desc / first **一个字都没进过 skill**。
+//   于是会话没挂上预设（system prompt 里没卡）时，模型读到的 skill 里也没有卡。
+// ════════════════════════════════════════════════════════════════
+test('④b 指令形态带**角色卡正文**（desc）——不只是 persona', () => {
+  const id = 'preset-skill-cards'
+  makePreset(id, {
+    characters: [
+      { name: '角色甲', desc: '酒馆的示例卡：穿深色风衣，说话简短。', first: '开场白甲：门开了。', enabled: true },
+      { name: '角色乙', desc: '', first: '开场白乙：天亮了。', enabled: true },
+      { name: '角色丙', desc: '禁用卡，不许出现。', enabled: false },
+    ],
+  })
+  const md = buildSkillMarkdown(id, {})
+  assert.ok(md.includes('角色卡：角色甲'), '要按卡分节，实际节标题缺失')
+  assert.ok(md.includes('穿深色风衣，说话简短。'), '★ 卡正文（desc）必须进 skill —— 这是本次修复的核心')
+  assert.equal(md.includes('禁用卡，不许出现。'), false, '未启用的卡一个字都不写')
+  // persona 仍然在（它承载写作要求），两者并存
+  assert.ok(md.includes('你是「角色甲」，说话简短。'), 'persona 不许被卡正文挤掉')
+})
+
+test('④c 开场白单独成一节（用户选定：当成语气范本，不混进设定陈述）', () => {
+  const id = 'preset-skill-cards'
+  const md = buildSkillMarkdown(id, {})
+  assert.ok(md.includes('## 开场白'), '要有独立的开场白段')
+  assert.ok(md.includes('开场白甲：门开了。'), '开场白原文要进去')
+  assert.ok(md.includes('开场白乙：天亮了。'), '只有开场白的卡也要有（它 desc 为空）')
+  // 开场白段必须在「角色设定」**之后**（先立设定，再给语气范本）
+  assert.ok(md.indexOf('## 角色设定') < md.indexOf('## 开场白'),
+    '★ 顺序：角色设定在前、开场白在后（反了会让模型把范本当设定）')
+  // 只有开场白、没有正文的卡要给一句指路，不能留个空节
+  assert.ok(md.includes('本卡只有开场白'), '空正文的卡要明说，不留空节')
+})
+
+test('④d 开场白里的 `<content>` 草稿容器标签被剥掉，正文一个字不丢', () => {
+  const id = 'preset-skill-tags'
+  makePreset(id, {
+    characters: [{ name: '角色甲', desc: '', first: '<content>\n正文第一段。\n</content>', enabled: true }],
+  })
+  const md = buildSkillMarkdown(id, {})
+  assert.ok(md.includes('正文第一段。'), '容器里的正文必须保留')
+  assert.equal(md.includes('<content>'), false, '★ 容器标签要剥掉（skill 正文是 Markdown，尖括号会被当真标签）')
+  assert.equal(md.includes('</content>'), false)
+})
+
+// ════════════════════════════════════════════════════════════════
+// ④e 去重：persona 已经整段写过的模块，不许在 skill 里再抄一遍
+//
+// 实测（用户那张卡）：「文风（选一）丨s喵特调其一」的正文整段就是 persona 里的
+// 「角色描写/场景描写/动作描写/情绪表达/段落编排」⇒ 168 KB 的 SKILL.md 里一半是重复。
+// ════════════════════════════════════════════════════════════════
+test('④e 与 persona 重复的模块只留一行指针，不再抄第二遍', () => {
+  const id = 'preset-skill-dedup'
+  const block = [
+    '# 角色描写',
+    '## 在角色首次出场时，应对角色的外观进行细致描绘，从发型发色到服装配饰，写出让角色产生区分度的每一个细节。',
+    '# 场景描写',
+    '## 镜头切换到新场景时，对整个场景进行详细描绘。由远及近，先整体后局部，如同电影运镜一样。',
+  ].join('\n')
+  const yml = [
+    '# 酒馆管理面板生成',
+    '- id: persona',
+    "  name: '@deepseek-ai/dsh-persona'",
+    '  config:',
+    '    prefix: |-',
+    ...block.split('\n').map((l) => '      ' + l),
+    '',
+  ].join('\n')
+  makePreset(id, {
+    yml,
+    packs: [{
+      name: '包甲',
+      modules: [
+        { name: '文风（选一）', content: block, enabled: true },
+        { name: '短要求', content: '正文要用 <game> 包上', enabled: true },
+      ],
+    }],
+  })
+  const md = buildSkillMarkdown(id, {})
+  // ★ 关键判据：那段正文在整个 skill 里只出现一次（在 persona 里），不再重复
+  assert.equal((md.match(/# 角色描写/g) || []).length, 1, '★ 整段重复必须消掉（实测曾是 2 次）')
+  assert.ok(md.includes('内容已并入'), '被去重的模块要留一行指针，让用户看得出它还在预设里')
+  assert.ok(md.includes('正文要用 <game> 包上'), '短要求（不重复的）必须原样保留 —— 去重不许误伤')
+})
+
+test('④f 去重是**按正文包含**判的，不是按名字（同一个坑的另一种形态）', () => {
+  const id = 'preset-skill-dedup2'
+  const block = '这是一段足够长的要求正文，用来证明去重判据看的是内容而不是模块名。'.repeat(2)
+  const yml = [
+    '# 酒馆管理面板生成',
+    '- id: persona',
+    "  name: '@deepseek-ai/dsh-persona'",
+    '  config:',
+    '    prefix: |-',
+    '      前言：' + block,
+    '',
+  ].join('\n')
+  makePreset(id, {
+    yml,
+    packs: [{ name: '包乙', modules: [{ name: '完全不同的名字', content: block, enabled: true }] }],
+  })
+  const md = buildSkillMarkdown(id, {})
+  // 数**整段**出现次数（不数字符串里的某个短句 —— block 自己就重复了那句两次）
+  assert.equal(md.split(block).length - 1, 1, '★ 名字不同但正文相同 ⇒ 也要去重')
+})
+
+// ════════════════════════════════════════════════════════════════
 // ⑤ 写盘：位置正确、幂等、删除干净
 // ════════════════════════════════════════════════════════════════
 test('⑤ 写到 <DSH_HOME>/skills/<name>/SKILL.md，重复写幂等', () => {

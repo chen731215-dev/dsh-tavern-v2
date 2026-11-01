@@ -539,7 +539,7 @@ test('detectRefusal: 命中时会给出可读的证据片段', () => {
 
 // ── 预设 / 会话隔离的权威解析 ──
 // 回归自真实故障：用户在顶部把会话改成「标准模式」(standard)，
-// 但因为 standard 不是酒馆目录，旧实现会继续往前翻历史选择，翻到某个预设并照旧注入。
+// 但因为 standard 不是酒馆目录，旧实现会继续往前翻历史选择，翻到旧预设并照旧注入。
 const isTavern = (id) => id === 'preset-fixture-a1' || id === 'tavern-lite'
 
 test('pickAuthoritativePreset: 最新显式选择是酒馆预设 → 用它', () => {
@@ -552,7 +552,7 @@ test('pickAuthoritativePreset: 最新显式选择是内置预设 → 判定不�
 })
 
 test('pickAuthoritativePreset: 显式选了内置预设时，过期的 bindings 不得翻盘（关键回归）', () => {
-  // 用户选了 standard，但 bindings 里还记着某个预设 —— 必须听用户的，不是听记账
+  // 用户选了 standard，但 bindings 里还记着旧预设 —— 必须听用户的，不是听记账
   assert.equal(pickAuthoritativePreset('standard', isTavern, 'preset-fixture-a1'), 'default')
 })
 

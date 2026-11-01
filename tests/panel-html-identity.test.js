@@ -79,13 +79,15 @@ export const FROZEN = {
     //   并把仍然生效的「世界书注入量」单独成卡（原卡片改名）。段/产物 sha 全部随之变化是**预期**。
     //   与上一笔（只在 TAVERN_CSS 加类名、段内一字节未动）的区别：这次 `product` 变了。
     // ★ 同日（2.7.22 导出功能）：新增「📤 导出」卡片 ⇒ 段 +26 行、产物 +1487 字符，再次重冻。
+    // ★ 2.7.26（显示正则卡）：新增「🧹 显示正则」卡片（1 张卡 + 1 个 t-row + 2 个按钮 + 1 个列表 + 1 个状态行）
+    //   ⇒ 段 +17 行、产物 +749 字符，`tvTab` 13→14。**这一笔是有意改 panelHTML**，所以整组重冻。
     from: 567,
-    to: 1112,
-    lines: 546,
-    chars: 43067,
-    bytes: 51450,
-    sha: 'd7c38a249b069ae8b7528735d7e64315072163a7a20ee22e571124c5fba69e69',
-    shaWithTrailingNewline: '2348cacd96bb7b78f9f93a0b8e70fc469ee88fe67a2a2bac6b00c43058b44e45',
+    to: 1129,
+    lines: 563,
+    chars: 44252,
+    bytes: 53146,
+    sha: '2299f705d3ea45fd42ef11e775db3897d15728fa2c12102da579f1de9b340653',
+    shaWithTrailingNewline: '381d1e56373412755f903780b39a42e8b6efeb303fb673554df9b2bccd3020e8',
   },
   /** ★ 历史锚点（笔1 冻结的那一版段）。本判据**有意读历史**，理由见文件头 ②。 */
   segmentHistory: {
@@ -106,9 +108,9 @@ export const FROZEN = {
       + '继续从当前段现算只会得到空集（判据塌成恒真）⇒ 只能从历史 blob 现算。',
   },
   product: {
-    chars: 29035,
-    bytes: 32491,
-    sha: '1b678442ad33202d090404df2c691379231259ad63caea95a701c888e9f0ea8f',
+    chars: 29784,
+    bytes: 33406,
+    sha: 'd305d0297dc6497f6aa7c516a238afdc880a7127e34d60f1221bb9aa16ac9576',
   },
   /**
    * ★ 历史段产物的锚点（笔1/笔2 那一版 panelHTML 的产物）。
@@ -122,17 +124,18 @@ export const FROZEN = {
   },
   /** ★ 作废组：这是 `String(fn)`（函数源码串化，壳没调用）——**只作反向夹具**，任何判据都不许用它当基准。 */
   deprecatedWrongShell: {
-    chars: 43063,
-    bytes: 51446,
-    sha: 'dff44c74df532f6d8e3a58952414bf794559db967bfb91dbdfba6f123c21d49d',
+    chars: 44248,
+    bytes: 53142,
+    sha: '796fa1e79e9dffc731b1c8d0001f665000165ef654ea569264b25183a554a34c',
     why: '函数源码的串化（非产物）；据此得出的长度类判据一并退役',
     whyChanged: '它由**当前**函数源码算出 ⇒ 段一改它就跟着变（笔1 时 38205/45539/71f796c0…、'
       + '笔2 时 42911/50623/6ed36cf9…、2.7.21 按钮体检后 41055/48844/32b6a645…、'
-      + '2.7.22 加导出卡后 43063/51446/dff44c74…）。它是**反向夹具**，不是产物断言。',
+      + '2.7.22 加导出卡后 43063/51446/dff44c74…、2.7.26 加显示正则卡后 44269/53159/3b21dc7b…）。'
+      + '它是**反向夹具**，不是产物断言。',
   },
   counts: {
-    tvTab: 13,             // 产物侧：data-tv-tab=（2.7.22 加「📤 导出」后 12→13）
-    productTvRow: 39,      // 产物侧：class="t-row" 出现次数
+    tvTab: 14,             // 产物侧：data-tv-tab=（2.7.22 加「📤 导出」后 12→13；2.7.26 加「🧹 显示正则」后 13→14）
+    productTvRow: 40,      // 产物侧：class="t-row" 出现次数（2.7.26 显示正则卡 +1）
     tvRowLiteral: 39,      // ★ 历史段侧：含 class="t-row" 的候选行（字面量条数）
     tvRowDistinct: 28,     // ★ 历史段侧：解码值去重数
     segLiterals: 377,      // ★ 历史段侧：段内字面量总数
@@ -141,8 +144,8 @@ export const FROZEN = {
     N: 28,
     setShaJoinedLf: '40e004bc693e9645567318b1b2aa945dbee91d3eb57046f1ccef2dc33509aba2',
     setShaJson: '2a317069eff930261e019eb8f67d3382547cb6b86ffbc545444269ba2fc92327',
-    hitCountsSorted: [1, 1, 1, 1, 2, 1, 1, 0, 6, 1, 1, 1, 2, 4, 1, 1, 1, 2, 1, 1, 2, 2, 1, 2, 1, 1, 1, 2],
-    hitSum: 42,
+    hitCountsSorted: [1, 1, 1, 1, 2, 1, 1, 0, 6, 1, 1, 1, 2, 4, 1, 1, 1, 2, 1, 1, 2, 3, 1, 2, 1, 1, 1, 2],
+    hitSum: 43,
     zeroHits: 1,
     /**
      * 0 命中的指纹**必须在这里登记理由**：删掉一处 markup 就会让某条历史开标签彻底消失。
@@ -160,11 +163,11 @@ export const FROZEN = {
     /** 指纹的**来源**（机器可读的那一句；防后人把来源改回当前段）。 */
     source: 'history:' + HIST_REV + ':' + HIST_PATH,
   },
-  closure: { shiftedSha: '60b8899dcd3d7ea47fcbd29e7b7f655f5e1f588503c1d4a2d9427f344ff0734d', free: [] },
+  closure: { shiftedSha: '68eb6b88c2d549a02f7d66895e6fc9b3ac5b42f285c7877ab65429a289a6b788', free: [] },
   /** 笔2 基元的形态读数（`test ⑨` 逐条断言）。 */
   primitives: {
-    openCallSites: 39,     // `tvRowOpen(<数字>, …)` 调用点（2.7.22 加导出卡 +2）
-    closeCallSites: 2,     // `tvRowClose()` 调用点（两个 complete-row 各 1 处）
+    openCallSites: 40,     // `tvRowOpen(<数字>, …)` 调用点（2.7.22 加导出卡 +2；2.7.26 显示正则卡 +1）
+    closeCallSites: 2,     // `tvRowClose()` 调用点（两个 complete-row 各 1 处；2.7.26 显示正则卡收尾走字面量）
     distinctOpenTags: 28,  // 表里能发出的开标签（= 迁移前 27 + 2.7.21 新增的 1 条）
     indents: [2, 4, 6, 8],
     styles: 25,            // 非 null 的 style 值（2.7.21：新增 1 条 `margin-top:6px;gap:…;align-items:center`）

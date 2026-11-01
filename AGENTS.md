@@ -7,7 +7,7 @@
 > 见 §5「服务端分层」。那条规矩正是把 index.js 堆成巨型单文件的原因。
 
 - **包名**：`dsh-tavern`（**不是** `@local/dsh-tavern`）
-- **版本**：2.7.16
+- **版本**：2.7.26
 - **模块系统**：ES Modules（`import` / `export`，禁止 `require` / `module.exports`）
 - **服务端入口**：`lib/index.js`（分层进度见 §1 结构图 / §5；**行数与模块数一律不写进文档**，手抄必漂）
 - **客户端入口**：`lib/client.manager.bundle.js`
@@ -44,6 +44,7 @@ dsh-tavern/
 │   │   ├── state-io.js              #   状态写入与目录准备
 │   │   ├── routes.js                #   ★ 全部 HTTP 路由注册（按批搬自 index.js，见 §5.1 / §10）
 │   │   ├── export.js                #   导出角色卡/世界书/预设（原生「选择文件夹」+ 双格式落盘），见 2.7.22
+│   │   ├── display-rules.js         #   显示正则（ST 式输出侧脚本）**数据层**：规则表校验 / ST 卡脚本导入；引擎在客户端，见 2.7.26
 │   │   └── dsh-conn.js              #   DSH settings + credentials 解析
 │   ├── client.manager.bundle.js     # 客户端 ★ **单文件即源码，没有构建步骤**，直接改它
 │   ├── utils.js                     # 纯函数工具
@@ -111,7 +112,8 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 | 世界书 | 关键词触发匹配、`injectMode`（full / keyword） |
 | 记忆 / 总结 | `buildSummaryPrompt`、`callLLM`、`parseSummaryOutput` |
 | 关系网 | 关系数据落库 + 渲染数据来源（**来自模型输出**） |
-| 技能生成 | `SKILL.md` 生成 |
+| 技能生成 | `SKILL.md` 生成（`summarizePresetForSkill` → `buildSkillMarkdown`）。卡正文来自 `characters.json` 的 `desc`/`first`；与 persona 重复的模块只在渲染层留指针（`moduleCoveredBy`） |
+| 显示正则（ST 式输出侧脚本） | 数据层 `lib/server/display-rules.js`（**只做规则表校验，不实现 replace**）；唯一引擎在客户端 `compileDisplayRules` / `applyDisplayRulesIn`。**只作用于显示**：不进提示词、不改会话日志 |
 | 设置页（自渲染 HTML） | 搜 `<button id=`；已全部改 `addEventListener`，**零内联事件** |
 | 测试导出 | `_test` |
 
@@ -581,5 +583,5 @@ S2-C2 抽装配前补上；随后那段组装被抽进 `lib/server/assemble.js`�
 
 ---
 
-**最后更新**：2026-10-08（2.7.16）
+**最后更新**：2026-11-01（2.7.26）
 **维护者**：chen731215-dev
