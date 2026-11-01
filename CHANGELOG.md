@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.7.24 (2026-11-01)
+
+### 🐛 修复：`<options>` / `<details>` / `<game>` 原样露出尖括号文本
+
+- 现象：模型在正文后追加 `</game> <summary>…</summary> <details><summary>…</summary>…</details>
+  <options><option>…</option>…</options>` 时，界面上**原样显示这些标签原文**，既没有折叠块也没有选项按钮。
+- 实测两张标签表都不认这批标签：muv-engine 的 `_tavernRenderTags` / `MUV_TAG_RULES` 只处理
+  `<choices>` / `<choice>`；`<game>` 与裸 `<summary>` 两边都没有渲染器。
+- 本插件补一段兜底 `renderRawTagBlocks()`：`<option>` → 复用既有 `.tavern-option-btn` 按钮
+  （走文档级点击委托，点了直接发送）；`<details><summary>` → 折叠块（默认收起）。
+  只用 `createElement` / `textContent` 建节点，**不新增 innerHTML sink、不新增样式、不新增监听**。
+  执行顺序在 `delegateBeautify()` **之后** —— muv 会整段重写正文，兜底必须跑在它后面才不被覆盖。
+- **容错**：标签不配对时只丢标签、正文一个字都不吞（用贪婪 `[\s\S]*` 配对的实现会把 `</game>`
+  之后整段吃掉，测试里专门配了这条反例）。
+
+### ⚡ 改进：切会话不再重复渲染
+
+- 幂等判据从「一次性打标记」升级成**内容指纹**：整条消息算一次 FNV-1a，渲染完写回
+  `data-tavern-raw-sig`，下一轮读到同一个值直接返回 —— 来回切会话、流式刷新、muv 重复装饰
+  都不会重复造节点（不靠时间窗口去猜）。
+- MutationObserver 的触发合并到 `requestAnimationFrame`：观察的是整份 body（`childList + subtree`），
+  流式输出时每帧都触发，而每轮要全页查询 + 逐条算指纹；合并后这层开销不再压进打字/滚动的帧里。
+- 流式输出中若末尾还挂着未闭合的 `<opt…`，本拍**先不渲染**（否则选项按钮会闪一下再散开），
+  等标签闭合或流结束再处理。
+
+### 🧪 工程
+
+- 新增 `tests/raw-tag-render.test.js`（4 项）：三类片段切开、正文不吞、贪婪实现反例、幂等判据在位。
+
 ## v2.7.23 (2026-10-29)
 
 ### 🐛 修复：快速上手引导收起后打不开
