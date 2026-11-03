@@ -9,12 +9,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildSkillPriorityText } from '../lib/server/assemble.js'
 
-test('缺省 / 非法值一律按「预设优先」', () => {
+test('缺省 / 非法值一律按「内容优先」', () => {
   for (const state of [undefined, {}, { skillPriority: 'nonsense' }, { skillPriority: 42 }]) {
     const t = buildSkillPriorityText(state)
-    assert.match(t, /【设定优先级 · preset（预设优先，本会话生效）】/, '必须是 preset 声明：' + JSON.stringify(state))
-    assert.match(t, /角色卡 \/ 世界书 \/ 预设模块/, '要写明裁决顺序')
-    assert.match(t, /一律以本段（预设）为准/, '要写明冲突时的落点')
+    assert.match(t, /【设定优先级 · preset（内容优先，本会话生效）】/, '必须是 preset 声明：' + JSON.stringify(state))
+    assert.match(t, /角色卡 \/ 世界书 \/ 写作模块/, '要写明裁决顺序')
+    assert.match(t, /一律以本段（角色卡\/世界书\/写作模块）为准/, '要写明冲突时的落点')
     assert.equal(t.includes('【设定优先级 · skill'), false, 'preset 模式不能同时出现 skill 声明')
   }
 })
@@ -24,7 +24,7 @@ test('skill 优先：流程/文风让位，但角色卡/世界书仍是事实来
   assert.match(t, /【设定优先级 · skill（技能优先，本会话生效）】/)
   assert.match(t, /事实来源/, '必须保留「设定事实」这条底线')
   assert.match(t, /不得改写或替换/, '不得借技能优先改写世界观/人名')
-  assert.equal(t.includes('一律以本段（预设）为准'), false, 'skill 模式不能残留相反的裁决')
+  assert.equal(t.includes('一律以本段（角色卡/世界书/写作模块）为准'), false, 'skill 模式不能残留相反的裁决')
 })
 
 test('声明以空行结尾（便于直接拼在 header 前面）', () => {

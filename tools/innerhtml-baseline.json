@@ -12,7 +12,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "root.innerHTML = panelHTML();",
-      "lineNo": 1141,
+      "lineNo": 1194,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -26,7 +26,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "el.innerHTML = state.characters.map(function (c, i) {",
-      "lineNo": 1235,
+      "lineNo": 1288,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -43,12 +43,12 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "el.innerHTML = state.presets.map(function (p, i) {",
-      "lineNo": 1273,
+      "lineNo": 1326,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
       "parts": [
-        "state.presets.map(function (p, i) { var isActive = state.activePresetIdx === i; var collapsed = p._collapsed !== false; var mods = ''; if ((p.modules || []).length) { var modCount = p.modules.length; mods = '<div class=\"t-item-children\" style=\"' + (collapsed ? 'display:none' : '') + '\">' + p.modules.map(function (m, j) { var mchk = m.enabled !== false ? 'checked' : ''; return '<label class=\"t-entry\"><input type=\"checkbox\" data-pm=\"' + i + '\" data-pmi=\"' + j + '\" ' + mchk + '> <span>' + esc(m.name || ('模块' + (j + 1))) + '</span></label>'; }).join('') + '</div>'; } var toggleBtn = (p.modules || []).length ? '<button data-preset-toggle=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">' + (collapsed ? '▶ 展开(' + p.modules.length + ')' : '▼ 折叠(' + p.modules.length + ')') + '</button>' : ''; return '<div class=\"t-item\" style=\"' + (isActive ? 'border-color:var(--dsw-alias-brand-primary);border-width:2px' : '') + '\">' + '<div class=\"t-item-row\">' + '<label class=\"t-check\" style=\"margin-right:4px\"><input type=\"checkbox\" data-preset-batch=\"' + i + '\"></label>' + '<span class=\"t-item-name\">' + esc(p.name || ('预设' + (i + 1))) + '</span>' + toggleBtn + '<button data-preset-active=\"' + i + '\" type=\"button\" class=\"t-btn-sm\" style=\"' + (isActive ? '' : '') + '\">' + (isActive ? '✓ 当前预设' : '切换到此预设') + '</button>' + '<button data-preset-del=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">删除</button>' + '</div>' + mods + '</div>'; }).join('')"
+        "state.presets.map(function (p, i) { var isActive = state.activePresetIdx === i; var collapsed = p._collapsed !== false; var mods = ''; if ((p.modules || []).length) { var modCount = p.modules.length; mods = '<div class=\"t-item-children\" style=\"' + (collapsed ? 'display:none' : '') + '\">' + p.modules.map(function (m, j) { var mchk = m.enabled !== false ? 'checked' : ''; return '<label class=\"t-entry\"><input type=\"checkbox\" data-pm=\"' + i + '\" data-pmi=\"' + j + '\" ' + mchk + '> <span>' + esc(m.name || ('模块' + (j + 1))) + '</span></label>'; }).join('') + '</div>'; } var toggleBtn = (p.modules || []).length ? '<button data-preset-toggle=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">' + (collapsed ? '▶ 展开(' + p.modules.length + ')' : '▼ 折叠(' + p.modules.length + ')') + '</button>' : ''; return '<div class=\"t-item\" style=\"' + (isActive ? 'border-color:var(--dsw-alias-brand-primary);border-width:2px' : '') + '\">' + '<div class=\"t-item-row\">' + '<label class=\"t-check\" style=\"margin-right:4px\"><input type=\"checkbox\" data-preset-batch=\"' + i + '\"></label>' + '<span class=\"t-item-name\">' + esc(p.name || ('写作模块' + (i + 1))) + '</span>' + toggleBtn + '<button data-preset-active=\"' + i + '\" type=\"button\" class=\"t-btn-sm\" style=\"' + (isActive ? '' : '') + '\">' + (isActive ? '✓ 当前模块' : '切换到此模块') + '</button>' + '<button data-preset-del=\"' + i + '\" type=\"button\" class=\"t-btn-secondary t-btn-sm\">删除</button>' + '</div>' + mods + '</div>'; }).join('')"
       ],
       "kind": "param-by-callers",
       "why": "预设列表：mods / toggleBtn 由 esc(m.name) 与数字下标拼成",
@@ -60,7 +60,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "if (st) st.innerHTML = '✅ 已导入预设「' + esc(pname) + '」，自动清理了 <b>' + cleanedTotal + '</b> 个不兼容 DSH 的模块内容（<thinking>/HTML注释/{{变量}}等已剥离）';",
-      "lineNo": 1582,
+      "lineNo": 1687,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -76,7 +76,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "st.innerHTML = '✅ <b>保存成功！Agent 预设已生成</b><br>' +",
-      "lineNo": 2111,
+      "lineNo": 2216,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -98,7 +98,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "sel.innerHTML = '<option value=\"\">选择一个历史对话…</option>' + data.sessions.map(function (s) {",
-      "lineNo": 2166,
+      "lineNo": 2271,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -116,7 +116,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tags.innerHTML = bannedWords.slice(0, 20).map(function(w) {",
-      "lineNo": 2431,
+      "lineNo": 2536,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -133,7 +133,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "box.innerHTML = h;",
-      "lineNo": 2556,
+      "lineNo": 2661,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -151,7 +151,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "box.innerHTML = h;",
-      "lineNo": 2596,
+      "lineNo": 2701,
       "occ": 2,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -169,7 +169,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "list.innerHTML = html;",
-      "lineNo": 2669,
+      "lineNo": 2774,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -185,7 +185,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "detailPanel.innerHTML = html;",
-      "lineNo": 3126,
+      "lineNo": 3231,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -202,7 +202,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tooltip.innerHTML = tooltipHtml;",
-      "lineNo": 3262,
+      "lineNo": 3367,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -219,7 +219,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "detailPanel.innerHTML = html;",
-      "lineNo": 3307,
+      "lineNo": 3412,
       "occ": 2,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -236,7 +236,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "tooltip.innerHTML = html;",
-      "lineNo": 3658,
+      "lineNo": 3763,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -253,7 +253,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "info.innerHTML = '<span><strong style=\"color:var(--dsw-alias-brand-primary,#ffb464)\">' + nodes.length + '</strong> 个角色，<strong style=\"color:var(--dsw-alias-brand-primary,#78a0ff)\">' + edges.length + '</strong> 条关系</span><span style=\"font-size:12px\">悬停看完整关系 · 标签显示' + (labelLen || 15) + '字</span>';",
-      "lineNo": 3755,
+      "lineNo": 3860,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -269,7 +269,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "presetStatus.innerHTML = html;",
-      "lineNo": 4237,
+      "lineNo": 4450,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -288,7 +288,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "elNextSel.innerHTML = html;",
-      "lineNo": 5119,
+      "lineNo": 5332,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -304,7 +304,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "statusEl.innerHTML = msg;",
-      "lineNo": 5606,
+      "lineNo": 5819,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -322,7 +322,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "listEl.innerHTML = html;",
-      "lineNo": 5750,
+      "lineNo": 5963,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -339,7 +339,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "if (iframe) iframe.srcdoc = sb.html;",
-      "lineNo": 7234,
+      "lineNo": 7622,
       "occ": 1,
       "sink": "srcdoc",
       "sinkKind": "sandboxed-doc",
@@ -355,7 +355,7 @@
     {
       "file": "lib/client.manager.bundle.js",
       "line": "contentEl.innerHTML = html;",
-      "lineNo": 7348,
+      "lineNo": 7736,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -370,8 +370,40 @@
     },
     {
       "file": "lib/client.manager.bundle.js",
+      "line": "frame.srcdoc = hudBootstrap(html, uid);",
+      "lineNo": 8546,
+      "occ": 1,
+      "sink": "srcdoc",
+      "sinkKind": "sandboxed-doc",
+      "parts": [
+        "hudBootstrap(html, uid)"
+      ],
+      "kind": "sandboxed-doc",
+      "why": "muv-engine 状态栏：服务端返回另一份完整文档；iframe 只给 allow-scripts（刻意不给 allow-same-origin）⇒ 不透明源，够不到主页面 DOM 与凭据",
+      "mustContain": [
+        "sandbox=\"allow-scripts\""
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
+      "line": "frame.srcdoc = html;",
+      "lineNo": 9192,
+      "occ": 1,
+      "sink": "srcdoc",
+      "sinkKind": "sandboxed-doc",
+      "parts": [
+        "html"
+      ],
+      "kind": "sandboxed-doc",
+      "why": "muv-engine 状态栏：服务端返回另一份完整文档；iframe 只给 allow-scripts（刻意不给 allow-same-origin）⇒ 不透明源，够不到主页面 DOM 与凭据",
+      "mustContain": [
+        "sandbox=\"allow-scripts\""
+      ]
+    },
+    {
+      "file": "lib/client.manager.bundle.js",
       "line": "item.innerHTML = '<span style=\"width:12px;flex:0 0 auto;text-align:center;\">' + (isActive ? '✓' : '') + '</span><span style=\"flex:1;margin:0;display:flex;flex-direction:column;align-items:flex-start;line-height:1.3\"><span style=\"max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + escapeHtml(p.name) + '</span><span style=\"font-size:9px;color:var(--dsw-alias-label-tertiary,#888);font-weight:400;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">' + pMeta2 + '</span></span><span style=\"font-size:10px;color:var(--dsw-alias-label-tertiary,#888);flex:0 0 auto;\">' + (p.cardChars ? (p.cardChars + '字') : '') + '</span>';",
-      "lineNo": 7784,
+      "lineNo": 10293,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",
@@ -389,7 +421,7 @@
     {
       "file": "lib/server/routes.js",
       "line": "document.getElementById(\"ps-body\").innerHTML=h",
-      "lineNo": 1791,
+      "lineNo": 1888,
       "occ": 1,
       "sink": "innerHTML",
       "sinkKind": "html-assign",

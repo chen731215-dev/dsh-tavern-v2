@@ -7,7 +7,7 @@
 > 见 §5「服务端分层」。那条规矩正是把 index.js 堆成巨型单文件的原因。
 
 - **包名**：`dsh-tavern`（**不是** `@local/dsh-tavern`）
-- **版本**：2.7.26
+- **版本**：2.8.0
 - **模块系统**：ES Modules（`import` / `export`，禁止 `require` / `module.exports`）
 - **服务端入口**：`lib/index.js`（分层进度见 §1 结构图 / §5；**行数与模块数一律不写进文档**，手抄必漂）
 - **客户端入口**：`lib/client.manager.bundle.js`
@@ -15,6 +15,74 @@
 
 > 📌 **规范只有这一份真源。** `CLAUDE.md` 与 `.cursorrules` 现在只是指向本文件的短指针。
 > 历史上三者是同一份内容的三份拷贝，结果两处漂移成了过期版本号，教训在此：**不要再把规则复制到第二个文件**。
+
+---
+
+## 0. 术语：两个「预设」必须分清（最容易搞混的一条）
+
+改任何代码前先把这张表读一遍。历史上「预设」一词同时指两种完全不同的东西，
+AI 助手（以及模型）反复把下面第一行当成第二行，于是改出来的功能张冠李戴 ——
+把写作要求当成 Agent 预设去处理，或者反过来把 agent 预设目录当成内容素材。
+
+| UI 文案 | 是什么 | 存在哪里 | 代码里的字段 | 谁管它 |
+| --- | --- | --- | --- | --- |
+| **🎭 Agent 预设**（agent preset） | 一个**角色卡容器**：新会话在页面顶部选它，决定这一局用哪张卡 | `<DSH_HOME>/.agent-presets/<dir>/`（`preset.yml` + `agent.cordis.yml` + `characters.json`…），并通过声明行进入 DSH 预设名册 | 注册表 `presets.json` 的条目、`presetId`、`agent.cordis.yml` | DSH 顶部选择器；`/api/tavern/agent-presets`、`/api/tavern/preset/*` |
+| **📝 写作模块**（2.7.28 前的旧名是「预设模块」） | **写作要求素材**，和角色卡 / 世界书同级：文风、禁令、输出格式、ST 预设词条 | 预设目录里的 `presets.json`：外层是「包」`{name, modules:[…]}`，内层 `modules[]` 才是真正的要求 | `state.presets[]`（包）、`p.modules[]`（词条） | 「内容 → 📝 写作模块」卡片 |
+
+**硬规矩（违反就会被下一个人当成 bug 改回去）**：
+
+- 面向用户的文案里**不许再把写作模块叫「预设」**。用户看到「预设」时，只应理解成 Agent 预设。
+- 注入提示词时的段落标题是 `# 写作模块（<包名>）` / `# 写作模块：<词条名>`，
+  **不是**「预设模块」—— 模型也会被那个词带偏。
+- 代码里 `presets[]` / `modules[]` 是**历史命名，不要为了"统一"改成 `agentPreset*`**。
+  改了会把两种数据真正混成一锅；要动先读这一节。
+- 新增任何字符串前先自问一句：这句话说的是「这一局用哪张卡」，还是「写作要求」？
+- 改这些文案会连带改到冻结的测试锚点：`tests/panel-html-identity.test.js`（段/产物指纹）、
+  `tests/panel-tabs.test.js`（页签标题）、`tests/fixtures/golden-host-assembly*.json`（组装产物）。
+  按各文件头部写的配方重新冻结，别把断言删掉了事。
+
+---
+
+## 0.5 卡渲染架构：HUD 沙盒（2.8.0，改状态栏/美化前必读）
+
+角色卡的状态栏、变量更新折叠、选项卡片、思维链折叠，**不是插件画的** ——
+是卡自己在 `data.extensions.regex_scripts` 里写好的替换规则。旧版导入时把这些脚本
+整段丢掉，于是插件里堆了一堆白名单解析器（`Status_block` / `状况` / `maintext` / …），
+每来一张新卡就要加一条正则，永远追不上。
+
+现在的分工是三层，**改动只能落在对应层**：
+
+| 层 | 在哪 | 只做什么 | 不许做什么 |
+| --- | --- | --- | --- |
+| ① 内容识别管线 | bundle `detectHudDialect()` / `wrapHudFragment()`（纯函数） | 判定方言（document / fragment / details / text）并把裸片段补成整页 | 解析状态数据、改写正文文字 |
+| ② HUD 沙盒核心 | bundle `hudMount()` / `hudBootstrap()` / `hudBridge()` | 建 iframe、注入通信脚本、按 uid 收发 postMessage、算高度 | 窗口装饰（标题栏/拖动/边框）、读写宿主 DOM 里的卡内容 |
+| ③ 外壳适配器 | bundle `hudShellInline()` / `hudOpenFloat()` | 内嵌（自适应高度 + 浮窗按钮）/ 浮窗（拖动、缩放、Esc、位置记忆） | 碰 iframe 里的渲染逻辑 |
+
+**卡脚本引擎**在 `lib/st-regex.js`（服务端，提示词侧）与 bundle 里的
+`compileCardScripts()`（客户端，显示侧）各一份，语义对齐 ST 的 `engine.js`：
+
+- `disabled` / `placement` / `markdownOnly` / `promptOnly` / `minDepth` / `maxDepth` / `trimStrings`
+- `$1..$9`、`$&`、`{{match}}`、`{{char}}`、`{{user}}`、`{{random::a::b}}`
+- 唯一有意偏离：**缺省补 `g`**（ST 不补）。理由见 `lib/st-regex.js` 文件头。
+
+**不可回归的不变量**（都有测试钉住）：
+
+1. `sandbox` 只有 `allow-scripts allow-forms`，**永远不许** `allow-same-origin`
+   —— 加了就等于把卡的 JS 放进同源，`srcdoc` 直接是注入点。
+2. HUD 段里**不许出现 `innerHTML =`**：卡里的 HTML 一律走 `srcdoc`（沙盒内）或
+   用 `createElement` 拼折叠块，绝不内联进宿主 DOM。
+3. `postMessage` 必须校验 `rec.frame.contentWindow === e.source`，否则同页别的 iframe
+   可以冒充某个 uid 改高度/骗上下文。
+4. 上下文只给必要字段（角色名、玩家名、会话 id、当前消息正文截断 2 万字符），
+   **不许把整段会话记录塞进沙盒**。
+5. 一条消息最多重跑卡脚本 8 轮（`data-tavern-card-pass`）：muv 的 observer 会把正文
+   整段重写，不设上限会来回挂 iframe 把页面拖死。
+6. 导入时 `regexScripts` 必须原样进 `characters.json`，且 `cleanObjectStrings()` 要跳过
+   `regexScripts` / `findRegex` / `replaceString` / `trimStrings` —— 那里的 `{{…}}`
+   和 `<!-- … -->` 是**语法**，不是 ST 宏（见 `tests/card-import-fidelity.test.js`）。
+
+对应测试：`tests/st-regex.test.js`、`tests/hud-sandbox.test.js`、
+`tests/card-import-fidelity.test.js`。改这三块任何一处，先看它们的头注释。
 
 ---
 

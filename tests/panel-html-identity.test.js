@@ -81,13 +81,18 @@ export const FROZEN = {
     // ★ 同日（2.7.22 导出功能）：新增「📤 导出」卡片 ⇒ 段 +26 行、产物 +1487 字符，再次重冻。
     // ★ 2.7.26（显示正则卡）：新增「🧹 显示正则」卡片（1 张卡 + 1 个 t-row + 2 个按钮 + 1 个列表 + 1 个状态行）
     //   ⇒ 段 +17 行、产物 +749 字符，`tvTab` 13→14。**这一笔是有意改 panelHTML**，所以整组重冻。
-    from: 567,
-    to: 1129,
-    lines: 563,
-    chars: 44252,
-    bytes: 53146,
-    sha: '2299f705d3ea45fd42ef11e775db3897d15728fa2c12102da579f1de9b340653',
-    shaWithTrailingNewline: '381d1e56373412755f903780b39a42e8b6efeb303fb673554df9b2bccd3020e8',
+    // ★ 2.7.28（写作模块改名）：「预设模块」卡片标题/描述/搜索框/拖入区文案改成「📝 写作模块」，
+    //   目的是把内容素材与 DSH 的 Agent 预设彻底分开（见 AGENTS.md §0 术语）。段 +2 行、产物 +56 字符，
+    //   段整体再下移 3 行（卡片上方新增 3 行注释）。**这一笔同样是有意改 panelHTML**，整组重冻。
+    // ★ 2.7.28（侧边栏入口）：文件头部新增 `react-dom/client` 的可选 require（4 行，含注释）
+    //   ⇒ 段整体下移 4 行，**段内容与产物 sha 一字未变**（这次改的是面板之外的代码）。
+    from: 601,
+    to: 1165,
+    lines: 565,
+    chars: 44435,
+    bytes: 53488,
+    sha: 'ca6251a786ed6204e66dbd3a39d39eb6d50b148f37c67502d61cb56e9e8c4807',
+    shaWithTrailingNewline: '649fed4bfa05cce38ed8946c4ad674b499e03f1a704096daad699a8dc3551e3d',
   },
   /** ★ 历史锚点（笔1 冻结的那一版段）。本判据**有意读历史**，理由见文件头 ②。 */
   segmentHistory: {
@@ -108,9 +113,9 @@ export const FROZEN = {
       + '继续从当前段现算只会得到空集（判据塌成恒真）⇒ 只能从历史 blob 现算。',
   },
   product: {
-    chars: 29784,
-    bytes: 33406,
-    sha: 'd305d0297dc6497f6aa7c516a238afdc880a7127e34d60f1221bb9aa16ac9576',
+    chars: 29840,
+    bytes: 33512,
+    sha: '07ba950a73bc2c9963f7b64bf7eef971c47ada7c7a243f035f5f6e17f3dc776f',
   },
   /**
    * ★ 历史段产物的锚点（笔1/笔2 那一版 panelHTML 的产物）。
@@ -124,9 +129,9 @@ export const FROZEN = {
   },
   /** ★ 作废组：这是 `String(fn)`（函数源码串化，壳没调用）——**只作反向夹具**，任何判据都不许用它当基准。 */
   deprecatedWrongShell: {
-    chars: 44248,
-    bytes: 53142,
-    sha: '796fa1e79e9dffc731b1c8d0001f665000165ef654ea569264b25183a554a34c',
+    chars: 44431,
+    bytes: 53484,
+    sha: '3bb854addfe620ebcddcff55d1df07e1fd2befcb9de0c86cdfd71f484164ae0d',
     why: '函数源码的串化（非产物）；据此得出的长度类判据一并退役',
     whyChanged: '它由**当前**函数源码算出 ⇒ 段一改它就跟着变（笔1 时 38205/45539/71f796c0…、'
       + '笔2 时 42911/50623/6ed36cf9…、2.7.21 按钮体检后 41055/48844/32b6a645…、'
@@ -163,7 +168,7 @@ export const FROZEN = {
     /** 指纹的**来源**（机器可读的那一句；防后人把来源改回当前段）。 */
     source: 'history:' + HIST_REV + ':' + HIST_PATH,
   },
-  closure: { shiftedSha: '68eb6b88c2d549a02f7d66895e6fc9b3ac5b42f285c7877ab65429a289a6b788', free: [] },
+  closure: { shiftedSha: '00a5a1e408a54b62552e628f0d45cdac9a5f31af0ba833f464187076b1cb1aaa', free: [] },
   /** 笔2 基元的形态读数（`test ⑨` 逐条断言）。 */
   primitives: {
     openCallSites: 40,     // `tvRowOpen(<数字>, …)` 调用点（2.7.22 加导出卡 +2；2.7.26 显示正则卡 +1）

@@ -1,5 +1,325 @@
 # Changelog
 
+## 2.8.0 — 卡渲染兼容：外壳 + 沙盒
+
+用户反馈「有很多很多角色卡，兼容不到位」。根因不在渲染细节，而在**导入就丢了东西**：
+`chara_card_v3` 的卡把状态栏 / 变量折叠 / 选项卡片 / 思维链全写在
+`data.extensions.regex_scripts` 里，旧链路只取 `name / desc / first_mes`，
+脚本在导入那一刻就没了 ⇒ 插件只能靠白名单硬编码，每张新卡都要补一条正则。
+
+- **导入保真**：`addCard()` 保留 `regexScripts`（只挑需要的字段，第三方扩展不整包存）；
+  `cleanObjectStrings()` 跳过正则键 —— 那里的 `{{…}}` / `<!-- … -->` 是语法，不是 ST 宏。
+- **卡脚本引擎**：新增 `lib/st-regex.js`（服务端，提示词侧）与 bundle 内的等价实现
+  （显示侧）。对齐 ST `engine.js`：`placement` / `markdownOnly` / `promptOnly` /
+  `minDepth` / `maxDepth` / `trimStrings` / `$1..$9` / `{{char}}` / `{{random::a::b}}`。
+- **HUD 沙盒（三层）**：① 识别管线（document / fragment / details / text）
+  ② 沙盒核心（iframe `sandbox="allow-scripts allow-forms"`，**无** `allow-same-origin`）
+  ③ 外壳适配器（内嵌 / 浮窗）。卡的 CSS 不再外溢到宿主页面，卡之间也不互相污染。
+- **通信**：高度自适应、上下文请求、开浮窗、关闭 四条 `postMessage`；只认自己那个
+  iframe（校验 `e.source`）；上下文只给角色名/玩家名/会话 id/当前消息（截断 2 万字符）。
+- **状态栏置底**：状态类脚本的产物统一落到消息末尾的 `.tavern-status-trailer`。
+- **模型漏写占位符时**：用卡自己的脚本补一次（不再绕 muv-engine），卡没有状态栏脚本就
+  什么都不做。
+- **提示词侧裁剪**：`agent/pre-step` 钩子按卡里的 `promptOnly` 脚本删掉历史里的
+  状态栏占位符 / 旧变量块（省上下文，避免模型照抄上一轮变量）。`cardRegex: false` 可关。
+- 测试：新增 `tests/st-regex.test.js`（7）、`tests/hud-sandbox.test.js`（6）、
+  `tests/card-import-fidelity.test.js`（4）。全量 `pass=703 fail=0`。
+- 转义棘轮：新增 1 处 `srcdoc`（沙盒渲染），基线 24 → 25，已论证（sandbox 断言通过）。
+
+## v2.7.36 (2026-11-03)
+
+> 一句话：读了一张 154 条世界书的大卡之后，按卡的真实构造改 —— 过程块（剧情设计 / 状态核对）折起来
+> 而不是摊平，空列表项清掉，模型漏写 `<StatusPlaceHolderImpl/>` 时自动补状态栏。
+
+### 🔍 读卡结论（样本卡：154 条世界书 / 6 条 regex_scripts）
+
+- 状态栏**只有一个入口**：`<StatusPlaceHolderImpl/>`，由卡的 regex_scripts「状态栏美化」
+  替换成 6087 字符的卡片 HTML；酒馆/muv 负责把它渲染成 iframe。
+- `<draft_notes>` / `<VariableCheck>` / `<bginfor>` / `<catsay>` / `<CEstuff>` **卡里根本没有**，
+  全是模型自己造的包裹壳。它们的内容有用（剧情设计、状态实体核对），但不该摊在正文里。
+- 这一轮模型**漏写了** `<StatusPlaceHolderImpl/>`（会话日志确认：整条 4492 字里没有这个串），
+  所以状态栏消失不是被清掉的 —— 但观感上"末尾那段状态描写"确实是本应变成状态栏的东西。
+
+### ✨ 过程块折叠，而不是剥标签摊平
+
+- `RAW_TAG_RE` / `RAW_BLOCK_RE` 增加 `<draft_notes>`（→「📝 剧情设计」）与
+  `<VariableCheck>`（→「🧾 状态核对」）：渲染成折叠块，**默认收起，内容一字不丢**。
+- 之前这两个是"孤儿标签"白名单，剥完标签后内容摊平成一大段正文（真机："末尾一段状态描写"）。
+
+### 🧹 清掉空列表项（"选项前有三行点"）
+
+- 模型偶尔输出 `- ` 空条目，markdown 渲染成 `<li></li>`，界面上就是几个孤零零的圆点。
+- `removeEmptyListItems()`：只删"文本为空且没有图片/按钮"的 li，空列表本身一并收走。
+
+### ✨ 模型漏写占位符时，自动补状态栏
+
+- `ensureStatusBar()`：只在**最后一条**消息、且「既没有占位符也没有状态栏」时，
+  向 muv 要一次状态栏 HTML 补在末尾。
+- 严格前置：会话必须是酒馆会话（`auth !== 'default'`）、卡必须真有 `regexScripts`
+  （没有状态栏脚本就不硬塞空框）、60 秒内复用同一份 HTML。
+- iframe 只给 `sandbox="allow-scripts"`（**绝不给 allow-same-origin**，否则 srcdoc 变同源注入点）。
+- 转义基线 23 → 24（新增的 srcdoc），sandbox 断言通过。
+
+### 🧪 测试
+
+- `tests/raw-tag-render.test.js` ⑦ / ⑦-b / ⑦-c：两种过程块折叠且内容不丢、
+  状态栏补齐的四个前置与 sandbox、空 li 清理的保守判据。
+- 全套：`pass=686 fail=0`（54 个文件）。
+
+## v2.7.35 (2026-11-03)
+
+> 一句话：状态栏搬到回复末尾；`<draft_notes>` / `<bginfor>` / `<catsay>` / `<CEstuff>` /
+> `<VariableCheck>` 这类"模型自造壳"不再露尖括号；折叠块配色统一。
+
+### 🐛 状态栏卡在剧情中央 → 统一置底
+
+- 现象（真机截图）：状态卡出现在「剧情设计」和后续正文之间，看起来像状态栏插进了剧情中间。
+- 根因：状态卡是 muv-engine 按**模型输出顺序**渲染的，模型把这轮的状态块写在了正文中间；
+  酒馆只给自己认识的卡片（`tavern-status-*`）做了置底，认不出 `.muv-statusbar-wrap`。
+- 修法：新增 `moveMuvStatusToBottom()`，在每轮装饰时把 `.muv-statusbar-wrap` 搬进消息末尾的
+  `.tavern-status-trailer`（只移动节点、不改内容）。
+- **防抖**：muv 自己挂了 MutationObserver，来回搬会互相触发 ⇒ 同一个正文容器最多搬 3 次
+  （`data-tavern-sb-moves`），超过就放弃。已经在末尾则 no-op。
+- 副作用说明：状态卡是 iframe，移动会重新加载一次（静态卡片，无状态损失）。
+
+### 🐛 标签外溢（第二批）：draft_notes / bginfor / catsay / CEstuff / VariableCheck
+
+- 白名单扩到这一批；同时补一条**通用规则**：一个文本节点如果「整行只有一个或多个标签」
+  （`</catsay> <CEstuff>` 这种），直接整行清掉 —— 模型自造壳的名字是穷举不完的。
+- 仍然只丢标签、正文一字不动，仍然跳过 `pre / code`。
+- 行内包裹（`<VariableCheck>…正文…</VariableCheck>`）走白名单剥离，正文保留。
+
+### 🎨 折叠块配色统一
+
+- `.tavern-updatevar` 原来的米黄（`rgba(197,160,101,…)` + 金色标题）和 DSH 原生 `<details>`
+  差异明显，"变量更新 / 咪咪点评 / 平行事件 / 小结"深浅不一。
+- 改成中性：底色 `--dsw-alias-bg-layer-1`、边框 `--dsw-alias-border-l1`、标题
+  `--dsw-alias-label-secondary`。顺带让样式预算的颜色字面量下降（bareRgba 146→145）。
+- 说明：muv-engine 自己的 `.muv-varedit` / `.muv-varthink` 仍是米黄（那是它插件的样式，
+  酒馆不去覆盖）；如果还想统一，说一声可以再加一层覆盖。
+
+### 🧪 测试
+
+- `tests/raw-tag-render.test.js` ⑥ / ⑥-b：整行标签通用清理（含未知标签名）、白名单覆盖本轮
+  全部名字、状态栏置底的幂等与 3 次封顶。
+- 全套：`pass=683 fail=0`（54 个文件）。
+
+## v2.7.34 (2026-11-03)
+
+> 一句话：分类栏从「左侧一列」改回**顶部下划线式页签**，去掉外框、和内容连成一片。
+
+### 🎨 分类栏：左侧纵向 → 顶部下划线
+
+- 反馈（真机截图）：左侧那列只有四个短项，高度和右侧长内容完全不成比例，
+  看起来像"硬贴在旁边的一个方框"，整体感差。
+- 改法：
+  - 分类回到**顶部一条**，`flex-wrap` 自适应；
+  - 去掉外框背景与圆角，只留一条 `border-bottom` 分隔线；
+  - 选中态从"填充块"改成**品牌色下划线 + 加粗**（更像原生应用的 tab）；
+  - 仍然 `position:sticky`，滚动时长内容时分类一直可点。
+- 左侧那套 media query 整段删掉 —— 不再随宽度在两种形态间跳。
+
+## v2.7.33 (2026-11-03)
+
+> 一句话：修 2.7.31 单例改造带出来的两个真机问题 —— 设置页「顶部预设下拉点不开」、
+> 侧边栏浮窗「点开一片空白」。
+
+### 🐛 顶部预设下拉点不动 / 面板里按钮全没反应
+
+- 根因：`ensureTavernPanelMounted()` **先 mount 再 append**。`mountTavernManager` 内部大量用
+  `document.getElementById(...)` 绑事件，而那时宿主还游离在文档外（`parentElement` 为 null）
+  ⇒ 所有查询返回 null，事件一个都没绑上。面板能画出来（`innerHTML` 已经写了），但点哪都没反应。
+- 修法：`ensureTavernPanelMounted(container)` 接收容器，**先 `appendChild` 再 mount**。
+- 为什么以前没暴露：单例改造之前是 `mountTavernManager(ref.current)`，容器本来就是挂载中的 DOM。
+
+### 🐛 侧边栏浮窗「点开一片空白」
+
+- 根因：`TavernPanelView` 里「把宿主挪进浮窗」的那段 `useEffect` 带了 `[]` 依赖。
+  `viewRoot` 是复用的（关闭只 `display:none`，不 unmount），所以 effect **只在第一次打开时跑**；
+  关掉浮窗时宿主被还给设置页，再打开就没有人把它挪回来 ⇒ 空白。
+- 修法：去掉依赖数组（每次渲染都跑），并统一走 `ensureTavernPanelMounted(bodyRef.current)`。
+  设置页那边的 effect 同理改成每次渲染都跑（浮窗正开着时跳过，不抢节点）。
+
+### 🧪 测试
+
+- `tests/sidebar-entry.test.js` ②-c：钉「先 append 再 mount」的顺序（`appendChild` 必须在
+  `mountTavernManager` 之前），以及「浮窗 effect 不许写 `}, []);`」。
+- 全套：`pass=681 fail=0`（54 个文件）。
+
+## v2.7.32 (2026-11-03)
+
+> 一句话：模型没按 `<option>` 写、改成 Markdown 有序列表时，只要前面是「接下来你想怎么做？」
+> 这类引导句，列表也会变成可点按钮 —— 不再出现"上一轮是卡片、这一轮是死文字"的错位感。
+
+### ✨ 引导句 + 有序列表 → 选项按钮
+
+- 现象（真机截图）：同一位置上一轮渲染成 A/B/C 卡片，这一轮变成 `1. 2. 3.` 纯文字。
+  根因不是渲染坏了，而是**模型这两轮输出格式不同**：这轮写的是 Markdown 有序列表。
+- 现在补一条兜底：`renderListOptions()` 在标签兜底之后跑，把「引导句 + 有序列表」转成
+  `.tavern-options` 里的可点按钮（复用既有样式与文档级点击委托，翻页/切会话都不重复渲染）。
+- **判据刻意保守**（宁可不换，也不许把正文步骤列表做成按钮）：
+  - 只处理消息里**最后一个** `<ol>`；
+  - 它后面不许还有正文（只允许空节点、变量更新/折叠块这类自己渲染的块）；
+  - 紧邻的上一段必须是**短引导句**：≤60 字 + 以 `？/?/：/:` 收尾 + 含「怎么做 / 怎么办 /
+    如何行动 / 选择 / 行动 / 何去何从」这类词；
+  - 2–6 项、每项 ≤240 字、项内没有链接/图片/代码/嵌套列表；代码块里的列表一律不动。
+- 转换后按钮带 `data-opt`，点击走的是已有的 `sendTavernMessage` 桥（与 `<option>` 完全同一条路径）。
+
+### 🧪 测试
+
+- `tests/raw-tag-render.test.js` ⑤ / ⑤-b：引导句判据（正例含"接下来你想怎么做？"，
+  反例含无标点、陈述句、超长段落）+ 转换条件（只动最后一个、项数/长度上限、跳过代码块、
+  必须复用 `tavern-option-btn`）。
+- 全套：`pass=680 fail=0`（54 个文件）。
+
+## v2.7.31 (2026-11-03)
+
+> 一句话：面板改成「左侧分类导航 + 右侧内容」（和侧边栏一个形态），
+> 修掉「Agent 预设选择栏一直加载中」，并清掉聊天里外溢的 `<theater>` / `<recap>` / 裸 `<summary>`。
+
+### 🐛 修复：设置页里「🎭 当前 Agent 预设」一直显示「加载中…」
+
+- 根因是**双实例**：2.7.29 加了侧边栏浮窗后，浮窗与设置页各挂了一份 `mountTavernManager`。
+  面板内部大量使用 `document.getElementById(...)`（历史写法），两份 DOM 的 id 全撞车 ——
+  `loadSessionPresets` 选中了另一个实例里的节点，真正显示的那个永远等不到数据；
+  页签栏也因为这个原因不渲染。
+- 修法：**全局唯一宿主**。`tavernPanelHost()` 只创建一个节点，`mountTavernManager` 只跑一次；
+  设置页与浮窗谁被打开就把这个节点挪进谁的容器（`__tavernPanelOwner` 仲裁，关闭浮窗自动挪回设置页）。
+  设置页卸载时**不再销毁**面板（否则浮窗会拿到一个空壳）。
+
+### 🎨 分类：页签栏改成左侧纵向导航
+
+- 页签栏 + 内容一起装进 `.t-tabshell`：宽面板（≥640px）是**左侧分类 + 右侧内容**，
+  和侧边栏一个形态；窄面板自动退回横向页签（纯 CSS media query，拖动缩放时即时跟随）。
+- 分类仍是四类：🎭 会话 / 📚 内容 / 🎲 玩法 / ⚙️ 增强。
+
+### 🐛 修复：聊天里标签外溢（`<theater>` / `<recap>` / 裸 `<summary>`）
+
+- 现象（真机截图）：模型把折叠块套在 `<theater>…</theater><recap>…</recap>` 里时，
+  界面上原样露出这几行尖括号；单独出现的 `<summary>…</summary>` 也会整段露出来。
+- 根因：这两类标签**没有任何渲染器** —— muv 只认 `<choices>`，本插件的
+  `findRawTagBlocks` 只收「完整的 details/options」，孤儿标签就留在文本里。
+- 修法：`renderRawTagBlocks` 在块渲染**之后**跑一遍 `stripOrphanTags()`：
+  只丢标签、正文一个字符不动，并跳过 `pre / code / textarea`（回答里贴的代码示例是字面量）。
+- 顺序很关键：先清洗会把 `<details>` 里的 `<summary>` 一起删掉 ⇒ 折叠块退化成纯文本。
+  `tests/raw-tag-render.test.js` ④-b 用「调用位置」把这条顺序钉住了。
+
+### 🧪 测试
+
+- 新增 / 更新：单例宿主（`②-b`）、左侧分类（`.t-tabshell`）、孤儿标签（`④`/`④-b`）。
+- 全套：`pass=678 fail=0`（54 个文件）；四道闸全绿。
+
+## v2.7.30 (2026-11-03)
+
+> 一句话：面板排版重做了一遍（卡片标题不再被挤成竖排），侧边栏打开的酒馆面板
+> 可以**拖动 / 拉大拉小 / 双击最大化**，位置和尺寸会记住。
+
+### 🎨 排版：卡片标题被挤成一列竖排（真机截图确认的 bug）
+
+- 根因：`.t-card-desc` 是 **inline**，它和标题挤在同一行；面板一窄，中文标题就被逐字断行
+  成「写/作/模/块」一列，右侧还全是描述。
+- 修法：描述改为 `display:block` 独占一行，标题就能吃满整行；行高 1.6、与标题间距 4px；
+  描述限宽 `82ch`（超宽屏下不会拉成一整行）。
+- 连带修：
+  - `#tavern-manager` 最大宽度 820 → 100%（大屏不再右侧一片空白），内容左右留 10px；
+  - `.t-row` 里的输入框/下拉不再被全局 `width:100%` 撑到把同一行的按钮挤走；
+  - 列表项 hover 时边框提亮，一眼看出可点；
+  - 独立面板里隐藏面板自带的 `🍺 酒馆管理（原生）` h2（标题栏已有，重复）。
+
+### ✨ 面板可拖动 / 可缩放
+
+- **拖动**：按住标题栏拖（`cursor: move`）。
+- **缩放**：右下角三角手柄拖（`cursor: nwse-resize`），最小 560×360。
+- **双击标题栏**：最大化 / 还原上一次的矩形。
+- **记住位置**：矩形写 `localStorage['dsh-tavern-panel-rect']`，下次打开还是那个位置和大小；
+  窗口缩小后面板会被夹回可视区（不会跑到屏幕外）。
+- 收尾逻辑抽成纯函数 `clampPanelRect(rect, vw, vh)`，`tests/sidebar-entry.test.js` ⑥ 真跑它
+  （过小抬到最小值、跑出右下角拉回来、合法矩形原样、超视口截断）。
+
+### 🧪 测试
+
+- 全套：`pass=675 fail=0`（54 个文件）；四道闸全绿。
+
+## v2.7.29 (2026-11-03)
+
+> 一句话：修「ST 预设导入不进去写作模块」，并把酒馆面板搬进侧边栏（酒杯图标），
+> 不用再钻进设置页。
+
+### 🐛 修复：导入的 ST 预设"消失"了（其实是被偷偷建成了新的 Agent 预设）
+
+- 现象：在「内容 → 📝 写作模块」里点导入，选一份 ST chat-completion 预设（如
+  `Kemini Aether-fr-3.72.json`），界面上什么都没多出来。
+- 根因：`/api/tavern/preset/import-st` **不带目标预设**，一律 `createPreset(conv.name)`
+  ⇒ 模块落进**新目录**（顶部多一个同名 Agent 预设），当前预设的 `presets.json` 一个字节没变。
+  前端又只刷新了顶部预设列表，没重读当前预设 ⇒ 用户眼前就是"没导入进去"。
+- 修法：
+  - 前端带 `presetId`（当前编辑的预设）；没有当前预设时**明确拒绝**并提示先选一个；
+    成功后 `loadCurrent(targetPid)` 重读，新包立刻出现在列表里。
+  - 服务端带 `presetId` 时改为**往该预设的 `presets.json` 追加一个包**：
+    不建目录、不写 `agent.cordis.yml`、不动角色卡/世界书。
+  - 同名包不覆盖：自动加 `(2)`/`(3)`，两份 ST 预设可以并存对比。
+  - `preset.yml` 的摘要同步成「📝 N个写作模块」。
+- 不带 `presetId` 的调用（脚本 / CLI / 旧客户端）仍走建新预设的老路径，保持兼容。
+- 新增 `tests/st-import-append.test.js`（4 项）：转换层能吃下 ST 预设、前端必须带 presetId、
+  服务端追加分支不许建目录/写 agent 组合文件、兜底路径保留。
+
+### ✨ 侧边栏入口「酒馆」（不再只能进设置页）
+
+- 侧边栏「新会话」下面新增一项 **🍺 酒馆**（线性高脚杯 + 星芒图标），和
+  「MUV 表格 / 插件 / 自动化任务 / 更多」排在一起。
+- 点击打开一个**独立面板 overlay**（1080×86vh，Esc 或点遮罩关闭），里面就是原来那套
+  「会话 / 内容 / 玩法 / 增强」面板；关闭只是隐藏，**未保存的编辑不会丢**。
+- 实现沿用隔壁 `dsh-muv-table` 的定位口径（宿主的 `[data-pane="sidebar"]` +
+  `newSession` 按钮 + 复用 nav item 的 className），所以字号/配色/悬停跟随宿主题。
+- 图标用 `createElementNS` 逐个搭（不用 `innerHTML`/`DOMParser`）：
+  后两者都是转义棘轮盯着的注入入口，常量图标也不开例外。
+- 设置页里的「🍺 酒馆管理」入口保留（两处都能进）。
+- 新增 `tests/sidebar-entry.test.js`（5 项）：定位口径、关闭只隐藏、图标不用 sink、幂等、
+  启动点 try/catch。
+
+### 🧪 测试
+
+- 全套：`pass=674 fail=0`（54 个文件）；`check` / `check:style` / `check:innerhtml` /
+  `check:integrity` 全绿。
+
+## v2.7.28 (2026-11-03)
+
+> 一句话：把「预设模块」改名成「**写作模块**」，从此与 DSH 的 Agent 预设彻底分家；
+> 同时在新会话顶部的 Agent 预设下拉里，给酒馆预设加上 ✎ 改名 / 🗑 删除。
+
+### 🔤 改名：「预设模块」→「写作模块」
+
+- 背景：那个卡片装的是**写作要求素材**（ST chat-completion 预设导入进来的词条），
+  和角色卡 / 世界书同级，跟 DSH 的 Agent 预设（一个角色卡容器，新会话在顶部选）
+  完全不是一回事。两边都叫「预设」，AI 助手改代码时反复把内容素材当成 agent 预设处理。
+- UI：卡片标题改为「📝 写作模块」，描述里写明「不是 Agent 预设」；搜索框、拖入区、
+  切换按钮（「切换到此模块」）、批量删除提示、状态行统计一并改口径。
+- 提示词：注入段标题从 `# 预设模块（…）` 改为 `# 写作模块（…）`；
+  skill 生成里的 `### 写作模块` / `### 写作模块包（…）` 同步。
+- 设定优先级：显示名「预设优先」改为「**内容优先**」（底层值仍是 `preset`，行为不变），
+  裁决顺序文案改为「角色卡 / 世界书 / 写作模块」；`skill` 模式下的「预设只提供事实设定」
+  改为「角色卡 / 世界书只提供事实设定」。
+- Agent 预设的描述摘要（顶部下拉里那行小字）从「⚙️ N个预设模块」改为「📝 N个写作模块」。
+- **代码字段一个都没改**：`presets[]` / `modules[]` 是历史命名，改了才是真混淆（见 AGENTS.md §0）。
+
+### ✨ 新会话顶部 Agent 预设下拉：酒馆预设可直接改名 / 删除
+
+- 那个下拉是 DSH 宿主渲染的（`@deepseek-ai/dsh-client-ui-agent-preset` 的 AgentPresetSeat），
+  插件没有条目插槽；但条目就是普通的 `[role="menuitem"]`，于是按「预设名精确匹配」把
+  操作条挂上去（鼠标悬停显示 ✎ / 🗑）。
+- **只认 `isTavern` 的酒馆预设**：内置与第三方预设是 DSH 自己的资产，从这里删掉没法恢复。
+- 改名走 `POST /api/tavern/preset/rename`（会同步预设声明，顶部名字跟着变）；
+  删除走 `POST /api/tavern/agent-presets`（走 `deletePreset`，会话绑定一并处理）。
+- 点击用**捕获阶段**拦下并 `stopPropagation`，不会顺带把那个预设选中。
+- 顺带把「浮动条」里重复的提示条 / 输入框实现提到 factory 顶层（`tavernToast` / `tavernPrompt`），
+  三处共用一份 —— 重复实现会顶穿样式预算棘轮，也会漂。
+
+### 🧪 测试
+
+- `panel-html-identity`（段/产物指纹）、`panel-tabs`（页签标题）、
+  `golden-host-assembly*`（组装产物）、`skill-priority`（裁决文案）按新文案重新冻结。
+- 全套：`pass=660 fail=0`（51 个文件），`check` / `check:style` / `check:integrity` / `check:innerhtml` 全绿。
+
 ## v2.7.27 (2026-11-03)
 
 > 一句话：修三个真机问题 —— 选项点了没反应、标签块刚生成完是碎的、代码块里的示例被当成真标签渲染。

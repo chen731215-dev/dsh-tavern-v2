@@ -70,7 +70,10 @@ function setEnabled(v) {
 function preStepHandler() {
   const list = handlers['agent/pre-step'] || []
   assert.ok(list.length >= 1, '必须注册 agent/pre-step 监听')
-  return list[list.length - 1]
+  // 2.8.0 起 agent/pre-step 上不止一个钩子（卡正则的提示词侧过滤也挂在这里），
+  // 本套件要的是**最先注册**的那个（末尾写作模式注入）。原先取 list[末尾] 的做法
+  // 会被后来新增的钩子顶掉，测的就不再是这条链路了。
+  return list[0]
 }
 
 function payload(step, text) {

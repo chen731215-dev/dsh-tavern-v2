@@ -60,7 +60,7 @@ function makePreset(id, opts = {}) {
       { name: '废弃条目', content: '不该出现。', enabled: false },
     ] },
   ]), 'utf8')
-  // ★ 预设模块是**两层结构**（包 → 内层条目），内层才是真正的写作要求。
+  // ★ 写作模块是**两层结构**（包 → 内层条目），内层才是真正的写作要求。
   //   enabled=false 的是"选一"里的落选项，指令形态必须排除（否则互相矛盾的指令会一起进 skill）。
   fs.writeFileSync(path.join(dir, 'presets.json'), JSON.stringify(opts.packs || [
     { name: '-Meowssiah-1.1', modules: [
@@ -202,7 +202,7 @@ test('④ includeFull=true 时把启用中的条目正文附在末尾（禁用�
 // ④b/④c/④d 2.7.26：角色卡正文必须进 skill（用户报的「一读 skill 卡就不见了」）
 //
 // 故障根因：`buildSkillMarkdown` 的「角色设定（照此扮演）」此前只拼
-//   `extractCardText(agentYml)`（= 预设模块的 persona），
+//   `extractCardText(agentYml)`（= 写作模块的 persona），
 //   `characters.json` 里的 desc / first **一个字都没进过 skill**。
 //   于是会话没挂上预设（system prompt 里没卡）时，模型读到的 skill 里也没有卡。
 // ════════════════════════════════════════════════════════════════
