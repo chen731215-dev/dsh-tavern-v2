@@ -12,10 +12,13 @@
  *   3. 与仓库里的 fixture 比 —— 不一致即退出码 1
  *
  * 两个案例的口径**故意不同**（不是偷懒，是事实要求）：
- *   · `golden-prompt`（基准 a816afd）→ **整文件逐字节比**（只归一化 CRLF）。
- *   · `golden-host-assembly-rich`（基准 aa76a20）→ **只比"环境无关投影"**：
- *     ① 基准版里**还没有** `lib/server/assemble.js`，该测试的 ③ 静态契约必然 ENOENT
- *        ⇒ 用 `--test-skip-pattern` 精确跳过它（跳过的理由写在这里，不是静默）；
+ *   · `golden-prompt`（基准 8f020a0）→ **整文件逐字节比**（只归一化 CRLF）。
+ *   · `golden-host-assembly-rich`（基准 8f020a0）→ **只比"环境无关投影"**：
+ *     ① 两个基准原本是 a816afd / aa76a20，但**这两个提交在本地与远端都已不存在**
+ *        （仓库历史被重写过：`git cat-file -e` 与 GitHub API 都查不到）。
+ *        2026-11-04 把基准重锚到仍有对象的最近一版 2.7.27（8f020a0），夹具在该提交上重新生成；
+ *        2.7.28 的术语改名（预设优先→内容优先、预设模块→写作模块）由测试内的 normalize
+ *        回写旧词 —— 那是纯称呼改动，不动段落结构。**不设 skip**：基准版已有 assemble.js。
  *     ② 该 fixture 的 `sectionSizes.card` / `captures[].rawLen` 是**环境相关量**
  *        （产物里嵌着技能指针段的绝对路径，长度随 `os.tmpdir()` 形态变 —— CI run #9 的真实翻车点）
  *        ⇒ 只比 `captures[].{mode,bytes,sha256}` 与 `sectionSizes.{wb,nsfw}`。
@@ -34,7 +37,7 @@ import { fileURLToPath } from 'node:url'
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 冻结的基准提交（第一例）。改这个值 = 声明换了基准，必须在提交信息里说明。 */
-export const OLD_SHA = 'a816afd'
+export const OLD_SHA = '8f020a0'
 export const TEST_REL = 'tests/golden-prompt.test.js'
 export const FIXTURE_REL = 'tests/fixtures/golden-prompt.json'
 
@@ -45,7 +48,7 @@ export const FIXTURE_REL = 'tests/fixtures/golden-prompt.json'
 export const CASES = [
   {
     name: 'golden-prompt',
-    sha: 'a816afd',
+    sha: '8f020a0',
     testRel: 'tests/golden-prompt.test.js',
     fixtureRel: 'tests/fixtures/golden-prompt.json',
     mode: 'file',
@@ -53,12 +56,12 @@ export const CASES = [
   },
   {
     name: 'golden-host-assembly-rich',
-    sha: 'aa76a20',
+    sha: '8f020a0',
     testRel: 'tests/golden-host-assembly-rich.test.js',
     fixtureRel: 'tests/fixtures/golden-host-assembly-rich.json',
     mode: 'rich',
-    // 基准版没有 lib/server/assemble.js ⇒ ③ 静态契约必然 ENOENT（预期行为，不是夹具坏了）
-    skip: '静态契约',
+    // 基准 8f020a0 已经有 assemble.js ⇒ 不需要跳过任何断言（旧基准 aa76a20 才需要跳 ③）
+    skip: null,
   },
 ]
 
@@ -218,8 +221,8 @@ for (const c of CASES) {
       fail('[' + c.name + '] **环境无关投影**不一致 —— 来源声明不成立', detail)
     }
     console.log('✅ ' + c.name + '：在 ' + c.sha + ' 上重新生成，**环境无关投影**一致'
-      + '（' + pa.captures.length + ' 条 captures 的 sha256/bytes + sectionSizes.wb/nsfw；'
-      + '已跳过含「' + c.skip + '」的用例：那版没有 lib/server/assemble.js）')
+      + '（' + pa.captures.length + ' 条 captures 的 sha256/bytes + sectionSizes.wb/nsfw'
+      + (c.skip ? '；已跳过含「' + c.skip + '」的用例' : '') + '）')
   }
   // ★ 不要在这里预先置 addedWt = null：doCleanup() 一进来就检查它，先置空会让清理**整个不执行**（本笔实测泄漏 2×N 个 worktree）
   doCleanup()

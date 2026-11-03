@@ -9,9 +9,9 @@
  *   本文件把夹具扩成「每个可选段都非空」，并覆盖两种预设 `mode`（roleplay / creative）。
  *
  * 来源可信性（**不是自己拍自己**）：
- *   fixture 是在 **`aa76a20`（S2-C2 之前那一版）** 上生成的，随后在搬家后的版本上要求**逐字节一致**；
+ *   fixture 是在 **`8f020a0`（S2-C2 之前那一版）** 上生成的，随后在搬家后的版本上要求**逐字节一致**；
  *   `_generatedFrom` 记录生成时的提交。生成命令：
- *     `UPDATE_GOLDEN=1 GOLDEN_FROM=aa76a20 node --test tests/golden-host-assembly-rich.test.js`
+ *     `UPDATE_GOLDEN=1 GOLDEN_FROM=8f020a0 node --test tests/golden-host-assembly-rich.test.js`
  *
  * ⚠️ 边界（如实）：
  *   · 关键词触发命中的世界书条目**不在**覆盖内 —— 它依赖会话日志（本夹具没有会话日志 ⇒
@@ -177,7 +177,32 @@ const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex')
  *   而 `sectionSizes.card` / 原始长度只在**同一次运行内**比对（当场量、当场比）。
  */
 const PLACEHOLDER = '<DSH_HOME>'
-const normalize = (s) => String(s).split(TMP_HOME).join(PLACEHOLDER)
+/**
+ * 归一化：① 临时目录 → 占位符；② **2.7.28 的术语改名**回写旧词。
+ *
+ * ② 为什么必须有：2.7.28 把面向用户的「预设优先 / 预设模块」改成了
+ * 「内容优先 / 写作模块」（见 AGENTS.md §0：为了和 Agent 预设区分）。这次改动只动
+ * **称呼**，不动裁决顺序、不动段落结构。而本夹具的基准提交在改名之前，不归一化的话
+ * 每个 capture 都会差 18 字节 —— 看起来像"组装行为变了"，实际是文案改名。
+ *
+ * ⚠️ 只映射这两个词，别在这里加宽泛的替换：一旦把真实的结构性改动也抹平，
+ * 这张网就退化成"永远绿"。
+ */
+const TERM_ALIASES = [
+  // ⚠️ 顺序敏感：**长的在前**。'写作模块里的写作要求' 必须先于 '写作模块'，
+  //    否则短词先替换，长词就永远匹配不上了。
+  ['以下内容优先级最高', '以下预设优先级最高'],
+  ['写作模块里的写作要求', '预设写作要求'],
+  ['（角色卡/世界书/写作模块）为准', '（预设）为准'],   // 2.8.0 的表述（当前代码）
+  ['（角色卡/世界书/预设模块）为准', '（预设）为准'],
+  ['内容优先', '预设优先'],
+  ['写作模块', '预设模块'],
+]
+const normalize = (s) => {
+  let out = String(s).split(TMP_HOME).join(PLACEHOLDER)
+  for (const [now, before] of TERM_ALIASES) out = out.split(now).join(before)
+  return out
+}
 
 // ── 静态契约用的解析器：把两侧的「键名集合」抽出来比（不跑运行时）──
 // 为什么这条断言住在这个文件里：它守的是**同一道边界**（S2-C2 抽装配的入参契约），
@@ -234,6 +259,8 @@ function capture() {
       rawLen: raw.length,
       normLen: s.length,
       tmpOcc: raw.split(TMP_HOME).length - 1,
+      aliasDelta: TERM_ALIASES.reduce(
+        (sum, [now, before]) => sum + (raw.split(now).length - 1) * (now.length - before.length), 0),
     }
   })
   // sectionSizes 是"最近一轮"的快照（各段的 text() 回填）—— 这里正好是最后一条的
@@ -264,11 +291,13 @@ test('① 覆盖：每个可选段都非空（哨兵逐个可见）', () => {
   //   ① `sectionSizes.card` 量的是**归一化之前**的产物 ⇒ 与"当场量到的原始长度"比，不冻数值；
   const last = got.captures[got.captures.length - 1]
   assert.equal(got.sectionSizes.card, last.rawLen, 'sectionSizes.card 必须等于**当场量到**的原始产物长度（同一次运行内比对）')
-  //   ② 原始 / 归一化的**字符**差必须正好等于「被替换的路径出现次数 × 长度差」——把归一化走了几次也钉住。
+  //   ② 原始 / 归一化的**字符**差必须正好等于「被替换的路径出现次数 × 长度差 + 术语别名差」
+  //      —— 把归一化走了几次也钉住。（术语别名：2.7.28 改名回写，见 normalize 上方的注释）
   for (const cap of got.captures) {
+    const expected = cap.tmpOcc * (TMP_HOME.length - PLACEHOLDER.length) + cap.aliasDelta
     assert.equal(
-      cap.rawLen - cap.normLen, cap.tmpOcc * (TMP_HOME.length - PLACEHOLDER.length),
-      '★ ' + cap.mode + ' 的「原始长度 − 归一化长度」与路径替换代数对不上（tmpOcc=' + cap.tmpOcc + '）',
+      cap.rawLen - cap.normLen, expected,
+      '★ ' + cap.mode + ' 的「原始长度 − 归一化长度」与「路径替换 + 术语别名」代数对不上（tmpOcc=' + cap.tmpOcc + '）',
     )
     assert.ok(cap.rawLen >= cap.normLen, '原始长度不可能小于归一化长度')
   }
