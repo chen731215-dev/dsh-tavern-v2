@@ -1,6 +1,6 @@
 {
   "_note": "宿主侧 golden（富夹具）：tavern:card 在「所有可选段都非空」下的组装产物（已归一化）。更新方式：UPDATE_GOLDEN=1。⚠️ 只冻环境无关量：原始长度（sectionSizes.card / rawLen）随临时目录路径长度变化，不冻结，改由测试内的一致性断言覆盖。",
-  "_generatedFrom": "8f020a0",
+  "_generatedFrom": "npm:dsh-tavern@2.7.2",
   "captures": [
     {
       "mode": "roleplay",

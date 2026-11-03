@@ -489,6 +489,12 @@ tools/*.mjs      ─→ 只读源码做静态扫描（不 import 运行时）
 - `tests/fixtures/golden-prompt.json` 是**在重构前那一版（`a816afd`）上生成的**产物快照；
 - 测试在当前版本上重跑同一组固定 fixture，要求**逐字节一致** ⇒ 任何一处组装语义被改坏，立刻报红。
 
+> **2026-11-04 基准重锚**：上面的 `a816afd` 在 2026-11-01 的脱敏重写（filter-branch）中已不存在，
+> git 历史随时可能再被重写。来源验证的锚点已改为 **npm 发布物 `dsh-tavern@2.7.2`**（tarball 按
+> SRI 钉死，registry 按 integrity 寻址、改不了）。诊断结论：2.7.2 → 2.8.1 无"改坏"——prompt
+> 案例 11 键逐字节一致；rich 案例的差异全部是已声明的功能新增（【设定优先级】段等），走
+> 「声明增量归约」比对。详见 `tools/check-golden-origin.mjs` 头注释。
+
 ⚠️ **它有明确的边界**：`apply(ctx)` 内部的真实组装**另有一张网**（`tests/golden-host-assembly.test.js`，
 S2-C2 抽装配前补上；随后那段组装被抽进 `lib/server/assemble.js`，要求产物逐字节不变）、
 `prompt-stats` 的数值、UI 交互、时序并发、LLM 失败路径 —— 后四项不在覆盖范围内，
