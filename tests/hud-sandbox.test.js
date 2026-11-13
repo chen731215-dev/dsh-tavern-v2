@@ -124,7 +124,20 @@ test('③ 通信协议：四条 op，且只认自己那个 iframe', () => {
   }
   assert.match(src, /rec\.frame\.contentWindow !== e\.source/, '★ 必须校验消息来源，防止同页别的 iframe 冒名')
   assert.match(src, /hudPost\(rec, 'context'/, '要能回上下文')
-  assert.match(src, /Math\.min\(Math\.max\(h \+ 8, HUD_MIN_H\), HUD_MAX_H\)/, '高度必须夹在上下限内（卡可能报 100000）')
+  assert.match(src, /Math\.min\(Math\.max\(want, HUD_MIN_H\), HUD_MAX_H\)/, '高度必须夹在上下限内（卡可能报 100000）')
+  // ★ 这里曾经断言的是 `h + 8`。那 8px 把高度反馈回路变成了发散映射：
+  //   整页状态栏卡普遍「撑满视口」，卡上报的 scrollHeight 恒等于当前 iframe 高度
+  //   ⇒ 每轮 +8px 无限上涨（界面表现是消息下方一片不断变高的空白）。
+  //   现在改为 `ceil(h)`（有不动点）+ 连续两次「上报 ≈ 现状」即锁定。
+  //   收敛性本身由 tests/hud-height-convergence.test.js 用真实分支代码仿真钉住。
+  assert.match(src, /var want = Math\.ceil\(h\)/, '★ 目标高度不许再加伪 padding（h+8 会让高度无限上涨）')
+  assert.match(src, /rec\.steadyH >= 2/, '要有「连续两次上报≈现状就锁定」的保险')
+  // 只看**代码行**：注释里会提到 `h + 8`（那是在解释为什么不能这么写）
+  const codeOnly = src.split('\n').filter((l) => {
+    const t = l.trim()
+    return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*'))
+  }).join('\n')
+  assert.ok(!/h \+ 8/.test(codeOnly), '★ 不许回到 h + 8：那不是余量，是棘轮')
   assert.match(src, /messageText: .*slice\(0, 20000\)/, '上下文里的消息正文必须截断')
   assert.ok(!/messages\s*:/.test(src), '不许把整段会话记录塞进沙盒')
 })
