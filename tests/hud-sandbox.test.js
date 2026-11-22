@@ -124,9 +124,59 @@ test('③ 通信协议：四条 op，且只认自己那个 iframe', () => {
   }
   assert.match(src, /rec\.frame\.contentWindow !== e\.source/, '★ 必须校验消息来源，防止同页别的 iframe 冒名')
   assert.match(src, /hudPost\(rec, 'context'/, '要能回上下文')
-  assert.match(src, /Math\.min\(Math\.max\(h \+ 8, HUD_MIN_H\), HUD_MAX_H\)/, '高度必须夹在上下限内（卡可能报 100000）')
+  // ★ issue #18：旧断言冻结的正是 `Math.min(Math.max(h + 8, …))` —— 那等于**在保护这个 bug**。
+  // 现在改成「夹在上下限内」+「不许再出现 h + 8」。注释里解释为什么不能这么写不算违规
+  // （沿用本文件 ② 已有的「只看代码行」口径）。
+  const codeLines = src.split('\n').filter((l) => {
+    const t = l.trim()
+    return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*'))
+  })
+  assert.match(src, /Math\.min\(Math\.max\(want, HUD_MIN_H\), HUD_MAX_H\)/, '高度必须夹在上下限内（卡可能报 100000）')
+  assert.ok(
+    !codeLines.some((l) => /Math\.min\(Math\.max\(h \+ 8/.test(l)),
+    '★ 代码行里不许再出现高度 `h + 8`：那是发散映射，每轮 +8px（issue #18）'
+  )
   assert.match(src, /messageText: .*slice\(0, 20000\)/, '上下文里的消息正文必须截断')
   assert.ok(!/messages\s*:/.test(src), '不许把整段会话记录塞进沙盒')
+})
+
+test('③-c 高度映射收敛：h ↦ ceil(h) + 偏移量判据 + 连续两拍锁定（issue #18）', () => {
+  const src = hudSource()
+  assert.match(src, /var want = Math\.ceil\(h\)/, '★ 映射必须是 ceil(h)：h + 8 没有不动点，会每轮上涨')
+  assert.match(src, /rec\.steadyH >= 2/, '★ 连续两拍到顶就锁定，不再改高度')
+  // 判据看的是**偏移量** delta = want - cur，不是「值是否相等」（后者在
+  // body 默认 8px 边距的整页卡上会让 h = cur + 8 每轮仍涨 8px）。
+  assert.match(src, /var delta = cur > 0 \? want - cur : 0/, '★ 必须按偏移量判定，不是直接比大小')
+  assert.match(src, /var selfRef = delta > 1 && delta <= 40/, '★ 稳定小偏移 = 自指型上报，要判出来')
+  assert.match(src, /rec\.steadyH = 0/, '内容真变了要解锁（否则长状态栏会被锁在初始高度、永远不跟随）')
+})
+
+test('③-d 存储垫片：卡脚本跑之前装上，且只在原生存储不可用时覆盖（issue #16）', () => {
+  const src = hudSource()
+  // 垫片本身
+  assert.match(src, /var HUD_STORAGE_SHIM_JS = /, '要有内存存储垫片的常量')
+  assert.match(src, /__tavernStorageShimOn/, '垫片要幂等（浮窗路径会重跑 hudBootstrap）')
+  // 判据必须是**往返写读**，不是「getter 抛不抛」
+  assert.match(src, /function usable\(name\)/, '要有 usable() 可用性判据')
+  assert.match(src, /s\.setItem\("__tvP","1"\)/, '★ 判据是往返写读（有些环境 getter 不抛但写入被拒）')
+  assert.match(src, /if\(!usable\("localStorage"\)\)def\("localStorage"/, '原生可用时**不覆盖**')
+  // 命名空间分离
+  assert.match(src, /makeStore\("L:"\)/, 'localStorage 用 L: 前缀')
+  assert.match(src, /makeStore\("S:"\)/, 'sessionStorage 用 S: 前缀')
+  // 注入点
+  const fn = extractFn(BUNDLE, 'function hudStorageShim(')
+  assert.match(fn, /hudScriptRanges\(s\)/, '★ 注入点必须避开 <script> 区间（卡里可能写着 "<head>"）')
+  assert.match(fn, /<head\\b/, '优先插在 <head> 之后')
+  assert.match(fn, /<html\\b/, '退化到 <html> 之后')
+  assert.ok(
+    /return tag \+ s/.test(fn),
+    '再退化到整段前置（无外壳的裸片段也要能救）'
+  )
+  // 真的调用了（否则前面全是空转）
+  const boot = extractFn(BUNDLE, 'function hudBootstrap(')
+  assert.match(boot, /html = hudStorageShim\(html\)/, '★ hudBootstrap 入口必须真的调用垫片')
+  // 垫片不许放进 srcdoc 之外的地方（不进宿主 DOM）
+  assert.ok(!/innerHTML/.test(fn), '垫片不许走 innerHTML')
 })
 
 test('③-b 引导脚本：只注入常量代码，不拼接卡内容', () => {
